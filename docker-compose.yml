@@ -1,0 +1,54 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: abastecefacil-db
+    environment:
+      POSTGRES_DB: abastecefacil
+      POSTGRES_USER: abastecefacil_user
+      POSTGRES_PASSWORD: abastecefacil_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - abastecefacil-network
+    restart: unless-stopped
+
+  api:
+    build: .
+    container_name: abastecefacil-api
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/abastecefacil
+      SPRING_DATASOURCE_USERNAME: abastecefacil_user
+      SPRING_DATASOURCE_PASSWORD: abastecefacil_password
+      SPRING_PROFILES_ACTIVE: docker
+    depends_on:
+      - postgres
+    networks:
+      - abastecefacil-network
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: abastecefacil-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@abastecefacil.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - abastecefacil-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  abastecefacil-network:
+    driver: bridge
