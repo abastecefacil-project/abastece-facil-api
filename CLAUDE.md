@@ -118,7 +118,7 @@ Observações operacionais:
 
 ## 4. Modelo de dados
 
-Quatro tabelas. O schema é versionado por **Flyway**, com as migrations em
+Cinco tabelas. O schema é versionado por **Flyway**, com as migrations em
 `src/main/resources/db/migration/`. `ddl-auto: validate`: o Hibernate apenas confere
 o schema contra as entidades e recusa subir se houver divergência, sem nunca
 alterá-lo.
@@ -127,13 +127,42 @@ alterá-lo.
 schema original, derivada de `pg_dump --schema-only`, preservando os nomes de
 constraint gerados pelo Hibernate (`uk6dotkott2kjsp8vw4d0m25fb7` em `users.email`,
 `uk8atkmpnk417qqgkf1r1gw7ujk` em `gas_stations.cnpj`, `ukdbc9idlyetvssufb2vxicvb87`
-em `cars.license_plate`). A partir da V2, usar nomes legíveis.
+em `cars.license_plate`).
+
+**Convenção de nomenclatura de constraints, vigente da V2 em diante:**
+
+| Padrão | Uso | Exemplo |
+|---|---|---|
+| `pk_<tabela>` | chave primária | `pk_regionais` |
+| `uk_<tabela>_<coluna>` | restrição de unicidade | `uk_regionais_sigla` |
+| `fk_<tabela>_<referência>` | chave estrangeira | `fk_gas_stations_regional` |
+
+A V1 é a única exceção, por ser baseline de um schema pré-existente. A convenção
+foi fixada pela `V2__regionais.sql`, que a registra em comentário no topo.
+
+Detalhe importante: a JPA **não tem anotação para nomear a chave primária**, então
+`pk_<tabela>` existe apenas na migration. O `validate` do Hibernate confere tabelas
+e colunas, **não nomes de constraint** — a garantia de que os nomes escolhidos estão
+no banco vem de `SELECT conname FROM pg_constraint WHERE conrelid = '<tabela>'::regclass`.
+Já a unicidade é declarada na entidade com
+`@Table(uniqueConstraints = @UniqueConstraint(name = "...", columnNames = "..."))`,
+e não com `@Column(unique = true)`, que geraria um nome anônimo.
 
 **Pendência conhecida: duas fontes de verdade para o schema.**
-`init-scripts/01-dump.sql` também cria as tabelas, e roda na inicialização do
+`init-scripts/dump.sql` também cria as tabelas, e roda na inicialização do
 Postgres, antes de a aplicação subir. Em volume novo, o Flyway encontra o banco já
-populado, faz baseline e a V1 nunca executa. As duas fontes são idênticas hoje,
-verificado por diff, mas vão divergir a partir da V2.
+populado, faz baseline na versão 1 (`baseline-on-migrate: true`, `baseline-version`
+não definido, default 1) e a V1 nunca executa — a migração começa da V2.
+
+As duas fontes eram idênticas até a V1. **Da V2 em diante elas divergem por
+construção**: `regionais` existe só no Flyway. Isso é seguro porque a V2 é
+auto-suficiente (`CREATE TABLE IF NOT EXISTS`, sem depender de nada que a V1 crie),
+então roda igual nos dois caminhos. Migrations futuras precisam manter essa
+propriedade enquanto o init-script existir.
+
+Existe ainda um `dump.sql` na **raiz** do repositório, divergente do de
+`init-scripts/` (2 usuários em vez de 3, hashes diferentes) e que ninguém consome.
+Não confundir os dois.
 
 A correção é mover o seed para dentro do Flyway e esvaziar o `init-scripts`.
 Reduzir o init-script a apenas `INSERT` **não funciona**: as tabelas ainda não
@@ -154,6 +183,20 @@ não haverá init-script e a V1 vai precisar rodar de verdade pela primeira vez.
 ### `incidents`
 `id`, `car_plate`, `user_name`, `occurrence_date` (date), `title`, `description`,
 `created_at`
+
+### `regionais`
+`id`, `nome`, `sigla` (única), `ativo`, `created_at`, `updated_at`
+
+Regionais da FIESC. Criada pela `V2__regionais.sql`, que já popula **duas** das 13:
+Joinville (`JOI`) e Florianópolis (`FLN`). As 11 restantes entram numa migration
+posterior, quando o cliente confirmar a lista oficial.
+
+Note a mistura de idiomas nas colunas: `nome`/`sigla`/`ativo` em português (nomes de
+domínio, como manda a convenção do projeto) e `created_at`/`updated_at` em inglês,
+para acompanhar as quatro tabelas anteriores.
+
+Ainda **não há vínculo** entre `regionais` e as demais tabelas. As FKs
+(`gas_stations.regional_id` e afins) entram depois.
 
 Não há relacionamento JPA entre `incidents` e `cars`: a ligação é pela **string da
 placa**, validada em tempo de criação.
@@ -202,6 +245,8 @@ Sessão **stateless**, CSRF desabilitado. O token vai no header
 | POST | `/api/users` | autenticado |
 | PATCH | `/api/users/{userId}` | autenticado |
 | DELETE | `/api/users/{userId}` | autenticado |
+| GET | `/api/regionais` | autenticado |
+| GET | `/api/regionais/{id}` | autenticado |
 | GET | `/api/cep/info?cep=` | autenticado |
 
 **Note a assimetria:** consultar postos e criar ocorrência são públicos; todo o
@@ -218,6 +263,13 @@ Parâmetros de filtro:
 - `cars/filter` → `search`, `active`
 - `incidents` → `carPlate`, `title`, `userName`, `occurrenceDate` (ISO)
 - `users` → `active` (obrigatório), `name`
+
+**Exceção: `/api/regionais`.** Só leitura, sem filtro, e `size = 20` por padrão em
+vez de 10, ordenado por `nome`. O consumidor é um `select` de formulário, não uma
+tabela navegável — com as 13 regionais da FIESC cadastradas, o default de 10
+truncaria a lista silenciosamente. Não há teto próprio: o cliente pode pedir `size`
+maior (vale o limite de 2000 do Spring). Não tem `/filter` no caminho justamente
+porque não filtra.
 
 ### Formatos relevantes
 
@@ -399,12 +451,19 @@ Problemas reais já encontrados. Consultar antes de investigar comportamento est
 
 ### Qualidade
 
-- **49 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **52 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
-  `OpenStreetMapService`, `ViaCepService` e o handler global de exceções. São testes
-  com mock, não sobem banco nem contexto Spring completo. Rodar `./mvnw clean test`
-  ao final de qualquer alteração no backend: a contagem tem que continuar 49. O
+  `RegionalService`, `OpenStreetMapService`, `ViaCepService` e o handler global de
+  exceções. São testes com mock, não sobem banco nem contexto Spring completo
+  (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
+  `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração
+  no backend: a contagem tem que continuar 52, ou subir junto com os testes novos. O
   frontend não tem testes.
+
+  Limite conhecido dessa suíte: por ser Mockito puro, **ela não valida nada de
+  schema**. Constraint de banco, migration e o `validate` do Hibernate só são
+  exercidos subindo a aplicação — por isso a unicidade de `regionais.sigla` não tem
+  teste automatizado, e sim verificação manual via `psql`.
 - `npx eslint src` reporta **15 erros pré-existentes**: nomes de componente de
   palavra única (`Map`, `Login`, `Reports`, `Occurrences`) e variáveis não usadas
   (`unwatchMobile`, `response`, `error`, `deletarPosto`, `apiPublic`). Não são
@@ -422,21 +481,33 @@ Problemas reais já encontrados. Consultar antes de investigar comportamento est
 - Não adicionar dependências sem justificativa — a stack é intencionalmente enxuta.
 - O idioma do código e das mensagens de interface é **português do Brasil**.
 
+### Git
+
+Não execute `git commit`, `git push`, `git add` nem qualquer comando que altere
+o histórico ou o índice. Os commits são feitos manualmente pelo desenvolvedor.
+Ao terminar uma tarefa, liste os arquivos alterados e pare por aí.
+
 ### Credenciais de teste
 
-O `init-scripts/01-dump.sql` popula a tabela `users` na primeira subida. Pelo menos
+O `init-scripts/dump.sql` popula a tabela `users` na primeira subida. Pelo menos
 dois desses registros (`pedro@email.com`, `rafaela.mendes@email.com`) têm **hashes
 BCrypt cuja origem não está documentada**, então não é possível logar com eles.
 
-Para acessar a área administrativa hoje, crie um usuário novo via
+**Usuário de verificação (desenvolvimento):** `verifica.p02@abastecefacil.com` /
+`Senha@12345`, criado durante o P0.2 para testar endpoints autenticados. Existe
+apenas no volume de desenvolvimento, não está em nenhum `dump.sql`, e some se o
+volume for recriado. Remover quando o A3 criar o administrador inicial por
+variável de ambiente.
+
+Para acessar a área administrativa hoje, use o usuário acima, crie outro via
 `POST /api/auth/register`, que ainda é público, ou gere um hash e atualize o banco
 diretamente. Esse endpoint será removido junto com a onda de controle de acesso, e
 o administrador inicial passará a ser criado por variável de ambiente.
 
-> **A verificar:** o banco subiu com 3 usuários, não 2. Rodar
-> `SELECT id, name, email, is_active FROM users ORDER BY id;` e documentar quem é o
-> terceiro. Se a senha for conhecida por alguém da equipe, resolve o acesso
-> administrativo no curto prazo.
+Note que existem **dois arquivos `dump.sql` divergentes**: o de `init-scripts/`,
+que o Docker consome, e um na raiz do repositório, que ninguém consome e tem
+conteúdo diferente (2 usuários em vez de 3, hashes distintos). Não confundir os
+dois. O da raiz é candidato a remoção, depois de confirmar que nada o referencia.
 
 ---
 
