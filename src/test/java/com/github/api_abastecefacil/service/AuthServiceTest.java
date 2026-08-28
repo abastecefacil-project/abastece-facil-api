@@ -7,24 +7,31 @@ import com.github.api_abastecefacil.exception.InvalidLoginException;
 import com.github.api_abastecefacil.exception.NotFoundException;
 import com.github.api_abastecefacil.exception.UserAlreadyExistsException;
 import com.github.api_abastecefacil.mapper.UserMapper;
+import com.github.api_abastecefacil.model.Perfil;
 import com.github.api_abastecefacil.model.User;
 import com.github.api_abastecefacil.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -42,10 +49,17 @@ class AuthServiceTest {
     @Mock
     private AuthenticationManager authenticationManager;
 
+    @Mock
+    private CustomUserDetailsService customUserDetailsService;
+
     @InjectMocks
     private AuthService authService;
 
+    @Captor
+    private ArgumentCaptor<Map<String, Object>> claimsCaptor;
+
     private User user;
+    private UserDetails userDetails;
 
     @BeforeEach
     void setUp() {
@@ -54,7 +68,14 @@ class AuthServiceTest {
                 .setName("Test User")
                 .setEmail("user@test.com")
                 .setPassword("encodedPassword")
-                .setActive(true);
+                .setActive(true)
+                .setPerfil(Perfil.COLABORADOR);
+
+        userDetails = new org.springframework.security.core.userdetails.User(
+                "user@test.com",
+                "encodedPassword",
+                List.of(new SimpleGrantedAuthority("ROLE_COLABORADOR"))
+        );
     }
 
     @Test
@@ -63,13 +84,15 @@ class AuthServiceTest {
         when(userRepository.existsByEmail("user@test.com")).thenReturn(false);
         when(userMapper.toEntity(request)).thenReturn(user);
         when(userRepository.save(user)).thenReturn(user);
-        when(jwtService.generateToken(any(UserDetails.class))).thenReturn("jwt-token");
+        when(customUserDetailsService.toUserDetails(user)).thenReturn(userDetails);
+        when(jwtService.generateToken(anyMap(), any(UserDetails.class))).thenReturn("jwt-token");
 
         AuthResponse response = authService.register(request);
 
         assertThat(response).isNotNull();
         assertThat(response.token()).isEqualTo("jwt-token");
         assertThat(response.type()).isEqualTo("Bearer");
+        assertThat(response.perfil()).isEqualTo(Perfil.COLABORADOR);
         verify(userRepository).save(user);
     }
 
@@ -86,13 +109,29 @@ class AuthServiceTest {
     void login_ShouldAuthenticateAndReturnToken() {
         LoginRequest request = new LoginRequest("user@test.com", "password123");
         when(userRepository.findByEmail("user@test.com")).thenReturn(Optional.of(user));
-        when(jwtService.generateToken(any(UserDetails.class))).thenReturn("jwt-token");
+        when(customUserDetailsService.toUserDetails(user)).thenReturn(userDetails);
+        when(jwtService.generateToken(anyMap(), any(UserDetails.class))).thenReturn("jwt-token");
 
         AuthResponse response = authService.login(request);
 
         assertThat(response).isNotNull();
         assertThat(response.token()).isEqualTo("jwt-token");
+        assertThat(response.perfil()).isEqualTo(Perfil.COLABORADOR);
         verify(authenticationManager).authenticate(any(UsernamePasswordAuthenticationToken.class));
+    }
+
+    @Test
+    void login_ShouldIncludePerfilClaimInToken() {
+        user.setPerfil(Perfil.ADMINISTRADOR);
+        LoginRequest request = new LoginRequest("user@test.com", "password123");
+        when(userRepository.findByEmail("user@test.com")).thenReturn(Optional.of(user));
+        when(customUserDetailsService.toUserDetails(user)).thenReturn(userDetails);
+        when(jwtService.generateToken(anyMap(), any(UserDetails.class))).thenReturn("jwt-token");
+
+        authService.login(request);
+
+        verify(jwtService).generateToken(claimsCaptor.capture(), any(UserDetails.class));
+        assertThat(claimsCaptor.getValue()).containsEntry("perfil", "ADMINISTRADOR");
     }
 
     @Test

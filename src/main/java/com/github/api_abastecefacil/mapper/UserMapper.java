@@ -3,6 +3,7 @@ package com.github.api_abastecefacil.mapper;
 
 import com.github.api_abastecefacil.dto.auth.RegisterRequest;
 import com.github.api_abastecefacil.dto.user.UserResponse;
+import com.github.api_abastecefacil.model.Perfil;
 import com.github.api_abastecefacil.model.User;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
@@ -11,16 +12,19 @@ import org.springframework.stereotype.Component;
 public class UserMapper {
 
     private final PasswordEncoder passwordEncoder;
+    private final RegionalMapper regionalMapper;
 
-    public UserMapper(PasswordEncoder passwordEncoder) {
+    public UserMapper(PasswordEncoder passwordEncoder, RegionalMapper regionalMapper) {
         this.passwordEncoder = passwordEncoder;
+        this.regionalMapper = regionalMapper;
     }
 
     public User toEntity(RegisterRequest request) {
         return new User()
                 .setName(request.name())
                 .setEmail(request.email())
-                .setPassword(passwordEncoder.encode(request.password()));
+                .setPassword(passwordEncoder.encode(request.password()))
+                .setPerfil(Perfil.COLABORADOR);
     }
 
     public UserResponse toResponse(User user) {
@@ -30,7 +34,9 @@ public class UserMapper {
                 user.getEmail(),
                 user.getActive(),
                 user.getCreatedAt(),
-                user.getUpdatedAt()
+                user.getUpdatedAt(),
+                user.getPerfil(),
+                regionalMapper.toSummaryResponse(user.getRegional())
         );
     }
 

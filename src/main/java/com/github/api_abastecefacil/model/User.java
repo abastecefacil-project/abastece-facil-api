@@ -30,6 +30,14 @@ public class User {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "perfil", nullable = false)
+    private Perfil perfil;
+
+    @ManyToOne
+    @JoinColumn(name = "regional_id", foreignKey = @ForeignKey(name = "fk_users_regional"))
+    private Regional regional;
+
     public Long getId() {
         return id;
     }
@@ -93,10 +101,31 @@ public class User {
         return this;
     }
 
+    public Perfil getPerfil() {
+        return perfil;
+    }
+
+    public User setPerfil(Perfil perfil) {
+        this.perfil = perfil;
+        return this;
+    }
+
+    public Regional getRegional() {
+        return regional;
+    }
+
+    public User setRegional(Regional regional) {
+        this.regional = regional;
+        return this;
+    }
+
     @PrePersist
     private void prePersist() {
         this.createdAt = LocalDateTime.now();
         this.isActive = true;
+        if (this.perfil == null) {
+            this.perfil = Perfil.COLABORADOR;
+        }
     }
 
     @PreUpdate

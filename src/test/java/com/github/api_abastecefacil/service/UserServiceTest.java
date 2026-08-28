@@ -7,6 +7,7 @@ import com.github.api_abastecefacil.exception.NotFoundException;
 import com.github.api_abastecefacil.exception.UserAlreadyDeletedException;
 import com.github.api_abastecefacil.exception.UserAlreadyExistsException;
 import com.github.api_abastecefacil.mapper.UserMapper;
+import com.github.api_abastecefacil.model.Perfil;
 import com.github.api_abastecefacil.model.User;
 import com.github.api_abastecefacil.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -56,9 +57,12 @@ class UserServiceTest {
                 .setEmail("one@test.com")
                 .setPassword("pass123")
                 .setActive(true)
-                .setCreatedAt(LocalDateTime.now());
+                .setCreatedAt(LocalDateTime.now())
+                .setPerfil(Perfil.COLABORADOR);
 
-        userResponse = new UserResponse(1L, "User One", "one@test.com", true, LocalDateTime.now(), null);
+        userResponse = new UserResponse(
+                1L, "User One", "one@test.com", true, LocalDateTime.now(), null,
+                Perfil.COLABORADOR, null);
     }
 
     @Test

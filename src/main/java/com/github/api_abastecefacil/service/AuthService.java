@@ -12,12 +12,11 @@ import com.github.api_abastecefacil.repository.UserRepository;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Collections;
+import java.util.Map;
 
 import static com.github.api_abastecefacil.constants.AuthConstants.*;
 
@@ -29,17 +28,20 @@ public class AuthService {
     private final UserMapper userMapper;
     private final JwtService jwtService;
     private final AuthenticationManager authenticationManager;
+    private final CustomUserDetailsService customUserDetailsService;
 
     public AuthService(
             UserRepository userRepository,
             UserMapper userMapper,
             JwtService jwtService,
-            AuthenticationManager authenticationManager
+            AuthenticationManager authenticationManager,
+            CustomUserDetailsService customUserDetailsService
     ) {
         this.userRepository = userRepository;
         this.userMapper = userMapper;
         this.jwtService = jwtService;
         this.authenticationManager = authenticationManager;
+        this.customUserDetailsService = customUserDetailsService;
     }
 
     @Transactional
@@ -47,19 +49,17 @@ public class AuthService {
         validateEmailDoesNotExist(request.email());
 
         User user = createAndSaveUser(request);
-        UserDetails userDetails = createUserDetails(user.getEmail(), user.getPassword());
-        String token = jwtService.generateToken(userDetails);
+        String token = generateTokenFor(user);
 
-        return createAuthResponse(token, REGISTER_SUCCESS_MESSAGE);
+        return createAuthResponse(token, REGISTER_SUCCESS_MESSAGE, user);
     }
 
     public AuthResponse login(LoginRequest request) {
         User user = findUserByEmailOrThrow(request.email());
         validateUserIsActive(user);
         authenticateUser(request.email(), request.password());
-        UserDetails userDetails = createUserDetails(request.email(), "");
-        String token = jwtService.generateToken(userDetails);
-        return createAuthResponse(token, LOGIN_SUCCESS_MESSAGE);
+        String token = generateTokenFor(user);
+        return createAuthResponse(token, LOGIN_SUCCESS_MESSAGE, user);
     }
 
     private void validateEmailDoesNotExist(String email) {
@@ -94,16 +94,17 @@ public class AuthService {
         }
     }
 
-    private UserDetails createUserDetails(String email, String password) {
-        SimpleGrantedAuthority authority = new SimpleGrantedAuthority(USER_ROLE);
-        return new org.springframework.security.core.userdetails.User(
-                email,
-                password,
-                Collections.singletonList(authority)
-        );
+    /**
+     * O perfil viaja no token como claim para o frontend poder rotear sem uma
+     * chamada extra. A expiração continua sendo a global de {@code jwt.expiration}.
+     */
+    private String generateTokenFor(User user) {
+        UserDetails userDetails = customUserDetailsService.toUserDetails(user);
+        Map<String, Object> extraClaims = Map.of(PERFIL_CLAIM, user.getPerfil().name());
+        return jwtService.generateToken(extraClaims, userDetails);
     }
 
-    private AuthResponse createAuthResponse(String token, String message) {
-        return new AuthResponse(token, TOKEN_TYPE, message);
+    private AuthResponse createAuthResponse(String token, String message, User user) {
+        return new AuthResponse(token, TOKEN_TYPE, message, user.getPerfil());
     }
 }

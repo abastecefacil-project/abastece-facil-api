@@ -1,6 +1,7 @@
 package com.github.api_abastecefacil.mapper;
 
 import com.github.api_abastecefacil.dto.regional.RegionalResponse;
+import com.github.api_abastecefacil.dto.regional.RegionalSummaryResponse;
 import com.github.api_abastecefacil.model.Regional;
 import org.springframework.stereotype.Component;
 
@@ -15,6 +16,17 @@ public class RegionalMapper {
                 regional.getAtivo(),
                 regional.getCreatedAt(),
                 regional.getUpdatedAt()
+        );
+    }
+
+    public RegionalSummaryResponse toSummaryResponse(Regional regional) {
+        if (regional == null) {
+            return null;
+        }
+        return new RegionalSummaryResponse(
+                regional.getId(),
+                regional.getNome(),
+                regional.getSigla()
         );
     }
 }

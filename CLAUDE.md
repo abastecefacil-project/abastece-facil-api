@@ -155,10 +155,11 @@ populado, faz baseline na versão 1 (`baseline-on-migrate: true`, `baseline-vers
 não definido, default 1) e a V1 nunca executa — a migração começa da V2.
 
 As duas fontes eram idênticas até a V1. **Da V2 em diante elas divergem por
-construção**: `regionais` existe só no Flyway. Isso é seguro porque a V2 é
-auto-suficiente (`CREATE TABLE IF NOT EXISTS`, sem depender de nada que a V1 crie),
-então roda igual nos dois caminhos. Migrations futuras precisam manter essa
-propriedade enquanto o init-script existir.
+construção**: `regionais` e as colunas `users.perfil` / `users.regional_id` existem
+só no Flyway. Isso é seguro porque V2 e V3 são auto-suficientes (`CREATE TABLE IF
+NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, sem depender de nada que a
+V1 crie), então rodam igual nos dois caminhos. Migrations futuras precisam manter
+essa propriedade enquanto o init-script existir.
 
 Existe ainda um `dump.sql` na **raiz** do repositório, divergente do de
 `init-scripts/` (2 usuários em vez de 3, hashes diferentes) e que ninguém consome.
@@ -170,7 +171,19 @@ existiriam no momento em que ele roda. Resolver antes do deploy em produção, o
 não haverá init-script e a V1 vai precisar rodar de verdade pela primeira vez.
 
 ### `users`
-`id`, `name`, `email` (único), `password` (BCrypt), `is_active`, `created_at`, `updated_at`
+`id`, `name`, `email` (único), `password` (BCrypt), `is_active`, `created_at`,
+`updated_at`, `perfil`, `regional_id`
+
+`perfil` e `regional_id` entraram pela `V3__perfil_usuario.sql`. `perfil` é
+`varchar not null default 'COLABORADOR'` — o default faz o backfill das linhas
+existentes na mesma instrução que impõe o `NOT NULL`. `regional_id` é nullable, com
+FK `fk_users_regional` para `regionais`.
+
+Na entidade, `perfil` é o **primeiro `@Enumerated(EnumType.STRING)` do projeto**
+(enum `model/Perfil.java`, valores `COLABORADOR`, `GESTOR_FROTA`, `ADMINISTRADOR`)
+e `regional` é o **primeiro `@ManyToOne` do projeto** — até a V3 não havia nenhum
+relacionamento JPA no código. O `prePersist` define `COLABORADOR` quando o perfil
+vem nulo.
 
 ### `gas_stations`
 `id`, `name`, `fantasy_name`, `cnpj` (único), `latitude` (10,8), `longitude` (11,8),
@@ -195,8 +208,8 @@ Note a mistura de idiomas nas colunas: `nome`/`sigla`/`ativo` em português (nom
 domínio, como manda a convenção do projeto) e `created_at`/`updated_at` em inglês,
 para acompanhar as quatro tabelas anteriores.
 
-Ainda **não há vínculo** entre `regionais` e as demais tabelas. As FKs
-(`gas_stations.regional_id` e afins) entram depois.
+O único vínculo existente é `users.regional_id` (`fk_users_regional`, V3). As
+demais FKs (`gas_stations.regional_id` e afins) entram depois.
 
 Não há relacionamento JPA entre `incidents` e `cars`: a ligação é pela **string da
 placa**, validada em tempo de criação.
@@ -216,7 +229,12 @@ qualquer outro  → exige JWT válido
 ```
 
 Sessão **stateless**, CSRF desabilitado. O token vai no header
-`Authorization: Bearer <token>` e expira em **86400000 ms (24 horas)**.
+`Authorization: Bearer <token>` e expira em **86400000 ms (24 horas)**, igual para
+todos os perfis.
+
+A autorização ainda é binária: autenticado ou não. O perfil já viaja no token e já
+vira authority (`ROLE_<PERFIL>`), mas **nenhuma regra o consome** — não há
+`@EnableMethodSecurity` nem `@PreAuthorize`. Ver §9.
 
 ### Endpoints
 
@@ -286,7 +304,31 @@ porque não filtra.
 }
 ```
 
-`AuthResponse`: `{ token, type, message }`.
+`AuthResponse`: `{ token, type, message, perfil }`. O `perfil` foi acrescentado no
+P0.3 — quebra de contrato deliberada e **aditiva**, para o frontend rotear sem uma
+chamada extra. Nenhum campo foi removido ou renomeado.
+
+`UserResponse` ganhou dois campos no mesmo movimento:
+
+```json
+{
+  "id": 4, "name": "...", "email": "...", "isActive": true,
+  "createdAt": "...", "updatedAt": null,
+  "perfil": "COLABORADOR",
+  "regional": { "id": 1, "nome": "Joinville", "sigla": "JOI" }
+}
+```
+
+`regional` é `null` quando não há vínculo, e é um `RegionalSummaryResponse`
+**enxuto de propósito**: só `id`, `nome` e `sigla`. `ativo`, `createdAt` e
+`updatedAt` da regional não têm consumidor dentro do usuário e criariam
+acoplamento — o `RegionalResponse` completo continua exclusivo de `/api/regionais`.
+
+**Claims do JWT:** `sub` (email), `iat`, `exp` e `perfil` (o nome do enum, como
+string). O `perfil` entrou no P0.3; antes o token não carregava papel nenhum.
+
+Escrita de `perfil` e `regional` **não tem caminho HTTP**: `RegisterRequest`,
+`UpdateUserRequest` e `POST /api/users` não aceitam esses campos. Ver §6.
 
 ---
 
@@ -305,6 +347,12 @@ porque não filtra.
 5. Exclusões são **lógicas** (`is_active` / `active` em `false`), não físicas. Há
    exceções dedicadas para "já excluído" (`UserAlreadyDeletedException`,
    `CarAlreadyDeletedException`).
+6. **Todo usuário nasce `COLABORADOR` com regional nula**, e não existe endpoint
+   que altere isso. `UserMapper.toEntity` fixa o perfil na criação; o `prePersist`
+   da entidade é a rede de segurança. A escrita administrativa de perfil e regional
+   é o S2, e o primeiro `ADMINISTRADOR` vem do A3, criado por variável de ambiente
+   na subida — não por HTTP. Até lá, **promoção é `UPDATE` manual no banco**, o que
+   é limitação conhecida e aceita, não esquecimento.
 
 ---
 
@@ -445,25 +493,49 @@ Problemas reais já encontrados. Consultar antes de investigar comportamento est
 11. Erro 500 no proxy do Vite com `ECONNREFUSED` significa backend fora do ar ou
     ainda inicializando (Spring Boot leva ~25s).
 
+### Autenticação e autorização
+
+12. **A authority é `ROLE_<PERFIL>`, e o consumo é por `hasRole`.** Origem única:
+    `Perfil.authority()`, montada em `CustomUserDetailsService.toUserDetails` — o
+    único ponto do projeto que constrói `GrantedAuthority`. Como o prefixo `ROLE_`
+    já vem embutido, use `hasRole("ADMINISTRADOR")`, que o adiciona sozinho.
+    `hasAuthority("ADMINISTRADOR")` **falha**, porque exige o nome exato; o
+    equivalente literal seria `hasAuthority("ROLE_ADMINISTRADOR")`.
+
+    Isso substituiu a authority fixa `"USER"`, que era gerada em **dois lugares
+    independentes** (`CustomUserDetailsService` e um `createUserDetails` privado do
+    `AuthService`) e não tinha relação nenhuma com o registro no banco. A
+    duplicação foi eliminada de propósito: dois pontos produzindo authority são a
+    origem provável de divergência futura.
+
+13. **`loadUserByUsername` não filtra `is_active`.** Usuário excluído logicamente
+    continua autenticando com um token já emitido — a checagem de inativo existe
+    **apenas** em `AuthService.login`, e o token vive 24h. É falha de segurança
+    real, conhecida, e deixada de fora do P0.3 de propósito para não misturar
+    escopo. Será tratada em prompt próprio. Não confundir com bug novo ao
+    investigar comportamento de sessão.
+
 ---
 
 ## 10. Estado do projeto e convenções
 
 ### Qualidade
 
-- **52 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **60 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
-  `RegionalService`, `OpenStreetMapService`, `ViaCepService` e o handler global de
-  exceções. São testes com mock, não sobem banco nem contexto Spring completo
+  `RegionalService`, `CustomUserDetailsService`, `OpenStreetMapService`,
+  `ViaCepService`, o `UserMapper` e o handler global de exceções. São testes com
+  mock, não sobem banco nem contexto Spring completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração
-  no backend: a contagem tem que continuar 52, ou subir junto com os testes novos. O
+  no backend: a contagem tem que continuar 60, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   Limite conhecido dessa suíte: por ser Mockito puro, **ela não valida nada de
   schema**. Constraint de banco, migration e o `validate` do Hibernate só são
-  exercidos subindo a aplicação — por isso a unicidade de `regionais.sigla` não tem
-  teste automatizado, e sim verificação manual via `psql`.
+  exercidos subindo a aplicação — por isso a unicidade de `regionais.sigla`, a FK
+  `fk_users_regional` e o backfill de `users.perfil` não têm teste automatizado, e
+  sim verificação manual via `psql`.
 - `npx eslint src` reporta **15 erros pré-existentes**: nomes de componente de
   palavra única (`Map`, `Login`, `Reports`, `Occurrences`) e variáveis não usadas
   (`unwatchMobile`, `response`, `error`, `deletarPosto`, `apiPublic`). Não são
