@@ -23,6 +23,7 @@ public final class AuthConstants {
     public static final String USER_ALREADY_EXISTS_MESSAGE = "Já existe um usuário cadastrado com este email";
     public static final String USER_INACTIVE_MESSAGE = "Usuário inativo, por favor, contate o suporte";
     public static final String INVALID_CREDENTIALS_MESSAGE = "Email ou senha incorretos";
+    public static final String PASSWORD_NOT_SET_MESSAGE = "Usuário ainda não definiu uma senha, por favor, ative sua conta";
 
     public static final String REGISTER_SUCCESS_MESSAGE = "Usuário registrado com sucesso";
     public static final String LOGIN_SUCCESS_MESSAGE = "Login realizado com sucesso";

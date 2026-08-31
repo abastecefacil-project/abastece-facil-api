@@ -39,7 +39,12 @@ public class CustomUserDetailsService implements UserDetailsService {
     public UserDetails toUserDetails(User user) {
         return new org.springframework.security.core.userdetails.User(
                 user.getEmail(),
-                user.getPassword(),
+                // O construtor do Spring rejeita senha nula (IllegalArgumentException) mas
+                // aceita string vazia. Como o projeto nao tem @ExceptionHandler generico,
+                // a nula viraria um 500 cru neste caminho, alcancavel pelo
+                // JwtAuthenticationFilter e pelo DaoAuthenticationProvider. Com "" o
+                // BCrypt nao casa com senha nenhuma: da 401, nunca 500 e nunca acesso.
+                user.getPassword() != null ? user.getPassword() : "",
                 List.of(new SimpleGrantedAuthority(user.getPerfil().authority()))
         );
     }

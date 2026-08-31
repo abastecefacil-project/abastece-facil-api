@@ -57,6 +57,40 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
     }
 
+    /**
+     * Mesmo status de InvalidLoginException, mas com "error" proprio: o ErrorResponse
+     * so carrega status, error, message e path, entao o campo error e a unica forma de
+     * o frontend distinguir "ative sua conta" de "senha errada" programaticamente.
+     * Precedente: CoordinatesNotFoundException, que tambem foge do nome do status.
+     */
+    @ExceptionHandler(PasswordNotSetException.class)
+    public ResponseEntity<ErrorResponse> handlePasswordNotSetException(
+            PasswordNotSetException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.UNAUTHORIZED.value(),
+                "PASSWORD_NOT_SET",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
+    }
+
+    @ExceptionHandler(InvalidUserDataException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidUserDataException(
+            InvalidUserDataException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "BAD_REQUEST",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+    }
+
     @ExceptionHandler(UserAlreadyDeletedException.class)
     public ResponseEntity<ErrorResponse> handleUserAlreadyDeletedException(
             UserAlreadyDeletedException ex, WebRequest request) {

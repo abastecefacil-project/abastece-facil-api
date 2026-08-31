@@ -24,7 +24,8 @@ public class UserMapper {
                 .setName(request.name())
                 .setEmail(request.email())
                 .setPassword(passwordEncoder.encode(request.password()))
-                .setPerfil(Perfil.COLABORADOR);
+                .setPerfil(Perfil.COLABORADOR)
+                .setSenhaDefinida(true);
     }
 
     public UserResponse toResponse(User user) {
@@ -36,7 +37,10 @@ public class UserMapper {
                 user.getCreatedAt(),
                 user.getUpdatedAt(),
                 user.getPerfil(),
-                regionalMapper.toSummaryResponse(user.getRegional())
+                regionalMapper.toSummaryResponse(user.getRegional()),
+                user.getTelefone(),
+                user.getMatricula(),
+                user.getSenhaDefinida()
         );
     }
 

@@ -107,6 +107,10 @@ public class UserService {
         if (isNotBlank(password)) {
             String encodedPassword = passwordEncoder.encode(password);
             user.setPassword(encodedPassword);
+            // Mantem o invariante password != null <=> senhaDefinida. Sem isto, um
+            // usuario criado sem senha continuaria sem conseguir logar depois de
+            // receber uma.
+            user.setSenhaDefinida(true);
         }
     }
 

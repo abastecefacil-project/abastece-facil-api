@@ -5,6 +5,7 @@ import com.github.api_abastecefacil.dto.auth.LoginRequest;
 import com.github.api_abastecefacil.dto.auth.RegisterRequest;
 import com.github.api_abastecefacil.exception.InvalidLoginException;
 import com.github.api_abastecefacil.exception.NotFoundException;
+import com.github.api_abastecefacil.exception.PasswordNotSetException;
 import com.github.api_abastecefacil.exception.UserAlreadyExistsException;
 import com.github.api_abastecefacil.mapper.UserMapper;
 import com.github.api_abastecefacil.model.User;
@@ -57,6 +58,7 @@ public class AuthService {
     public AuthResponse login(LoginRequest request) {
         User user = findUserByEmailOrThrow(request.email());
         validateUserIsActive(user);
+        validateSenhaDefinida(user);
         authenticateUser(request.email(), request.password());
         String token = generateTokenFor(user);
         return createAuthResponse(token, LOGIN_SUCCESS_MESSAGE, user);
@@ -81,6 +83,18 @@ public class AuthService {
     private void validateUserIsActive(User user) {
         if (Boolean.FALSE.equals(user.getActive())) {
             throw new InvalidLoginException(USER_INACTIVE_MESSAGE);
+        }
+    }
+
+    /**
+     * Roda ANTES de authenticateUser, ou seja, antes de o AuthenticationManager e
+     * portanto o PasswordEncoder serem tocados. As duas condicoes sao propositais: uma
+     * linha inconsistente (senha_definida = true com password nulo, possivel por UPDATE
+     * manual) tambem e barrada aqui, em vez de virar erro mais adiante.
+     */
+    private void validateSenhaDefinida(User user) {
+        if (Boolean.FALSE.equals(user.getSenhaDefinida()) || user.getPassword() == null) {
+            throw new PasswordNotSetException(PASSWORD_NOT_SET_MESSAGE);
         }
     }
 

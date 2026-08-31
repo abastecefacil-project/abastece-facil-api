@@ -1,5 +1,6 @@
 package com.github.api_abastecefacil.model;
 
+import com.github.api_abastecefacil.validation.UserValidator;
 import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
@@ -18,7 +19,9 @@ public class User {
     @Column(name = "email", nullable = false, unique = true)
     private String email;
 
-    @Column(name = "password", nullable = false)
+    // Nullable desde a V4: o cadastro administrativo (S2) cria o usuario sem senha,
+    // que e definida depois pelo fluxo de ativacao (S5). Ver senhaDefinida.
+    @Column(name = "password")
     private String password;
 
     @Column(name = "is_active", nullable = false)
@@ -37,6 +40,18 @@ public class User {
     @ManyToOne
     @JoinColumn(name = "regional_id", foreignKey = @ForeignKey(name = "fk_users_regional"))
     private Regional regional;
+
+    @Column(name = "telefone")
+    private String telefone;
+
+    // Unicidade garantida pelo indice parcial uk_users_matricula, criado na V4.
+    // Nao ha @UniqueConstraint aqui de proposito: a anotacao descreveria uma
+    // constraint total, que nao e o que existe no banco.
+    @Column(name = "matricula")
+    private String matricula;
+
+    @Column(name = "senha_definida", nullable = false)
+    private Boolean senhaDefinida;
 
     public Long getId() {
         return id;
@@ -119,6 +134,33 @@ public class User {
         return this;
     }
 
+    public String getTelefone() {
+        return telefone;
+    }
+
+    public User setTelefone(String telefone) {
+        this.telefone = telefone;
+        return this;
+    }
+
+    public String getMatricula() {
+        return matricula;
+    }
+
+    public User setMatricula(String matricula) {
+        this.matricula = matricula;
+        return this;
+    }
+
+    public Boolean getSenhaDefinida() {
+        return senhaDefinida;
+    }
+
+    public User setSenhaDefinida(Boolean senhaDefinida) {
+        this.senhaDefinida = senhaDefinida;
+        return this;
+    }
+
     @PrePersist
     private void prePersist() {
         this.createdAt = LocalDateTime.now();
@@ -126,11 +168,17 @@ public class User {
         if (this.perfil == null) {
             this.perfil = Perfil.COLABORADOR;
         }
+        if (this.senhaDefinida == null) {
+            // Deny by default: sem senha, sem login.
+            this.senhaDefinida = this.password != null;
+        }
+        this.telefone = UserValidator.normalizarTelefone(this.telefone);
     }
 
     @PreUpdate
     private void preUpdate() {
         this.updatedAt = LocalDateTime.now();
+        this.telefone = UserValidator.normalizarTelefone(this.telefone);
     }
 
 }

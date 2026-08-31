@@ -52,7 +52,10 @@ class UserMapperTest {
                 .setActive(true)
                 .setCreatedAt(CREATED_AT)
                 .setUpdatedAt(UPDATED_AT)
-                .setPerfil(Perfil.GESTOR_FROTA);
+                .setPerfil(Perfil.GESTOR_FROTA)
+                .setTelefone("47999998888")
+                .setMatricula("12345")
+                .setSenhaDefinida(false);
     }
 
     @Test
@@ -91,6 +94,11 @@ class UserMapperTest {
         assertThat(response.updatedAt()).isEqualTo(UPDATED_AT);
         assertThat(response.perfil()).isEqualTo(Perfil.GESTOR_FROTA);
         assertThat(response.regional()).isEqualTo(new RegionalSummaryResponse(1L, "Joinville", "JOI"));
+        assertThat(response.telefone()).isEqualTo("47999998888");
+        assertThat(response.matricula()).isEqualTo("12345");
+        // Oposto de isActive de proposito: sao os dois unicos Boolean do record, entao
+        // troca-los de posicao quebra este teste.
+        assertThat(response.senhaDefinida()).isFalse();
     }
 
     @Test
@@ -105,5 +113,8 @@ class UserMapperTest {
         assertThat(entity.getEmail()).isEqualTo("novo@test.com");
         assertThat(entity.getPassword()).isEqualTo("encodedPassword");
         assertThat(entity.getRegional()).isNull();
+        assertThat(entity.getSenhaDefinida()).isTrue();
+        assertThat(entity.getTelefone()).isNull();
+        assertThat(entity.getMatricula()).isNull();
     }
 }

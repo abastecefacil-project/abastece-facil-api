@@ -58,11 +58,12 @@ class UserServiceTest {
                 .setPassword("pass123")
                 .setActive(true)
                 .setCreatedAt(LocalDateTime.now())
-                .setPerfil(Perfil.COLABORADOR);
+                .setPerfil(Perfil.COLABORADOR)
+                .setSenhaDefinida(true);
 
         userResponse = new UserResponse(
                 1L, "User One", "one@test.com", true, LocalDateTime.now(), null,
-                Perfil.COLABORADOR, null);
+                Perfil.COLABORADOR, null, "47999998888", "12345", true);
     }
 
     @Test

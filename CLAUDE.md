@@ -155,11 +155,12 @@ populado, faz baseline na versão 1 (`baseline-on-migrate: true`, `baseline-vers
 não definido, default 1) e a V1 nunca executa — a migração começa da V2.
 
 As duas fontes eram idênticas até a V1. **Da V2 em diante elas divergem por
-construção**: `regionais` e as colunas `users.perfil` / `users.regional_id` existem
-só no Flyway. Isso é seguro porque V2 e V3 são auto-suficientes (`CREATE TABLE IF
-NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, sem depender de nada que a
-V1 crie), então rodam igual nos dois caminhos. Migrations futuras precisam manter
-essa propriedade enquanto o init-script existir.
+construção**: `regionais` e as colunas que a V3 e a V4 acrescentam a `users`
+existem só no Flyway. Isso é seguro porque V2, V3 e V4 são auto-suficientes
+(`CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`,
+`CREATE UNIQUE INDEX IF NOT EXISTS`, sem depender de nada que a V1 crie), então
+rodam igual nos dois caminhos. Migrations futuras precisam manter essa propriedade
+enquanto o init-script existir.
 
 Existe ainda um `dump.sql` na **raiz** do repositório, divergente do de
 `init-scripts/` (2 usuários em vez de 3, hashes diferentes) e que ninguém consome.
@@ -171,8 +172,9 @@ existiriam no momento em que ele roda. Resolver antes do deploy em produção, o
 não haverá init-script e a V1 vai precisar rodar de verdade pela primeira vez.
 
 ### `users`
-`id`, `name`, `email` (único), `password` (BCrypt), `is_active`, `created_at`,
-`updated_at`, `perfil`, `regional_id`
+`id`, `name`, `email` (único), `password` (BCrypt, **nullable**), `is_active`,
+`created_at`, `updated_at`, `perfil`, `regional_id`, `telefone`, `matricula`,
+`senha_definida`
 
 `perfil` e `regional_id` entraram pela `V3__perfil_usuario.sql`. `perfil` é
 `varchar not null default 'COLABORADOR'` — o default faz o backfill das linhas
@@ -184,6 +186,23 @@ Na entidade, `perfil` é o **primeiro `@Enumerated(EnumType.STRING)` do projeto*
 e `regional` é o **primeiro `@ManyToOne` do projeto** — até a V3 não havia nenhum
 relacionamento JPA no código. O `prePersist` define `COLABORADOR` quando o perfil
 vem nulo.
+
+`telefone`, `matricula` e `senha_definida` entraram pela `V4__identidade_usuario.sql`,
+que também **tornou `password` nullable**. Os três primeiros são nullable exceto
+`senha_definida`, que é `boolean not null default true` — o default preserva todos os
+usuários existentes, e o cadastro administrativo (S2) cria com `false`. `telefone` é
+normalizado para apenas dígitos no `@PrePersist`/`@PreUpdate` da entidade, via
+`UserValidator.normalizarTelefone` — é a **única entidade do projeto que normaliza
+campo em callback**; nas demais os callbacks só cuidam de timestamp e flag.
+
+`matricula` é única **ignorando nulos**, garantida por
+`CREATE UNIQUE INDEX uk_users_matricula ON users (matricula) WHERE matricula IS NOT NULL`.
+Atenção: por ter predicado `WHERE`, isso é obrigatoriamente um **índice**, não uma
+constraint — o Postgres não aceita predicado em `UNIQUE CONSTRAINT`. Consequência
+prática: `uk_users_matricula` **não aparece em `pg_constraint`**, só em `pg_indexes`.
+É a única exceção ao padrão de constraint usado da V2 em diante, e o nome segue a
+convenção mesmo assim. A entidade não declara `@UniqueConstraint` para o campo, de
+propósito: a anotação descreveria uma constraint total, que não é o que existe.
 
 ### `gas_stations`
 `id`, `name`, `fantasy_name`, `cnpj` (único), `latitude` (10,8), `longitude` (11,8),
@@ -319,6 +338,10 @@ chamada extra. Nenhum campo foi removido ou renomeado.
 }
 ```
 
+Depois, o S1 acrescentou `telefone`, `matricula` e `senhaDefinida` ao mesmo record.
+`senhaDefinida` é o que permite ao frontend distinguir "aguardando ativação" de
+"ativo" e decidir quando oferecer o reenvio — não expõe hash nem senha.
+
 `regional` é `null` quando não há vínculo, e é um `RegionalSummaryResponse`
 **enxuto de propósito**: só `id`, `nome` e `sigla`. `ativo`, `createdAt` e
 `updatedAt` da regional não têm consumidor dentro do usuário e criariam
@@ -327,8 +350,23 @@ acoplamento — o `RegionalResponse` completo continua exclusivo de `/api/region
 **Claims do JWT:** `sub` (email), `iat`, `exp` e `perfil` (o nome do enum, como
 string). O `perfil` entrou no P0.3; antes o token não carregava papel nenhum.
 
-Escrita de `perfil` e `regional` **não tem caminho HTTP**: `RegisterRequest`,
-`UpdateUserRequest` e `POST /api/users` não aceitam esses campos. Ver §6.
+Escrita de `perfil`, `regional`, `telefone` e `matricula` **não tem caminho HTTP**:
+`RegisterRequest`, `UpdateUserRequest` e `POST /api/users` não aceitam esses campos.
+Ver §6.
+
+**Erros do login.** Três rejeições distintas, todas com `error` próprio para o
+frontend poder diferenciá-las — o `ErrorResponse` só carrega `status`, `error`,
+`message` e `path`, então o campo `error` é o único discriminador programático:
+
+| Situação | HTTP | `error` |
+|---|---|---|
+| email não cadastrado | 404 | `NOT_FOUND` |
+| usuário inativo | 401 | `UNAUTHORIZED` |
+| senha ainda não definida | 401 | `PASSWORD_NOT_SET` |
+| credencial inválida | 401 | `UNAUTHORIZED` |
+
+`InvalidUserDataException` (matrícula ou telefone fora do formato) responde 400 com
+`error = "BAD_REQUEST"`, mas ainda não é alcançável por endpoint nenhum. Ver §6.
 
 ---
 
@@ -353,6 +391,21 @@ Escrita de `perfil` e `regional` **não tem caminho HTTP**: `RegisterRequest`,
    é o S2, e o primeiro `ADMINISTRADOR` vem do A3, criado por variável de ambiente
    na subida — não por HTTP. Até lá, **promoção é `UPDATE` manual no banco**, o que
    é limitação conhecida e aceita, não esquecimento.
+7. **Login rejeita usuário sem senha definida antes de tocar no `PasswordEncoder`.**
+   `AuthService.validateSenhaDefinida` roda entre a checagem de inativo e o
+   `authenticationManager.authenticate`, e lança `PasswordNotSetException` (401,
+   `error = "PASSWORD_NOT_SET"`). A condição é dupla — `senhaDefinida == false`
+   **ou** `password == null` — para que uma linha inconsistente, criada por `UPDATE`
+   manual, também seja barrada em vez de falhar mais adiante.
+8. **Definir senha liga `senha_definida`.** `UserService.updatePasswordIfProvided`
+   seta a flag junto com o hash, mantendo o invariante
+   `password != null ⟺ senhaDefinida`. Sem isso um usuário criado sem senha
+   receberia uma senha válida e continuaria sem conseguir logar.
+9. **Telefone é persistido só com dígitos.** A máscara é aceita na entrada e
+   descartada no `@PrePersist`/`@PreUpdate`. Consultar `users.telefone` esperando
+   `(47) 99999-8888` não encontra nada — o que está gravado é `47999998888`.
+10. **Matrícula é única entre os não nulos.** Vários usuários sem matrícula
+    convivem; dois com a mesma matrícula são rejeitados pelo banco.
 
 ---
 
@@ -508,12 +561,32 @@ Problemas reais já encontrados. Consultar antes de investigar comportamento est
     duplicação foi eliminada de propósito: dois pontos produzindo authority são a
     origem provável de divergência futura.
 
-13. **`loadUserByUsername` não filtra `is_active`.** Usuário excluído logicamente
+13. **Não existe `@ExceptionHandler` genérico, e senha nula quebra o `UserDetails`.**
+    O `GlobalExceptionHandler` registra doze exceções nominalmente e **nenhum
+    fallback** (`Exception.class` / `RuntimeException.class`), então qualquer exceção
+    não registrada escapa para o `BasicErrorController` e vira um 500 cru, sem
+    `ErrorResponse`. Isso importa desde que `password` virou nullable: o construtor
+    de `org.springframework.security.core.userdetails.User` faz
+    `Assert.isTrue(... password != null ...)` e lançaria `IllegalArgumentException`
+    a cada requisição autenticada de um usuário sem senha, pelo
+    `JwtAuthenticationFilter`. Daí a guarda em
+    `CustomUserDetailsService.toUserDetails`, que passa `""` no lugar do nulo — o
+    BCrypt não casa com senha nenhuma contra `""`, então o pior caso é 401, nunca
+    500 e nunca acesso. Ao criar exceção nova, **registre o handler junto**.
+
+14. **`loadUserByUsername` não filtra `is_active`.** Usuário excluído logicamente
     continua autenticando com um token já emitido — a checagem de inativo existe
     **apenas** em `AuthService.login`, e o token vive 24h. É falha de segurança
     real, conhecida, e deixada de fora do P0.3 de propósito para não misturar
     escopo. Será tratada em prompt próprio. Não confundir com bug novo ao
     investigar comportamento de sessão.
+
+O `init-scripts/dump.sql` popula a tabela `users` com três registros:
+`pedro@email.com`, `rafaela.mendes@email.com` e `admin@abastecefacil.com`. Todos
+com **hashes BCrypt cuja origem não está documentada**, então não é possível logar
+com nenhum deles. O `admin@abastecefacil.com` aparenta ter sido a conta
+administrativa da equipe anterior, mas a senha se perdeu. Não confundir com o
+login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relação.
 
 ---
 
@@ -521,21 +594,22 @@ Problemas reais já encontrados. Consultar antes de investigar comportamento est
 
 ### Qualidade
 
-- **60 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **77 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `CustomUserDetailsService`, `OpenStreetMapService`,
-  `ViaCepService`, o `UserMapper` e o handler global de exceções. São testes com
-  mock, não sobem banco nem contexto Spring completo
+  `ViaCepService`, o `UserMapper`, o `UserValidator` e o handler global de exceções.
+  São testes com mock, não sobem banco nem contexto Spring completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração
-  no backend: a contagem tem que continuar 60, ou subir junto com os testes novos. O
+  no backend: a contagem tem que continuar 77, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   Limite conhecido dessa suíte: por ser Mockito puro, **ela não valida nada de
   schema**. Constraint de banco, migration e o `validate` do Hibernate só são
   exercidos subindo a aplicação — por isso a unicidade de `regionais.sigla`, a FK
   `fk_users_regional` e o backfill de `users.perfil` não têm teste automatizado, e
-  sim verificação manual via `psql`.
+  sim verificação manual via `psql`. O mesmo vale para o índice parcial
+  `uk_users_matricula` e para o backfill de `senha_definida`.
 - `npx eslint src` reporta **15 erros pré-existentes**: nomes de componente de
   palavra única (`Map`, `Login`, `Reports`, `Occurrences`) e variáveis não usadas
   (`unwatchMobile`, `response`, `error`, `deletarPosto`, `apiPublic`). Não são

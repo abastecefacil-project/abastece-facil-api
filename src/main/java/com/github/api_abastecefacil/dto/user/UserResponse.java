@@ -13,6 +13,9 @@ public record UserResponse(
         LocalDateTime createdAt,
         LocalDateTime updatedAt,
         Perfil perfil,
-        RegionalSummaryResponse regional
+        RegionalSummaryResponse regional,
+        String telefone,
+        String matricula,
+        Boolean senhaDefinida
 ) {
 }

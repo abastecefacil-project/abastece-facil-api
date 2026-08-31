@@ -65,6 +65,25 @@ class CustomUserDetailsServiceTest {
                 .containsExactly("ROLE_ADMINISTRADOR");
     }
 
+    /**
+     * Trava contra 500: o construtor do UserDetails do Spring rejeita senha nula, e o
+     * projeto nao tem @ExceptionHandler generico, entao a IllegalArgumentException
+     * viraria um 500 cru a cada requisicao autenticada de um usuario sem senha.
+     */
+    @Test
+    void loadUserByUsername_ShouldUseEmptyPassword_WhenPasswordIsNull() {
+        user.setPassword(null).setSenhaDefinida(false);
+        when(userRepository.findByEmail("user@test.com")).thenReturn(Optional.of(user));
+
+        UserDetails userDetails = customUserDetailsService.loadUserByUsername("user@test.com");
+
+        assertThat(userDetails.getPassword()).isEmpty();
+        assertThat(userDetails.getUsername()).isEqualTo("user@test.com");
+        assertThat(userDetails.getAuthorities())
+                .extracting(GrantedAuthority::getAuthority)
+                .containsExactly("ROLE_COLABORADOR");
+    }
+
     @Test
     void loadUserByUsername_ShouldThrowUsernameNotFoundException_WhenEmailDoesNotExist() {
         when(userRepository.findByEmail("unknown@test.com")).thenReturn(Optional.empty());

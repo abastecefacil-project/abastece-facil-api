@@ -5,6 +5,7 @@ import com.github.api_abastecefacil.dto.auth.LoginRequest;
 import com.github.api_abastecefacil.dto.auth.RegisterRequest;
 import com.github.api_abastecefacil.exception.InvalidLoginException;
 import com.github.api_abastecefacil.exception.NotFoundException;
+import com.github.api_abastecefacil.exception.PasswordNotSetException;
 import com.github.api_abastecefacil.exception.UserAlreadyExistsException;
 import com.github.api_abastecefacil.mapper.UserMapper;
 import com.github.api_abastecefacil.model.Perfil;
@@ -69,7 +70,8 @@ class AuthServiceTest {
                 .setEmail("user@test.com")
                 .setPassword("encodedPassword")
                 .setActive(true)
-                .setPerfil(Perfil.COLABORADOR);
+                .setPerfil(Perfil.COLABORADOR)
+                .setSenhaDefinida(true);
 
         userDetails = new org.springframework.security.core.userdetails.User(
                 "user@test.com",
@@ -149,6 +151,30 @@ class AuthServiceTest {
         when(userRepository.findByEmail("user@test.com")).thenReturn(Optional.of(user));
 
         assertThrows(InvalidLoginException.class, () -> authService.login(request));
+    }
+
+    @Test
+    void login_ShouldThrowPasswordNotSetException_WhenSenhaNaoDefinida() {
+        user.setSenhaDefinida(false);
+        LoginRequest request = new LoginRequest("user@test.com", "qualquerSenha123");
+        when(userRepository.findByEmail("user@test.com")).thenReturn(Optional.of(user));
+
+        assertThrows(PasswordNotSetException.class, () -> authService.login(request));
+
+        // A restricao central do S1: rejeitar antes de qualquer chamada ao PasswordEncoder.
+        verify(authenticationManager, never()).authenticate(any());
+        verify(jwtService, never()).generateToken(anyMap(), any(UserDetails.class));
+    }
+
+    @Test
+    void login_ShouldThrowPasswordNotSetException_WhenPasswordIsNull() {
+        user.setPassword(null).setSenhaDefinida(true);
+        LoginRequest request = new LoginRequest("user@test.com", "qualquerSenha123");
+        when(userRepository.findByEmail("user@test.com")).thenReturn(Optional.of(user));
+
+        assertThrows(PasswordNotSetException.class, () -> authService.login(request));
+
+        verify(authenticationManager, never()).authenticate(any());
     }
 
     @Test
