@@ -24,6 +24,14 @@ jwt:
   secret: YWJhc3RlY2VmYWNpbC1zZWNyZXQta2V5LTIwMjQtdmVyeS1sb25nLWFuZC1zZWN1cmUta2V5LWZvci1qd3Qtc2lnbmluZw==
   expiration: 86400000
 
+abastecefacil:
+  token:
+    # Prazo de vida dos tokens de acesso enviados por e-mail, em horas.
+    # Ativação é mais longa porque o usuário pode demorar a abrir o convite;
+    # recuperação é curta porque a ação é imediata e o risco é maior.
+    ativacao-horas: 48
+    recuperacao-horas: 1
+
 viacep-api:
   url: "https://viacep.com.br/ws/"
 

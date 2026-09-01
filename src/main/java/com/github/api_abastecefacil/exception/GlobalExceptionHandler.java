@@ -77,6 +77,37 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
     }
 
+    /**
+     * 410 Gone, e nao 400: o caso predominante nao e uma requisicao malformada, e um
+     * token que existiu e nao vale mais -- consumido, expirado ou substituido por um
+     * reenvio. O status comunica isso melhor.
+     *
+     * <p>O "error" foge do nome do status pelo mesmo motivo de
+     * {@link #handlePasswordNotSetException}: o ErrorResponse so carrega status, error,
+     * message e path, entao esse campo e o unico discriminador programatico que o
+     * frontend tem para diferenciar "link expirado, peca outro" de qualquer outro 410.
+     *
+     * <p>A mensagem e a mesma para as quatro rejeicoes possiveis (inexistente, usado,
+     * expirado, finalidade divergente), de proposito. Ver TokenAcessoConstants.
+     *
+     * <p>Ainda nao alcancavel por endpoint nenhum: o M2 entrega so dominio e
+     * persistencia. O status deve ser reconfirmado no M3, quando existir rota
+     * consumindo o token.
+     */
+    @ExceptionHandler(TokenInvalidoException.class)
+    public ResponseEntity<ErrorResponse> handleTokenInvalidoException(
+            TokenInvalidoException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.GONE.value(),
+                "TOKEN_INVALIDO",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.GONE).body(error);
+    }
+
     @ExceptionHandler(InvalidUserDataException.class)
     public ResponseEntity<ErrorResponse> handleInvalidUserDataException(
             InvalidUserDataException ex, WebRequest request) {

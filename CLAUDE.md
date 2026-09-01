@@ -233,6 +233,39 @@ demais FKs (`gas_stations.regional_id` e afins) entram depois.
 Não há relacionamento JPA entre `incidents` e `cars`: a ligação é pela **string da
 placa**, validada em tempo de criação.
 
+### `tokens_acesso`
+`id`, `email`, `token_hash` (único), `finalidade`, `expira_em`, `usado_em`,
+`ip_solicitante`, `created_at`
+
+Tokens de uso único enviados por e-mail, criados pela `V5__token_acesso.sql`. É a
+tabela mais isolada do schema: a V5 não depende de nenhuma anterior, o que a torna
+auto-suficiente nos dois caminhos de inicialização por construção, sem esforço.
+
+`finalidade` é o segundo `@Enumerated(EnumType.STRING)` do projeto (enum
+`model/FinalidadeToken.java`, valores `ATIVACAO` e `RECUPERACAO`), depois do `perfil`.
+
+**Não há FK para `users`, de propósito.** O token é solicitado por e-mail e o usuário
+pode não existir no momento da solicitação — o que também mantém a recuperação de
+senha com a mesma resposta para conta existente e inexistente. A coluna guarda o
+e-mail em texto.
+
+`token_hash` guarda o **SHA-256 hexadecimal** do token, 64 caracteres minúsculos,
+nunca o valor em claro. Uma consulta direta na tabela não devolve nada que sirva para
+autenticar.
+
+`TokenAcesso` é a única entidade **sem `@PreUpdate`**: ela nunca é atualizada pela
+JPA. Consumo e invalidação passam por `UPDATE` nativo no repository, que a JPA não
+intercepta — um callback ali nunca dispararia.
+
+**Extensão da convenção de nomes, válida da V5 em diante:**
+
+| Padrão | Uso | Exemplo |
+|---|---|---|
+| `ix_<tabela>_<coluna>` | índice não único | `ix_tokens_acesso_email` |
+
+A V2 fixou `pk_`/`uk_`/`fk_` e não previu índice comum. Como o `uk_users_matricula`
+da V4, `ix_tokens_acesso_email` aparece em `pg_indexes` e **não** em `pg_constraint`.
+
 ---
 
 ## 5. API
@@ -368,6 +401,26 @@ frontend poder diferenciá-las — o `ErrorResponse` só carrega `status`, `erro
 `InvalidUserDataException` (matrícula ou telefone fora do formato) responde 400 com
 `error = "BAD_REQUEST"`, mas ainda não é alcançável por endpoint nenhum. Ver §6.
 
+`TokenInvalidoException` responde **410 Gone** com `error = "TOKEN_INVALIDO"`, e
+também ainda não é alcançável por endpoint nenhum — o M2 entregou só domínio e
+persistência. 410 e não 400 porque o caso predominante não é requisição malformada e
+sim um token que existiu e não vale mais: consumido, expirado ou substituído por um
+reenvio. O status deve ser reconfirmado quando existir rota consumindo o token.
+
+### Propriedades de configuração
+
+Além de `jwt.*`, `viacep-api.*` e `openstreetmap-api.*`, o `application.yml` traz:
+
+| Propriedade | Default | Uso |
+|---|---|---|
+| `abastecefacil.token.ativacao-horas` | `48` | validade do token de ativação |
+| `abastecefacil.token.recuperacao-horas` | `1` | validade do token de recuperação |
+
+Prazos distintos de propósito: ativação é longa porque o usuário pode demorar a abrir
+o convite; recuperação é curta porque a ação é imediata e o risco, maior. O TTL é
+decisão operacional e por isso **não** está compilado no enum `FinalidadeToken` — quem
+resolve finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
+
 ---
 
 ## 6. Regras de negócio que não são óbvias pelo código
@@ -406,6 +459,35 @@ frontend poder diferenciá-las — o `ErrorResponse` só carrega `status`, `erro
    `(47) 99999-8888` não encontra nada — o que está gravado é `47999998888`.
 10. **Matrícula é única entre os não nulos.** Vários usuários sem matrícula
     convivem; dois com a mesma matrícula são rejeitados pelo banco.
+11. **O token de acesso em claro existe uma única vez.** É o valor de retorno de
+    `TokenAcessoService.gerarToken` e nada além disso: não é persistido, não vai para
+    log — nem de debug —, não entra em DTO e não aparece em mensagem de exceção. O
+    banco só conhece o SHA-256 dele. SHA-256 e não BCrypt de propósito: o custo
+    deliberado do BCrypt existe para senhas humanas, de baixa entropia; este token tem
+    256 bits sorteados por `SecureRandom` e é rehasheado a cada validação.
+12. **O consumo do token é atômico, e a validade é a contagem de linhas.**
+    `TokenAcessoRepository.consumir` é um único `UPDATE ... SET usado_em = now()
+    WHERE token_hash = ? AND finalidade = ? AND usado_em IS NULL AND expira_em > now()`,
+    e o token só vale quando ele afeta **exatamente 1** linha. `findByTokenHash`
+    seguido de `save` teria janela de corrida entre ler e marcar: duas requisições
+    simultâneas com o mesmo token leriam as duas `usado_em = null` e passariam as
+    duas. O `UPDATE` condicional fecha a janela porque o Postgres serializa a escrita
+    na linha.
+13. **As quatro rejeições compartilham uma mensagem.** Token inexistente, expirado, já
+    usado e de finalidade divergente caem todos no mesmo predicado, viram a mesma
+    `TokenInvalidoException` e a mesma string. Mensagens distintas revelariam a quem
+    tem o token se ele existe, se já foi consumido ou para que servia. Um token
+    `ATIVACAO` validado como `RECUPERACAO` é rejeitado, e o inverso também.
+14. **Gerar um token invalida os pendentes anteriores do mesmo par (e-mail,
+    finalidade)** — senão um reenvio deixaria dois links válidos circulando. A
+    invalidação é feita **expirando** o anterior (`expira_em = now()`), nunca marcando
+    `usado_em`. Consequência para quem lê a tabela: `usado_em` significa só consumo
+    real pelo usuário, e uma linha vencida sem `usado_em` pode ter sido substituída em
+    vez de ter vencido sozinha.
+15. **Tokens expirados há mais de 7 dias são apagados diariamente** por
+    `TokenAcessoService.limparTokensExpirados` (`@Scheduled`, 3h). A janela de
+    retenção existe para que um token recém-vencido ainda apareça numa investigação
+    de suporte.
 
 ---
 
@@ -581,6 +663,29 @@ Problemas reais já encontrados. Consultar antes de investigar comportamento est
     escopo. Será tratada em prompt próprio. Não confundir com bug novo ao
     investigar comportamento de sessão.
 
+15. **Enum em query nativa é bindado por ordinal, não pelo nome.** Passar um
+    `FinalidadeToken` direto para o `@Query(nativeQuery = true)` do
+    `TokenAcessoRepository` mandaria um inteiro contra uma coluna
+    `character varying`: o `UPDATE` afetaria zero linhas sempre, e a validação
+    rejeitaria **todo** token válido, em silêncio e sem erro. Por isso as assinaturas
+    recebem `String` e o service passa `finalidade.name()`. Vale para qualquer query
+    nativa futura que filtre por enum.
+
+### Primeiras ocorrências introduzidas pelo M2
+
+Três coisas que não existiam no projeto e agora têm um único ponto de uso — ao mexer
+nelas, note que não há segundo exemplo para comparar:
+
+- **`@Modifying`** — os três `@Query` anteriores eram todos leitura paginada. Os do
+  `TokenAcessoRepository` usam `flushAutomatically`/`clearAutomatically` porque o
+  service lê logo depois do `UPDATE`, e o cache de primeiro nível não enxerga escrita
+  nativa.
+- **`@Scheduled` / `@EnableScheduling`** — habilitado em `config/SchedulingConfig`.
+  Sem essa classe a anotação é ignorada **em silêncio**: a aplicação sobe normalmente
+  e a tarefa simplesmente nunca roda.
+- **`SecureRandom` / `MessageDigest`** — o único hashing anterior era o
+  `BCryptPasswordEncoder` do Spring Security.
+
 O `init-scripts/dump.sql` popula a tabela `users` com três registros:
 `pedro@email.com`, `rafaela.mendes@email.com` e `admin@abastecefacil.com`. Todos
 com **hashes BCrypt cuja origem não está documentada**, então não é possível logar
@@ -594,15 +699,15 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **77 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **90 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
-  `RegionalService`, `CustomUserDetailsService`, `OpenStreetMapService`,
-  `ViaCepService`, o `UserMapper`, o `UserValidator` e o handler global de exceções.
-  São testes com mock, não sobem banco nem contexto Spring completo
-  (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
-  `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração
-  no backend: a contagem tem que continuar 77, ou subir junto com os testes novos. O
-  frontend não tem testes.
+  `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
+  `OpenStreetMapService`, `ViaCepService`, o `UserMapper`, o `UserValidator` e o
+  handler global de exceções. São testes com mock, não sobem banco nem contexto
+  Spring completo (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e
+  hoje é um `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer
+  alteração no backend: a contagem tem que continuar 90, ou subir junto com os testes
+  novos. O frontend não tem testes.
 
   Limite conhecido dessa suíte: por ser Mockito puro, **ela não valida nada de
   schema**. Constraint de banco, migration e o `validate` do Hibernate só são
@@ -610,6 +715,15 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   `fk_users_regional` e o backfill de `users.perfil` não têm teste automatizado, e
   sim verificação manual via `psql`. O mesmo vale para o índice parcial
   `uk_users_matricula` e para o backfill de `senha_definida`.
+
+  **Limite específico do `TokenAcessoService`: a atomicidade do consumo não é
+  verificável por esta suíte.** O teste prova que o `UPDATE` foi chamado com o hash e
+  a finalidade certos, e que o service só aceita contagem 1 — **não** prova que duas
+  requisições concorrentes com o mesmo token falham. Essa garantia vem do Postgres
+  serializar a escrita na linha, e verificá-la de verdade exigiria Testcontainers.
+  Enquanto isso, a verificação é manual: rodar as próprias instruções do repository no
+  `psql` e conferir `UPDATE 1` no primeiro consumo e `UPDATE 0` no repetido, no
+  expirado, no de finalidade divergente e no invalidado por substituição.
 - `npx eslint src` reporta **15 erros pré-existentes**: nomes de componente de
   palavra única (`Map`, `Login`, `Reports`, `Occurrences`) e variáveis não usadas
   (`unwatchMobile`, `response`, `error`, `deletarPosto`, `apiPublic`). Não são

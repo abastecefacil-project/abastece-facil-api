@@ -73,6 +73,18 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void handleTokenInvalidoException_ShouldReturn410Gone() {
+        TokenInvalidoException ex = new TokenInvalidoException("Token inválido ou expirado");
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleTokenInvalidoException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.GONE);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("TOKEN_INVALIDO");
+        assertThat(response.getBody().message()).isEqualTo("Token inválido ou expirado");
+    }
+
+    @Test
     void handleCoordinatesNotFoundException_ShouldReturn400BadRequest() {
         CoordinatesNotFoundException ex = new CoordinatesNotFoundException("Coordenadas não encontradas");
 
