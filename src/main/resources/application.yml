@@ -1,13 +1,26 @@
+# Configuração base + defaults de DESENVOLVIMENTO LOCAL (nenhum perfil ativo).
+# Vale para ./mvnw spring-boot:run rodando na máquina, contra o Postgres do compose.
+#
+# Dentro do container o perfil "docker" está ativo e o application-docker.yml
+# sobrescreve apenas o datasource. Tudo que está aqui e não aparece lá vale nos dois.
+#
+# Precedência: variável de ambiente > application-docker.yml > este arquivo.
+# Qualquer propriedade abaixo aceita override por env var na forma maiúscula com
+# underscore (spring.datasource.url -> SPRING_DATASOURCE_URL). Ver §3 do CLAUDE.md.
+
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/abastecefacil
+    # Porta 5433, e não 5432: o compose publica o Postgres em 5433 no host porque
+    # 5432 costuma já estar tomada por uma instalação nativa do PostgreSQL. Dentro
+    # da rede do compose continua sendo postgres:5432. Ver §3 do CLAUDE.md.
+    url: jdbc:postgresql://localhost:5433/abastecefacil
     username: abastecefacil_user
     password: abastecefacil_password
     driver-class-name: org.postgresql.Driver
   flyway:
     enabled: true
     baseline-on-migrate: true
-  
+
   jpa:
     hibernate:
       ddl-auto: validate
@@ -21,6 +34,8 @@ server:
   port: 8081
 
 jwt:
+  # Segredo de desenvolvimento, versionado desde o início do projeto. Em produção,
+  # sobrescrever com a variável de ambiente JWT_SECRET — nunca editar este valor aqui.
   secret: YWJhc3RlY2VmYWNpbC1zZWNyZXQta2V5LTIwMjQtdmVyeS1sb25nLWFuZC1zZWN1cmUta2V5LWZvci1qd3Qtc2lnbmluZw==
   expiration: 86400000
 
@@ -37,5 +52,7 @@ viacep-api:
 
 openstreetmap-api:
   url: "https://nominatim.openstreetmap.org"
-  user-agent: "${OPENSTREETMAP_USER_AGENT:PostoApp (pedrohenriquedasilvapereira12@gmail.com)}"
-
+  # A política de uso do Nominatim exige um User-Agent com contato válido. O default
+  # abaixo é genérico de propósito; em produção, apontar OPENSTREETMAP_USER_AGENT para
+  # um endereço realmente monitorado, senão o serviço pode bloquear as requisições.
+  user-agent: "${OPENSTREETMAP_USER_AGENT:AbasteceFacil/1.0 (contato@abastecefacil.com.br)}"

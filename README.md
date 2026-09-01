@@ -44,10 +44,25 @@ docker compose up -d postgres
 ### Configurações do Banco
 
 - **Host:** localhost (dev) / postgres (docker)
-- **Porta:** 5432
+- **Porta:** **5433** no host (dev) / 5432 dentro da rede do compose (docker)
 - **Database:** abastecefacil
 - **Usuário:** abastecefacil_user
 - **Senha:** abastecefacil_password
+
+> A porta publicada é 5433, e não 5432, porque uma instalação nativa do PostgreSQL na
+> máquina costuma já ocupar a 5432 — nesse caso o Docker publica só em IPv6 e uma
+> conexão para `localhost:5432` cai no banco errado, falhando com "autenticação do
+> tipo senha falhou". Só quem chega de fora usa a 5433: o container da API e o pgAdmin
+> falam `postgres:5432` pelo DNS interno da rede.
+
+### Arquivos de configuração
+
+- `application.yml` — base e defaults de desenvolvimento local (`./mvnw spring-boot:run`).
+- `application-docker.yml` — sobrescreve só o datasource quando o perfil `docker`
+  está ativo, o que o `docker-compose.yml` faz via `SPRING_PROFILES_ACTIVE`.
+
+Variável de ambiente tem precedência sobre os dois. A tabela completa de propriedades
+está no `CLAUDE.md`, seção 3.
 
 ### Endpoints da API
 

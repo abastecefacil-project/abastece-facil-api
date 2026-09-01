@@ -1,0 +1,23 @@
+# Perfil "docker": vale quando a aplicação roda DENTRO da rede do compose.
+# Ativado por SPRING_PROFILES_ACTIVE=docker, definido no docker-compose.yml.
+#
+# Só entra aqui o que muda por ser container. Todo o resto — jwt, abastecefacil.token,
+# viacep-api, openstreetmap-api, flyway, jpa, server.port — vem do application.yml,
+# que continua sendo carregado como base. Este arquivo apenas sobrescreve.
+#
+# Antes deste arquivo existir, o perfil "docker" era decorativo: estava ativo mas não
+# tinha configuração nenhuma, e o endereço do banco chegava por SPRING_DATASOURCE_URL
+# no compose. O valor agora mora aqui, num lugar só.
+#
+# Variável de ambiente continua vencendo este arquivo (precedência do Spring), então
+# em produção basta exportar SPRING_DATASOURCE_URL, SPRING_DATASOURCE_USERNAME e
+# SPRING_DATASOURCE_PASSWORD sem editar nada.
+
+spring:
+  datasource:
+    # "postgres" é o nome do serviço no docker-compose.yml, resolvido pelo DNS interno
+    # da rede abastecefacil-network. Aqui é a porta 5432 do container, não a publicada
+    # no host — a publicação em 5433 só existe para quem chega de fora.
+    url: jdbc:postgresql://postgres:5432/abastecefacil
+    username: abastecefacil_user
+    password: abastecefacil_password

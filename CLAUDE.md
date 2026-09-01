@@ -92,7 +92,35 @@ npm run dev
 | Aplicação | http://localhost:5173 |
 | API | http://localhost:8081 |
 | pgAdmin | http://localhost:5050 — `admin@abastecefacil.com` / `admin` |
-| PostgreSQL | localhost:5432 — `abastecefacil_user` / `abastecefacil_password` / db `abastecefacil` |
+| PostgreSQL | **localhost:5433** — `abastecefacil_user` / `abastecefacil_password` / db `abastecefacil` |
+
+### O banco atende em duas portas diferentes
+
+Ponto que já custou tempo de diagnóstico e vai custar de novo se não for lido:
+
+| De onde se conecta | Endereço |
+|---|---|
+| Do host — `psql`, DBeaver, `./mvnw spring-boot:run` | `localhost:5433` |
+| De dentro da rede do compose — container da API, pgAdmin | `postgres:5432` |
+
+O compose publica `5433:5432`. A porta **5432 do host não pertence a este projeto**:
+uma instalação nativa do PostgreSQL (no Windows, o serviço `postgresql-x64-18`) costuma
+já estar escutando nela. Quando isso acontece o Docker não consegue bindar `0.0.0.0` e
+publica **só em IPv6** (`[::]:5432`), enquanto o Postgres nativo fica com o IPv4. O
+resultado é traiçoeiro: a conexão para `localhost:5432` funciona — só que chega no
+banco errado, e falha com
+
+```
+FATAL: autenticação do tipo senha falhou para o usuário "abastecefacil_user"
+```
+
+que parece senha divergente e não é. **Sinal para distinguir:** o container é Alpine com
+locale C e responde em inglês; se a mensagem vier em **português**, quem respondeu foi o
+Postgres nativo do Windows. Confirmar com
+`Get-NetTCPConnection -LocalPort 5432 -State Listen`.
+
+Publicar em 5433 elimina a ambiguidade sem depender do estado da máquina, que é o que
+faz o repositório funcionar para quem clonar. Dentro da rede do compose nada mudou.
 
 Observações operacionais:
 
@@ -113,6 +141,70 @@ Observações operacionais:
   `abastecefacil-pgadmin`). `docker compose down` só remove os containers do projeto
   onde é executado, então containers antigos de outra pasta causam conflito de nome.
   Nesse caso, `docker rm -f <nome>` antes de subir.
+
+### Configuração por ambiente
+
+Dois arquivos em `src/main/resources/`, e a regra é simples: **o que muda por ser
+container mora no `application-docker.yml`; todo o resto mora no `application.yml`.**
+
+| Arquivo | Quando vale | Conteúdo |
+|---|---|---|
+| `application.yml` | sempre (base), e sozinho no dev local | tudo, com defaults de desenvolvimento local |
+| `application-docker.yml` | só com o perfil `docker` ativo | **apenas** o datasource apontando para `postgres:5432` |
+
+O perfil `docker` é ativado por `SPRING_PROFILES_ACTIVE: docker` no `docker-compose.yml`.
+O `application-docker.yml` **sobrescreve**, não substitui: o `application.yml` continua
+sendo carregado como base, então `jwt`, `abastecefacil.token`, `viacep-api`,
+`openstreetmap-api`, `flyway`, `jpa` e `server.port` valem nos dois ambientes e são
+declarados uma vez só.
+
+Precedência: **variável de ambiente > `application-docker.yml` > `application.yml`.**
+
+Nota histórica: até o P0.7 o `application-docker.yml` **não existia**. O perfil estava
+ativo mas vazio, e o endereço do banco chegava por `SPRING_DATASOURCE_URL` no compose —
+o que fazia o mesmo valor viver em dois lugares. Se alguém encontrar essa env var num
+compose antigo, é resíduo.
+
+### Tabela de propriedades
+
+Toda propriedade aceita override por variável de ambiente na forma maiúscula com
+underscore (*relaxed binding* do Spring): `spring.datasource.url` →
+`SPRING_DATASOURCE_URL`. Não é preciso declarar `${VAR}` no YAML para isso funcionar —
+o único `${...}` do projeto existe porque quisemos um nome de variável **mais curto** do
+que a forma canônica, não porque fosse necessário.
+
+| Propriedade | `application.yml` (local) | `application-docker.yml` | Env var | Precisa em produção? |
+|---|---|---|---|---|
+| `spring.datasource.url` | `jdbc:postgresql://localhost:5433/abastecefacil` | `jdbc:postgresql://postgres:5432/abastecefacil` | `SPRING_DATASOURCE_URL` | **sim** |
+| `spring.datasource.username` | `abastecefacil_user` | `abastecefacil_user` | `SPRING_DATASOURCE_USERNAME` | **sim** |
+| `spring.datasource.password` | `abastecefacil_password` | `abastecefacil_password` | `SPRING_DATASOURCE_PASSWORD` | **sim** |
+| `spring.jpa.hibernate.ddl-auto` | `validate` | — | `SPRING_JPA_HIBERNATE_DDL_AUTO` | não — nunca mudar |
+| `spring.flyway.baseline-on-migrate` | `true` | — | `SPRING_FLYWAY_BASELINE_ON_MIGRATE` | não |
+| `server.port` | `8081` | — | `SERVER_PORT` | não |
+| `jwt.secret` | segredo de dev, versionado | — | `JWT_SECRET` | **sim** |
+| `jwt.expiration` | `86400000` (24h) | — | `JWT_EXPIRATION` | não |
+| `abastecefacil.token.ativacao-horas` | `48` | — | `ABASTECEFACIL_TOKEN_ATIVACAO_HORAS` | não |
+| `abastecefacil.token.recuperacao-horas` | `1` | — | `ABASTECEFACIL_TOKEN_RECUPERACAO_HORAS` | não |
+| `viacep-api.url` | `https://viacep.com.br/ws/` | — | `VIACEP_API_URL` | não |
+| `openstreetmap-api.url` | `https://nominatim.openstreetmap.org` | — | `OPENSTREETMAP_API_URL` | não |
+| `openstreetmap-api.user-agent` | `AbasteceFacil/1.0 (contato@abastecefacil.com.br)` | — | `OPENSTREETMAP_USER_AGENT` | **sim** |
+
+Os três "precisa em produção" que não são o banco:
+
+- **`JWT_SECRET`** — o valor no repositório é de desenvolvimento e está versionado em
+  texto claro desde o início do projeto. Quem conhece o segredo forja token de qualquer
+  usuário. Sobrescrever por variável, nunca editar o arquivo.
+- **`OPENSTREETMAP_USER_AGENT`** — a política de uso do Nominatim exige contato válido.
+  O default atual é genérico de propósito (substituiu o e-mail pessoal de um integrante
+  da equipe anterior, que estava versionado); em produção precisa apontar para um
+  endereço realmente monitorado, senão o serviço pode bloquear as requisições.
+- **Credenciais do banco** — as versionadas são as do compose de desenvolvimento e não
+  devem viajar para fora dele.
+
+**Onde colocar valor novo:** se muda entre local e container, vai nos dois arquivos; se
+não muda, vai só no `application.yml`. Se for segredo, entra no `application.yml` apenas
+com um default **inócuo** de desenvolvimento e ganha uma linha nesta tabela marcada como
+obrigatória em produção — segredo real nunca é versionado.
 
 ---
 
@@ -409,17 +501,11 @@ reenvio. O status deve ser reconfirmado quando existir rota consumindo o token.
 
 ### Propriedades de configuração
 
-Além de `jwt.*`, `viacep-api.*` e `openstreetmap-api.*`, o `application.yml` traz:
-
-| Propriedade | Default | Uso |
-|---|---|---|
-| `abastecefacil.token.ativacao-horas` | `48` | validade do token de ativação |
-| `abastecefacil.token.recuperacao-horas` | `1` | validade do token de recuperação |
-
-Prazos distintos de propósito: ativação é longa porque o usuário pode demorar a abrir
-o convite; recuperação é curta porque a ação é imediata e o risco, maior. O TTL é
-decisão operacional e por isso **não** está compilado no enum `FinalidadeToken` — quem
-resolve finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
+A tabela completa está na **§3**. Sobre `abastecefacil.token.*`: os prazos são distintos
+de propósito — ativação é longa porque o usuário pode demorar a abrir o convite;
+recuperação é curta porque a ação é imediata e o risco, maior. O TTL é decisão
+operacional e por isso **não** está compilado no enum `FinalidadeToken` — quem resolve
+finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
 
 ---
 
