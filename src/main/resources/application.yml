@@ -46,6 +46,21 @@ abastecefacil:
     # recuperação é curta porque a ação é imediata e o risco é maior.
     ativacao-horas: 48
     recuperacao-horas: 1
+  admin:
+    # Administrador inicial, criado na subida por AdministradorInicialInitializer.
+    # Vazio aqui de propósito: sem e-mail e hash a criação é pulada e a aplicação sobe
+    # normalmente, que é o comportamento desejado em desenvolvimento.
+    #
+    # NUNCA preencher senha-hash neste arquivo — ele é versionado. O valor vem da
+    # variável de ambiente ABASTECEFACIL_ADMIN_SENHA_HASH, e o hash se gera pelo
+    # caminho documentado no README, seção "Gerar o hash BCrypt".
+    #
+    # Atenção: admin@abastecefacil.com já existe no init-scripts/dump.sql com perfil
+    # COLABORADOR. Configurar esse e-mail faz o inicializador encontrar o registro e
+    # não criar nada. Use outro endereço.
+    nome: "Administrador"
+    email: ""
+    senha-hash: ""
 
 viacep-api:
   url: "https://viacep.com.br/ws/"

@@ -185,11 +185,14 @@ que a forma canônica, não porque fosse necessário.
 | `jwt.expiration` | `86400000` (24h) | — | `JWT_EXPIRATION` | não |
 | `abastecefacil.token.ativacao-horas` | `48` | — | `ABASTECEFACIL_TOKEN_ATIVACAO_HORAS` | não |
 | `abastecefacil.token.recuperacao-horas` | `1` | — | `ABASTECEFACIL_TOKEN_RECUPERACAO_HORAS` | não |
+| `abastecefacil.admin.nome` | `Administrador` | — | `ABASTECEFACIL_ADMIN_NOME` | não |
+| `abastecefacil.admin.email` | vazio | — | `ABASTECEFACIL_ADMIN_EMAIL` | **sim** |
+| `abastecefacil.admin.senha-hash` | vazio | — | `ABASTECEFACIL_ADMIN_SENHA_HASH` | **sim** |
 | `viacep-api.url` | `https://viacep.com.br/ws/` | — | `VIACEP_API_URL` | não |
 | `openstreetmap-api.url` | `https://nominatim.openstreetmap.org` | — | `OPENSTREETMAP_API_URL` | não |
 | `openstreetmap-api.user-agent` | `AbasteceFacil/1.0 (contato@abastecefacil.com.br)` | — | `OPENSTREETMAP_USER_AGENT` | **sim** |
 
-Os três "precisa em produção" que não são o banco:
+Os "precisa em produção" que não são o banco:
 
 - **`JWT_SECRET`** — o valor no repositório é de desenvolvimento e está versionado em
   texto claro desde o início do projeto. Quem conhece o segredo forja token de qualquer
@@ -200,6 +203,11 @@ Os três "precisa em produção" que não são o banco:
   endereço realmente monitorado, senão o serviço pode bloquear as requisições.
 - **Credenciais do banco** — as versionadas são as do compose de desenvolvimento e não
   devem viajar para fora dele.
+- **`ABASTECEFACIL_ADMIN_EMAIL` e `ABASTECEFACIL_ADMIN_SENHA_HASH`** — sem elas nenhum
+  administrador é criado, e como não há endpoint que promova ninguém, o sistema fica sem
+  caminho administrativo. O que se configura é o **hash BCrypt**, nunca a senha: o
+  `application.yml` é versionado e o valor em claro não pode entrar nele. Como gerar o
+  hash está no README, seção "Gerar o hash BCrypt". Ver §6, item 6.
 
 **Onde colocar valor novo:** se muda entre local e container, vai nos dois arquivos; se
 não muda, vai só no `application.yml`. Se for segredo, entra no `application.yml` apenas
@@ -527,9 +535,32 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
 6. **Todo usuário nasce `COLABORADOR` com regional nula**, e não existe endpoint
    que altere isso. `UserMapper.toEntity` fixa o perfil na criação; o `prePersist`
    da entidade é a rede de segurança. A escrita administrativa de perfil e regional
-   é o S2, e o primeiro `ADMINISTRADOR` vem do A3, criado por variável de ambiente
-   na subida — não por HTTP. Até lá, **promoção é `UPDATE` manual no banco**, o que
-   é limitação conhecida e aceita, não esquecimento.
+   é o S2. **Promover alguém já existente continua sendo `UPDATE` manual no banco** —
+   limitação conhecida e aceita, não esquecimento.
+
+   O **primeiro** `ADMINISTRADOR` já não é mais manual: vem do A3, criado na subida por
+   `config/AdministradorInicialInitializer`, a partir de `abastecefacil.admin.*`. Quatro
+   propriedades do desenho valem registro:
+
+   - **O hash chega pronto e é gravado literalmente.** O inicializador não injeta
+     `PasswordEncoder` de propósito — passar o valor por `encode` produziria o BCrypt de
+     um BCrypt, e o login falharia com um 401 que não se parece nada com erro de
+     configuração. Por isso também não reusa `UserMapper.toEntity`, que codifica e fixa
+     `COLABORADOR`.
+   - **Não é migration.** O Flyway roda fora do contexto de configuração do Spring e não
+     lê `@Value` nem propriedades, então uma `V6` não teria como receber e-mail e hash
+     externos — ficaria obrigada a embutir credencial em SQL versionado.
+   - **Idempotente por e-mail.** Se o e-mail já existe, nada acontece e nada é alterado.
+     A constraint única de `users.email` é o backstop real: `findByEmail` seguido de
+     `save` tem janela de corrida, e a violação é capturada porque um
+     `CommandLineRunner` que lança **derruba a subida**.
+   - **Hash malformado não vira usuário.** O valor é validado contra
+     `^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$` — os três prefixos em uso, mais o
+     comprimento, que pega hash truncado no copiar e colar. Falhando, a aplicação sobe,
+     nada é criado, e saem dois `ERROR`: o detalhado e um resumo no
+     `ApplicationReadyEvent`. **O valor rejeitado nunca entra no log** — se alguém colou
+     a senha em texto plano por engano, logá-la transformaria erro de configuração em
+     vazamento.
 7. **Login rejeita usuário sem senha definida antes de tocar no `PasswordEncoder`.**
    `AuthService.validateSenhaDefinida` roda entre a checagem de inativo e o
    `authenticationManager.authenticate`, e lança `PasswordNotSetException` (401,
@@ -757,6 +788,14 @@ Problemas reais já encontrados. Consultar antes de investigar comportamento est
     recebem `String` e o service passa `finalidade.name()`. Vale para qualquer query
     nativa futura que filtre por enum.
 
+16. **`admin@abastecefacil.com` do dump colide com a configuração óbvia do A3.** O
+    e-mail já existe (id 3, `perfil = COLABORADOR`, hash de origem desconhecida), então
+    configurá-lo em `ABASTECEFACIL_ADMIN_EMAIL` faz o inicializador encontrar o registro
+    e **não criar nada** — deixando um "administrador" que não é administrador e não
+    loga. O `AdministradorInicialInitializer` loga **WARN** exatamente nesse caso,
+    dizendo que o e-mail está tomado por outro perfil e que nada foi alterado. Use outro
+    endereço.
+
 ### Primeiras ocorrências introduzidas pelo M2
 
 Três coisas que não existiam no projeto e agora têm um único ponto de uso — ao mexer
@@ -772,6 +811,17 @@ nelas, note que não há segundo exemplo para comparar:
 - **`SecureRandom` / `MessageDigest`** — o único hashing anterior era o
   `BCryptPasswordEncoder` do Spring Security.
 
+O A3 acrescentou mais duas, ambas em `config/AdministradorInicialInitializer`:
+
+- **`CommandLineRunner` e `@EventListener(ApplicationReadyEvent.class)`** — não havia
+  nenhum hook de subida no projeto. **Ordem real dos logs**, conferida na prática e
+  contraintuitiva: `Started Application in Xs` sai **antes** dos `CommandLineRunner`; o
+  `ApplicationReadyEvent` vem **depois** deles; e o
+  `System.out.println("Application Started Successfully!")` do `Application.main` é a
+  última linha de todas. É por isso que o resumo de erro fica no evento, e não no runner.
+- **Log em nível WARN e ERROR** — antes do A3 o projeto só tinha um `log.info`, no
+  `TokenAcessoService`.
+
 O `init-scripts/dump.sql` popula a tabela `users` com três registros:
 `pedro@email.com`, `rafaela.mendes@email.com` e `admin@abastecefacil.com`. Todos
 com **hashes BCrypt cuja origem não está documentada**, então não é possível logar
@@ -785,15 +835,24 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **90 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **107 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
-  `OpenStreetMapService`, `ViaCepService`, o `UserMapper`, o `UserValidator` e o
-  handler global de exceções. São testes com mock, não sobem banco nem contexto
-  Spring completo (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e
-  hoje é um `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer
-  alteração no backend: a contagem tem que continuar 90, ou subir junto com os testes
-  novos. O frontend não tem testes.
+  `OpenStreetMapService`, `ViaCepService`, o `AdministradorInicialInitializer`, o
+  `UserMapper`, o `UserValidator` e o handler global de exceções. São testes com mock,
+  não sobem banco nem contexto Spring completo (`ApiAbastecefacilApplicationTests`
+  perdeu o `@SpringBootTest` e hoje é um `contextLoads()` vazio). Rodar
+  `./mvnw clean test` ao final de qualquer alteração no backend: a contagem tem que
+  continuar 107, ou subir junto com os testes novos. O frontend não tem testes.
+
+  Uma consequência de nenhum teste subir contexto: **um `@Value` mal escrito não é pego
+  pela suíte**, só na subida real. Por isso as propriedades `abastecefacil.*` são
+  declaradas no `application.yml` **e** têm default no `@Value`.
+
+  `tools/GerarHashBCryptTest` é a exceção de propósito na pasta de testes: existe para
+  ser executado sob demanda e gerar o hash do administrador inicial (ver README). Sem a
+  variável `BCRYPT_SENHA` ele roda só uma verificação de sanidade e passa em silêncio,
+  então `./mvnw clean test` continua verde e a contagem não oscila.
 
   Limite conhecido dessa suíte: por ser Mockito puro, **ela não valida nada de
   schema**. Constraint de banco, migration e o `validate` do Hibernate só são
@@ -842,13 +901,21 @@ BCrypt cuja origem não está documentada**, então não é possível logar com 
 **Usuário de verificação (desenvolvimento):** `verifica.p02@abastecefacil.com` /
 `Senha@12345`, criado durante o P0.2 para testar endpoints autenticados. Existe
 apenas no volume de desenvolvimento, não está em nenhum `dump.sql`, e some se o
-volume for recriado. Remover quando o A3 criar o administrador inicial por
-variável de ambiente.
+volume for recriado. É `COLABORADOR`. Com o A3 entregue, já não é necessário — pode ser
+removido do volume de desenvolvimento quando o desenvolvedor quiser.
 
-Para acessar a área administrativa hoje, use o usuário acima, crie outro via
-`POST /api/auth/register`, que ainda é público, ou gere um hash e atualize o banco
-diretamente. Esse endpoint será removido junto com a onda de controle de acesso, e
-o administrador inicial passará a ser criado por variável de ambiente.
+**Administrador (desenvolvimento):** `admin.a3@abastecefacil.com`, id 7, criado durante a
+verificação do A3 pelo `AdministradorInicialInitializer`. Perfil `ADMINISTRADOR`, ativo,
+regional e matrícula nulas. **A senha não está documentada aqui de propósito** — nenhuma
+senha em texto claro entra neste repositório. Quem precisar de acesso administrativo gera
+o próprio hash pelo README e sobe com `ABASTECEFACIL_ADMIN_EMAIL` e
+`ABASTECEFACIL_ADMIN_SENHA_HASH`, usando um e-mail novo. Como tudo isso, existe só no
+volume de desenvolvimento e some se o volume for recriado.
+
+Para acessar a área administrativa hoje, o caminho é o administrador inicial acima.
+Alternativas herdadas: `POST /api/auth/register`, que ainda é público mas cria
+`COLABORADOR`, ou gerar um hash e atualizar o banco diretamente. Esse endpoint será
+removido junto com a onda de controle de acesso.
 
 Note que existem **dois arquivos `dump.sql` divergentes**: o de `init-scripts/`,
 que o Docker consome, e um na raiz do repositório, que ninguém consome e tem
