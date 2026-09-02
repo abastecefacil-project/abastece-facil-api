@@ -61,6 +61,30 @@ abastecefacil:
     nome: "Administrador"
     email: ""
     senha-hash: ""
+  email:
+    # Canal de envio dos e-mails de acesso (M3). O default é "log" para que rodar o
+    # projeto localmente não dependa de rede, não exija chave e não consuma cota:
+    # EnviadorEmailLog escreve o link no console e não envia nada.
+    #
+    # ATENÇÃO: "log" em produção equivale a publicar tokens de acesso no log da
+    # aplicação — quem lê o log define a senha de qualquer convidado. Em produção,
+    # ABASTECEFACIL_EMAIL_PROVEDOR=resend.
+    provedor: log
+    # Precisa ser um endereço verificado no Resend. O default abaixo é o domínio de
+    # teste que o Resend oferece, que só entrega para a conta dona da chave.
+    remetente: "Abastece Fácil <onboarding@resend.dev>"
+    # NUNCA preencher aqui — este arquivo é versionado, pelo mesmo motivo de
+    # admin.senha-hash. O valor vem de ABASTECEFACIL_EMAIL_API_KEY no ambiente.
+    # Com provedor "resend" e esta chave vazia, a aplicação NÃO sobe, de propósito.
+    api-key: ""
+    api-url: "https://api.resend.com"
+    # URL base do frontend, usada para montar o link que vai no e-mail.
+    #
+    # NÃO é lida pelo M3: o enviador recebe a URL já montada e não conhece rota de
+    # frontend. Quem consome esta propriedade são o S2 (convite de primeiro acesso) e
+    # o S4 (recuperação de senha), que geram o token e montam o endereço. As rotas em
+    # si são contrato do S6.
+    frontend-url: "http://localhost:5173"
 
 viacep-api:
   url: "https://viacep.com.br/ws/"

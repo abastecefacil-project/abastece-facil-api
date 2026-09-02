@@ -236,6 +236,37 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
     }
 
+    /**
+     * 502 Bad Gateway: a requisicao estava correta, quem falhou foi o provedor de e-mail.
+     * Acompanha o precedente do {@link #handleFeignException}, cujo {@code default} ja
+     * mapeia falha de servico externo para BAD_GATEWAY.
+     *
+     * <p>O "error" proprio segue a razao registrada em
+     * {@link #handlePasswordNotSetException}: o ErrorResponse so carrega status, error,
+     * message e path, entao esse campo e o unico discriminador programatico que o
+     * frontend tem para diferenciar "o convite nao saiu, tente de novo" de qualquer
+     * outro 502.
+     *
+     * <p>A mensagem e uma constante generica. Status HTTP do provedor, corpo da resposta
+     * e causa encadeada ficam so no log -- ver ResendEnviadorEmail.
+     *
+     * <p>Ainda nao alcancavel por endpoint nenhum: o M3 entrega so o canal de envio. O
+     * status deve ser reconfirmado quando existir rota que dispare envio (S2 e S4).
+     */
+    @ExceptionHandler(EnvioEmailException.class)
+    public ResponseEntity<ErrorResponse> handleEnvioEmailException(
+            EnvioEmailException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.BAD_GATEWAY.value(),
+                "EMAIL_NAO_ENVIADO",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(error);
+    }
+
     @ExceptionHandler(FeignException.class)
     public ResponseEntity<ErrorResponse> handleFeignException(
             FeignException ex, WebRequest request) {

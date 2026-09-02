@@ -188,6 +188,11 @@ que a forma canônica, não porque fosse necessário.
 | `abastecefacil.admin.nome` | `Administrador` | — | `ABASTECEFACIL_ADMIN_NOME` | não |
 | `abastecefacil.admin.email` | vazio | — | `ABASTECEFACIL_ADMIN_EMAIL` | **sim** |
 | `abastecefacil.admin.senha-hash` | vazio | — | `ABASTECEFACIL_ADMIN_SENHA_HASH` | **sim** |
+| `abastecefacil.email.provedor` | `log` | — | `ABASTECEFACIL_EMAIL_PROVEDOR` | **sim** (`resend`) |
+| `abastecefacil.email.remetente` | `Abastece Fácil <onboarding@resend.dev>` | — | `ABASTECEFACIL_EMAIL_REMETENTE` | **sim** |
+| `abastecefacil.email.api-key` | vazio | — | `ABASTECEFACIL_EMAIL_API_KEY` | **sim** |
+| `abastecefacil.email.api-url` | `https://api.resend.com` | — | `ABASTECEFACIL_EMAIL_API_URL` | não |
+| `abastecefacil.email.frontend-url` | `http://localhost:5173` | — | `ABASTECEFACIL_EMAIL_FRONTEND_URL` | **sim** |
 | `viacep-api.url` | `https://viacep.com.br/ws/` | — | `VIACEP_API_URL` | não |
 | `openstreetmap-api.url` | `https://nominatim.openstreetmap.org` | — | `OPENSTREETMAP_API_URL` | não |
 | `openstreetmap-api.user-agent` | `AbasteceFacil/1.0 (contato@abastecefacil.com.br)` | — | `OPENSTREETMAP_USER_AGENT` | **sim** |
@@ -208,6 +213,19 @@ Os "precisa em produção" que não são o banco:
   caminho administrativo. O que se configura é o **hash BCrypt**, nunca a senha: o
   `application.yml` é versionado e o valor em claro não pode entrar nele. Como gerar o
   hash está no README, seção "Gerar o hash BCrypt". Ver §6, item 6.
+- **`ABASTECEFACIL_EMAIL_PROVEDOR`** — o default `log` **não envia nada**: escreve o link
+  no log da aplicação. É o que faz o desenvolvimento não depender de rede nem consumir
+  cota, e é exatamente o que não se pode deixar em produção — o link contém o token em
+  claro, então `log` lá equivale a publicar tokens de acesso no log, e quem lê o log
+  define a senha de qualquer convidado. Em produção: `resend`.
+- **`ABASTECEFACIL_EMAIL_API_KEY` e `ABASTECEFACIL_EMAIL_REMETENTE`** — com
+  `provedor: resend`, faltando qualquer um dos dois a **aplicação não sobe**, de
+  propósito (ver §6, item 16). O remetente precisa ser um endereço verificado no Resend;
+  o default é o domínio de teste deles, que só entrega para a conta dona da chave.
+- **`ABASTECEFACIL_EMAIL_FRONTEND_URL`** — é a base do link que vai no e-mail. Com o
+  valor de desenvolvimento, todo convite enviado aponta para `localhost:5173` e não
+  funciona para ninguém. **Nada no backend a lê ainda**: o M3 recebe a URL já montada.
+  Os consumidores são o S2 e o S4.
 
 **Onde colocar valor novo:** se muda entre local e container, vai nos dois arquivos; se
 não muda, vai só no `application.yml`. Se for segredo, entra no `application.yml` apenas
@@ -507,6 +525,14 @@ persistência. 410 e não 400 porque o caso predominante não é requisição ma
 sim um token que existiu e não vale mais: consumido, expirado ou substituído por um
 reenvio. O status deve ser reconfirmado quando existir rota consumindo o token.
 
+`EnvioEmailException` responde **502 Bad Gateway** com `error = "EMAIL_NAO_ENVIADO"`, e é
+a terceira exceção ainda não alcançável por endpoint nenhum — o M3 entregou só o canal de
+envio. 502 e não 500 porque a requisição estava correta e quem falhou foi o provedor
+externo, o que acompanha o `default` do `handleFeignException`, já existente. A mensagem
+é uma **constante genérica**: status HTTP do provedor, corpo da resposta e causa
+encadeada ficam apenas no log. O status deve ser reconfirmado quando existir rota que
+dispare envio (S2 e S4).
+
 ### Propriedades de configuração
 
 A tabela completa está na **§3**. Sobre `abastecefacil.token.*`: os prazos são distintos
@@ -605,6 +631,26 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
     `TokenAcessoService.limparTokensExpirados` (`@Scheduled`, 3h). A janela de
     retenção existe para que um token recém-vencido ainda apareça numa investigação
     de suporte.
+16. **O prazo exibido no e-mail vem sempre do parâmetro, nunca de constante.**
+    `ConteudoEmail.de` recebe `validadeHoras` em `MensagemAcesso` e o interpola no
+    texto. Os TTLs são configuráveis desde o M2 (`abastecefacil.token.*`), então uma
+    constante no corpo do e-mail passaria a mentir assim que alguém mudasse a
+    propriedade — e a mentira só apareceria quando um usuário reclamasse que o link
+    venceu antes da hora. O único caso especial é 1, que vira "1 hora" em vez de
+    "1 horas".
+17. **`EnviadorEmailLog` é a única classe autorizada a registrar a URL com o token.**
+    A regra do M2 continua valendo em todo o resto do projeto. Ali ela é suspensa
+    porque o log **é** o canal de entrega dessa implementação — sem isso ela não teria
+    função. `ResendEnviadorEmail` nunca loga a URL, nunca loga a chave e nunca loga o
+    corpo da resposta do provedor, que pode ecoar configuração.
+18. **Configuração de e-mail inválida derruba a subida, ao contrário do A3.**
+    `EnviadorEmailConfig` lança quando o provedor é desconhecido, e quando é `resend`
+    sem chave ou sem remetente. É o oposto deliberado do
+    `AdministradorInicialInitializer`, que sobe mesmo com configuração ruim: lá um
+    `CommandLineRunner` que lança causaria indisponibilidade; aqui, subir com o canal
+    quebrado significa descobrir o problema só quando o primeiro convite não chegar. As
+    mensagens nomeiam a variável que falta e **nunca incluem o valor recebido**, pelo
+    mesmo motivo do hash BCrypt.
 
 ---
 
@@ -822,6 +868,29 @@ O A3 acrescentou mais duas, ambas em `config/AdministradorInicialInitializer`:
 - **Log em nível WARN e ERROR** — antes do A3 o projeto só tinha um `log.info`, no
   `TokenAcessoService`.
 
+### Primeiras ocorrências introduzidas pelo M3
+
+- **`RestClient`** — as duas integrações anteriores (ViaCEP e Nominatim) usam OpenFeign,
+  com a requisição declarada numa interface em `client/`. `ResendEnviadorEmail` é
+  imperativo porque a autenticação é um header montado a partir de configuração e porque
+  o tratamento de erro precisa ser específico: o `handleFeignException` genérico devolve
+  ao cliente a mensagem da exceção do Feign, que carrega trechos da resposta do provedor.
+  Não há dependência nova — `RestClient` vem do `spring-boot-starter-web`, já presente.
+  Note que **o projeto agora tem dois estilos de cliente HTTP**; não é inconsistência
+  acidental.
+- **Interface de serviço com mais de uma implementação** — `EnviadorEmail`. Até o M3
+  todo service era classe concreta única.
+- **`@Bean` selecionado por propriedade** — `EnviadorEmailConfig`, com `switch` em vez de
+  `@ConditionalOnProperty`. O motivo está na §6, item 18.
+- **Exceção com `cause`** — `EnvioEmailException` é a primeira das quinze a aceitar
+  `Throwable`. As outras catorze só recebem mensagem.
+- **`MockRestServiceServer` nos testes** — primeiro mock de HTTP do projeto. Os testes de
+  ViaCEP e Nominatim mockam a interface Feign, não o transporte. Vem do `spring-test`, já
+  no classpath. É o que permite ao `ResendEnviadorEmailTest` exercitar o adaptador sem
+  rede e sem subir contexto, mantendo o estilo Mockito puro — para isso
+  `ResendEnviadorEmail` **recebe o `RestClient.Builder` no construtor** em vez de criar o
+  seu próprio. Não mude isso sem quebrar os testes.
+
 O `init-scripts/dump.sql` popula a tabela `users` com três registros:
 `pedro@email.com`, `rafaela.mendes@email.com` e `admin@abastecefacil.com`. Todos
 com **hashes BCrypt cuja origem não está documentada**, então não é possível logar
@@ -835,15 +904,22 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **107 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **144 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `OpenStreetMapService`, `ViaCepService`, o `AdministradorInicialInitializer`, o
-  `UserMapper`, o `UserValidator` e o handler global de exceções. São testes com mock,
-  não sobem banco nem contexto Spring completo (`ApiAbastecefacilApplicationTests`
-  perdeu o `@SpringBootTest` e hoje é um `contextLoads()` vazio). Rodar
-  `./mvnw clean test` ao final de qualquer alteração no backend: a contagem tem que
-  continuar 107, ou subir junto com os testes novos. O frontend não tem testes.
+  `EnviadorEmailConfig`, o `EnviadorEmailLog`, o `ResendEnviadorEmail`, o
+  `ConteudoEmail`, o `UserMapper`, o `UserValidator` e o handler global de exceções. São
+  testes com mock, não sobem banco nem contexto Spring completo
+  (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
+  `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
+  backend: a contagem tem que continuar 144, ou subir junto com os testes novos. O
+  frontend não tem testes.
+
+  Ruído esperado na saída: `ResendEnviadorEmailTest` exercita falha de rede e rejeição do
+  provedor, então **um stack trace de `IOException: conexão recusada` aparece no log da
+  suíte mesmo com tudo verde**. É o `log.error` do adaptador fazendo o que deve. Confira
+  a linha `Tests run:` antes de investigar.
 
   Uma consequência de nenhum teste subir contexto: **um `@Value` mal escrito não é pego
   pela suíte**, só na subida real. Por isso as propriedades `abastecefacil.*` são

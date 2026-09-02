@@ -114,6 +114,36 @@ Se o valor configurado não tiver formato de hash BCrypt, a aplicação sobe, **
 o usuário e registra dois `ERROR` no log — um no ponto da falha e um resumo ao final. O
 valor recebido não é registrado em lugar nenhum.
 
+### Envio de e-mail
+
+Os e-mails de acesso (convite de primeiro acesso e recuperação de senha) saem por um
+adaptador escolhido na subida, em `abastecefacil.email.provedor`.
+
+| Variável | Obrigatória em produção | Default |
+|---|---|---|
+| `ABASTECEFACIL_EMAIL_PROVEDOR` | sim (`resend`) | `log` |
+| `ABASTECEFACIL_EMAIL_API_KEY` | sim | — |
+| `ABASTECEFACIL_EMAIL_REMETENTE` | sim | `Abastece Fácil <onboarding@resend.dev>` |
+| `ABASTECEFACIL_EMAIL_FRONTEND_URL` | sim | `http://localhost:5173` |
+| `ABASTECEFACIL_EMAIL_API_URL` | não | `https://api.resend.com` |
+
+**Em desenvolvimento não configure nada.** O default `log` não envia mensagem nenhuma:
+escreve o link no console, prefixado por `[E-MAIL SIMULADO]`. Assim a aplicação sobe sem
+chave, sem rede e sem consumir cota.
+
+> **`log` não pode ir para produção.** O link contém o token de acesso em claro, então
+> deixá-lo lá equivale a publicar tokens no log da aplicação — quem lê o log define a
+> senha de qualquer usuário convidado.
+
+Com `ABASTECEFACIL_EMAIL_PROVEDOR=resend`, a chave e o remetente passam a ser
+obrigatórios e a aplicação **não sobe** sem eles, com uma mensagem dizendo qual variável
+falta. A chave nunca é registrada em log, nem quando é rejeitada.
+
+A chave se obtém no painel do Resend e **nunca entra no `application.yml`**, que é
+versionado — mesma regra do hash do administrador inicial. O remetente precisa ser um
+endereço verificado no Resend; o default é o domínio de teste deles, que só entrega para
+a conta dona da chave.
+
 ### Endpoints da API
 
 - **URL Base:** http://localhost:8081

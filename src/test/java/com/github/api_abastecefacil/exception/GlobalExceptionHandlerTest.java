@@ -85,6 +85,35 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void handleEnvioEmailException_ShouldReturn502BadGateway() {
+        // 502 e nao 500: a requisicao estava correta, quem falhou foi o provedor de
+        // e-mail. Acompanha o default do handleFeignException, que ja mapeia falha de
+        // servico externo para BAD_GATEWAY.
+        EnvioEmailException ex = new EnvioEmailException("Não foi possível enviar o e-mail");
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleEnvioEmailException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_GATEWAY);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("EMAIL_NAO_ENVIADO");
+        assertThat(response.getBody().message()).isEqualTo("Não foi possível enviar o e-mail");
+    }
+
+    @Test
+    void handleEnvioEmailException_ShouldNotLeakTheChainedCause_ToTheResponse() {
+        // A causa existe para o stack trace do log. O que chega ao cliente e so a
+        // mensagem generica.
+        EnvioEmailException ex = new EnvioEmailException(
+                "Não foi possível enviar o e-mail",
+                new IllegalStateException("Connection refused: api.resend.com:443"));
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleEnvioEmailException(ex, webRequest);
+
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().message()).doesNotContain("api.resend.com");
+    }
+
+    @Test
     void handleCoordinatesNotFoundException_ShouldReturn400BadRequest() {
         CoordinatesNotFoundException ex = new CoordinatesNotFoundException("Coordenadas não encontradas");
 
