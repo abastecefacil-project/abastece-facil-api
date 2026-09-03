@@ -8,10 +8,15 @@ import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import io.jsonwebtoken.Claims;
+
 import java.util.Collections;
+import java.util.Date;
 import java.util.HashMap;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
 class JwtServiceTest {
 
@@ -67,5 +72,42 @@ class JwtServiceTest {
         boolean isValid = jwtService.isTokenValid(token, otherUser);
 
         assertThat(isValid).isFalse();
+    }
+
+    @Test
+    void generateToken_WithExplicitExpiration_ShouldHonourIt() {
+        // Sobrecarga do S3: a expiracao passa a variar por perfil, e quem resolve
+        // perfil -> prazo e o AuthService. O JwtService so recebe o numero.
+        long trintaDias = 2_592_000_000L;
+
+        String token = jwtService.generateToken(new HashMap<>(), userDetails, trintaDias);
+
+        Date emitidoEm = jwtService.extractClaim(token, Claims::getIssuedAt);
+        Date expiraEm = jwtService.extractClaim(token, Claims::getExpiration);
+
+        // Tolerancia de 2s: emissao e leitura nao acontecem no mesmo milissegundo.
+        assertThat(expiraEm.getTime() - emitidoEm.getTime())
+                .isCloseTo(trintaDias, within(2000L));
+    }
+
+    @Test
+    void generateToken_WithExplicitExpiration_ShouldDifferFromTheGlobalDefault() {
+        String curto = jwtService.generateToken(new HashMap<>(), userDetails);
+        String longo = jwtService.generateToken(new HashMap<>(), userDetails, 2_592_000_000L);
+
+        Date expiraCurto = jwtService.extractClaim(curto, Claims::getExpiration);
+        Date expiraLongo = jwtService.extractClaim(longo, Claims::getExpiration);
+
+        assertThat(expiraLongo).isAfter(expiraCurto);
+    }
+
+    @Test
+    void generateToken_WithExplicitExpiration_ShouldKeepExtraClaims() {
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("perfil", "COLABORADOR");
+
+        String token = jwtService.generateToken(claims, userDetails, 60_000L);
+
+        assertThat((String) jwtService.extractClaim(token, c -> c.get("perfil"))).isEqualTo("COLABORADOR");
     }
 }

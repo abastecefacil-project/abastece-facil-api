@@ -10,6 +10,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -43,7 +44,21 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         jwt = authHeader.substring(7);
         userEmail = jwtService.extractUsername(jwt);
         if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-            UserDetails userDetails = this.userDetailsService.loadUserByUsername(userEmail);
+            UserDetails userDetails;
+            try {
+                userDetails = this.userDetailsService.loadUserByUsername(userEmail);
+            } catch (UsernameNotFoundException e) {
+                // Desde o S3 o loadUserByUsername tambem recusa usuario inativo, e este
+                // catch e a outra metade dessa correcao: sem ele, a excecao escaparia da
+                // cadeia de filtros e viraria 500 em TODA requisicao de quem foi
+                // desativado -- pior que o bug original, que ao menos respondia.
+                //
+                // Seguir sem autenticar deixa a requisicao anonima, e o Spring Security
+                // responde como responde a qualquer requisicao sem token: 403. Nao e 401
+                // porque a aplicacao nunca usou 401 para isso. Ver §5 do CLAUDE.md.
+                filterChain.doFilter(request, response);
+                return;
+            }
             if (jwtService.isTokenValid(jwt, userDetails)) {
                 UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
                         userDetails,

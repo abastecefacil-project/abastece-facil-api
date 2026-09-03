@@ -184,6 +184,44 @@ class TokenAcessoServiceTest {
     }
 
     @Test
+    void emailDeTokenValido_ShouldReturnTheEmail_WithoutConsumingTheToken() {
+        // A sonda do S3 nao pode queimar o link so porque a pessoa abriu a pagina.
+        String tokenEmClaro = "token-da-sonda";
+        when(tokenAcessoRepository.findEmailDeTokenValido(sha256HexNoTeste(tokenEmClaro), "ATIVACAO"))
+                .thenReturn(Optional.of(EMAIL));
+
+        assertThat(tokenAcessoService.emailDeTokenValido(tokenEmClaro, FinalidadeToken.ATIVACAO))
+                .contains(EMAIL);
+
+        verify(tokenAcessoRepository, never()).consumir(anyString(), anyString());
+    }
+
+    @Test
+    void emailDeTokenValido_ShouldReturnEmpty_ForEveryRejection() {
+        // Inexistente, expirado, ja usado e finalidade divergente caem no mesmo predicado
+        // SQL e devolvem o mesmo vazio, sem distinguir qual ocorreu.
+        when(tokenAcessoRepository.findEmailDeTokenValido(anyString(), anyString()))
+                .thenReturn(Optional.empty());
+
+        assertThat(tokenAcessoService.emailDeTokenValido("qualquer", FinalidadeToken.ATIVACAO)).isEmpty();
+        assertThat(tokenAcessoService.emailDeTokenValido("qualquer", FinalidadeToken.RECUPERACAO)).isEmpty();
+    }
+
+    @Test
+    void emailDeTokenValido_ShouldPassTheHashAndTheFinalidadeName_ToTheRepository() {
+        // Enum em query nativa e bindado por ordinal: a finalidade tem que chegar como
+        // nome, igual nas escritas.
+        String tokenEmClaro = "outro-token";
+        when(tokenAcessoRepository.findEmailDeTokenValido(anyString(), anyString()))
+                .thenReturn(Optional.empty());
+
+        tokenAcessoService.emailDeTokenValido(tokenEmClaro, FinalidadeToken.RECUPERACAO);
+
+        verify(tokenAcessoRepository)
+                .findEmailDeTokenValido(sha256HexNoTeste(tokenEmClaro), "RECUPERACAO");
+    }
+
+    @Test
     void limparTokensExpirados_ShouldDeleteTokensExpiredForMoreThanSevenDays() {
         LocalDateTime antes = LocalDateTime.now();
 

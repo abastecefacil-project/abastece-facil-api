@@ -14,6 +14,14 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     boolean existsByEmail(String email);
 
+    /**
+     * Matrícula é única apenas entre os não nulos, garantida pelo índice parcial
+     * {@code uk_users_matricula} da V4. Este método só é chamado com matrícula não nula —
+     * chamá-lo com {@code null} devolveria {@code false} sempre, já que {@code = NULL}
+     * nunca casa em SQL, o que é correto mas inútil.
+     */
+    boolean existsByMatricula(String matricula);
+
     Page<User> findByIsActiveAndNameContainingIgnoreCase(Boolean active, String name, Pageable pageable);
 
     Long countByIsActiveTrue();

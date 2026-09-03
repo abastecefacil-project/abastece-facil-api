@@ -40,6 +40,20 @@ public class JwtService {
         return buildToken(extraClaims, userDetails, jwtExpiration);
     }
 
+    /**
+     * Gera o token com prazo explícito, em vez do global de {@code jwt.expiration}.
+     *
+     * <p>Entrou no S3, quando a expiração passou a variar por perfil. O {@code JwtService}
+     * continua sem conhecer {@code Perfil} de propósito: ele não sabe nada de domínio —
+     * nem os nomes das claims que grava. Quem resolve perfil para prazo é o
+     * {@code AuthService}, que já é quem monta o claim de perfil.
+     *
+     * @param expiration validade em milissegundos, a partir de agora
+     */
+    public String generateToken(Map<String, Object> extraClaims, UserDetails userDetails, long expiration) {
+        return buildToken(extraClaims, userDetails, expiration);
+    }
+
     private String buildToken(Map<String, Object> extraClaims, UserDetails userDetails, long expiration) {
         return Jwts
                 .builder()

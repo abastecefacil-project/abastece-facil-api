@@ -18,6 +18,7 @@ import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.Optional;
 
 import static com.github.api_abastecefacil.constants.TokenAcessoConstants.*;
 
@@ -104,6 +105,26 @@ public class TokenAcessoService {
         return tokenAcessoRepository.findByTokenHash(tokenHash)
                 .map(TokenAcesso::getEmail)
                 .orElseThrow(() -> new TokenInvalidoException(TOKEN_INVALIDO_MESSAGE));
+    }
+
+    /**
+     * Diz de quem é o token, <b>sem consumi-lo</b>, e devolve vazio se ele não for
+     * válido.
+     *
+     * <p>Existe para a sonda do S3: o frontend precisa saber se mostra o formulário de
+     * senha ou a tela de link expirado, e usar {@link #validarEConsumir} para isso
+     * queimaria o token só de abrir a página.
+     *
+     * <p><b>Não lança.</b> As quatro rejeições — inexistente, expirado, já usado e de
+     * finalidade divergente — devolvem o mesmo {@code Optional.empty()}, sem distinção,
+     * pela mesma razão da mensagem única de {@link #validarEConsumir}.
+     *
+     * <p>Isto é uma leitura otimista, <b>não</b> a autoridade sobre a validade: entre
+     * esta consulta e o consumo o token pode ser usado por outra requisição. Quem decide
+     * continua sendo o {@code UPDATE} condicional de {@link #validarEConsumir}.
+     */
+    public Optional<String> emailDeTokenValido(String tokenEmClaro, FinalidadeToken finalidade) {
+        return tokenAcessoRepository.findEmailDeTokenValido(sha256Hex(tokenEmClaro), finalidade.name());
     }
 
     /**

@@ -27,5 +27,6 @@ public final class AuthConstants {
 
     public static final String REGISTER_SUCCESS_MESSAGE = "Usuário registrado com sucesso";
     public static final String LOGIN_SUCCESS_MESSAGE = "Login realizado com sucesso";
+    public static final String ATIVACAO_SUCCESS_MESSAGE = "Conta ativada com sucesso";
 
 }

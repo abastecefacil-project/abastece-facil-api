@@ -52,6 +52,28 @@ public interface TokenAcessoRepository extends JpaRepository<TokenAcesso, Long> 
             """, nativeQuery = true)
     int consumir(@Param("tokenHash") String tokenHash, @Param("finalidade") String finalidade);
 
+    // Leitura nao destrutiva, para a sonda GET /api/auth/ativacao/validar decidir entre
+    // exibir o formulario de senha e a tela de link expirado.
+    //
+    // O predicado e IDENTICO ao de consumir(), e os dois precisam continuar assim: sao a
+    // mesma definicao de "token valido" e divergir faria a sonda dizer valido para um
+    // token que o consumo rejeita, ou o contrario. Ficam lado a lado neste arquivo por
+    // isso, e a validade e avaliada em SQL nos dois -- com now() do banco, sem depender
+    // do relogio da aplicacao.
+    //
+    // Nao e @Modifying: nao marca usado_em, nao mexe em expira_em, nao consome nada.
+    // Chamar a sonda N vezes deixa o token exatamente como estava.
+    @Query(value = """
+            SELECT email
+              FROM tokens_acesso
+             WHERE token_hash = :tokenHash
+               AND finalidade = :finalidade
+               AND usado_em IS NULL
+               AND expira_em > now()
+            """, nativeQuery = true)
+    Optional<String> findEmailDeTokenValido(@Param("tokenHash") String tokenHash,
+                                            @Param("finalidade") String finalidade);
+
     // Invalidacao por substituicao: expira o token anterior em vez de marca-lo usado.
     //
     // usado_em fica significando apenas consumo real pelo usuario, que e o que a

@@ -21,6 +21,15 @@ spring:
     enabled: true
     baseline-on-migrate: true
 
+  # Timeouts do RestClient auto-configurado, usado pelo ResendEnviadorEmail. O default do
+  # Spring é NENHUM timeout: uma chamada ao Resend poderia ficar pendurada para sempre.
+  # Isso passou a importar no S2b1, quando o envio entrou dentro da transação de
+  # UserService.createUser — sem teto, uma conexão do pool ficaria presa junto. Ver §6.
+  http:
+    client:
+      connect-timeout: 5s
+      read-timeout: 10s
+
   jpa:
     hibernate:
       ddl-auto: validate
@@ -37,9 +46,32 @@ jwt:
   # Segredo de desenvolvimento, versionado desde o início do projeto. Em produção,
   # sobrescrever com a variável de ambiente JWT_SECRET — nunca editar este valor aqui.
   secret: YWJhc3RlY2VmYWNpbC1zZWNyZXQta2V5LTIwMjQtdmVyeS1sb25nLWFuZC1zZWN1cmUta2V5LWZvci1qd3Qtc2lnbmluZw==
+  # Sessão curta, 24h: vale para GESTOR_FROTA e ADMINISTRADOR, que usam o sistema com
+  # frequência e têm poderes destrutivos.
   expiration: 86400000
+  # Sessão longa, 30 dias, só para COLABORADOR (S3). Ele usa o sistema poucas vezes por
+  # ano: com 24h encontrava a sessão sempre vencida e era obrigado a recuperar a senha em
+  # toda visita — a dor que o cliente relatou.
+  #
+  # ATENÇÃO: JWT stateless não é revogável. Trocar a senha NÃO invalida um token já
+  # emitido, então aumentar este prazo aumenta na mesma medida a janela em que uma sessão
+  # vazada continua valendo. Ver §5 do CLAUDE.md.
+  expiration-colaborador: 2592000000
 
 abastecefacil:
+  auth:
+    # Domínios de e-mail aceitos no cadastro administrativo (POST /api/users).
+    # A comparação é sobre a parte depois do ÚLTIMO arroba, com igualdade exata ou
+    # subdomínio — ver UserValidator.validarDominioEmail.
+    #
+    # PROVISÓRIO: lista pendente de confirmação do cliente (FIESC/UNISENAI). Um domínio
+    # que falte aqui significa colaborador que NÃO consegue ser cadastrado — o gestor
+    # recebe 400 e não tem como contornar pela interface. Revisar antes de produção.
+    #
+    # Lista separada por vírgula, e não sequência YAML, para o @Value converter sozinho
+    # e para o override por ambiente ser direto:
+    # ABASTECEFACIL_AUTH_DOMINIOS_PERMITIDOS=fiesc.org.br,sesisenai.org.br
+    dominios-permitidos: "fiesc.org.br,sesisenai.org.br"
   token:
     # Prazo de vida dos tokens de acesso enviados por e-mail, em horas.
     # Ativação é mais longa porque o usuário pode demorar a abrir o convite;

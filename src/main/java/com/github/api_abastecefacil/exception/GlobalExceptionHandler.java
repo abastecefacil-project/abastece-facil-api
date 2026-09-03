@@ -108,6 +108,135 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.GONE).body(error);
     }
 
+    /**
+     * Primeiro 403 do projeto, junto de {@link #handleRegionalNaoPermitidaException}.
+     *
+     * <p>As duas rejeicoes de autorizacao tem "error" distintos de proposito, e nao um
+     * FORBIDDEN generico: o S5 precisa dizer ao gestor se o que barrou foi o perfil que
+     * ele tentou criar ou a regional, porque a acao corretiva e diferente em cada caso.
+     * O ErrorResponse so carrega status, error, message e path, entao esse campo e o
+     * unico discriminador programatico disponivel.
+     *
+     * <p>Nota de arquitetura: a autorizacao deste fluxo mora no UserService, nao em
+     * @PreAuthorize, justamente para poder passar por aqui. O 403 do Spring Security e
+     * lancado pelo ExceptionTranslationFilter, fora do @ControllerAdvice, e sairia sem
+     * ErrorResponse e sem o campo error. Ver §6 do CLAUDE.md.
+     */
+    @ExceptionHandler(PerfilNaoPermitidoException.class)
+    public ResponseEntity<ErrorResponse> handlePerfilNaoPermitidoException(
+            PerfilNaoPermitidoException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.FORBIDDEN.value(),
+                "PERFIL_NAO_PERMITIDO",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
+    }
+
+    @ExceptionHandler(RegionalNaoPermitidaException.class)
+    public ResponseEntity<ErrorResponse> handleRegionalNaoPermitidaException(
+            RegionalNaoPermitidaException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.FORBIDDEN.value(),
+                "REGIONAL_NAO_PERMITIDA",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
+    }
+
+    /**
+     * 409, como as outras colisoes de unicidade do projeto. O "error" e proprio, e nao
+     * CONFLICT como em UserAlreadyExists, porque o formulario de cadastro do S5 precisa
+     * apontar o campo certo: e-mail e matricula sao dois inputs distintos e o gestor
+     * precisa saber qual dos dois refazer.
+     */
+    @ExceptionHandler(MatriculaDuplicadaException.class)
+    public ResponseEntity<ErrorResponse> handleMatriculaDuplicadaException(
+            MatriculaDuplicadaException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.CONFLICT.value(),
+                "MATRICULA_DUPLICADA",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
+    }
+
+    /**
+     * 400: o endereco recebido nao pertence a nenhum dominio corporativo autorizado.
+     *
+     * <p>Nao e 403. Quem esta autenticado e autorizado e o gestor, e ele pode criar o
+     * usuario; o que esta errado e o dado. O caso predominante e erro de digitacao no
+     * formulario, e por isso a mensagem lista os dominios aceitos em vez de so recusar.
+     */
+    @ExceptionHandler(DominioEmailNaoPermitidoException.class)
+    public ResponseEntity<ErrorResponse> handleDominioEmailNaoPermitidoException(
+            DominioEmailNaoPermitidoException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "DOMINIO_EMAIL_NAO_PERMITIDO",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+    }
+
+    /**
+     * 409: conflito de estado, nao payload invalido. O pedido de reenvio esta bem formado
+     * e quem pediu esta autorizado -- o que impede e a conta ja ter senha, e nenhuma
+     * mudanca no corpo da requisicao mudaria isso.
+     *
+     * <p>Reenviar convite para conta ja ativa entregaria a quem pediu o reenvio um link
+     * capaz de trocar a senha de outra pessoa. Quem esqueceu a senha usa a recuperacao
+     * (S4), que exige acesso a caixa de e-mail do dono.
+     */
+    @ExceptionHandler(SenhaJaDefinidaException.class)
+    public ResponseEntity<ErrorResponse> handleSenhaJaDefinidaException(
+            SenhaJaDefinidaException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.CONFLICT.value(),
+                "SENHA_JA_DEFINIDA",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
+    }
+
+    /**
+     * 400: a senha escolhida nao atende a politica. Codigo proprio, e nao BAD_REQUEST
+     * generico, para o formulario do S6 poder destacar o campo de senha -- BAD_REQUEST
+     * tambem sai de validacao de bean, matricula e telefone.
+     *
+     * <p>Duas regras compartilham este codigo (comprimento/composicao e conter dados
+     * pessoais) porque a acao corretiva e a mesma: escolher outra senha. A mensagem
+     * distingue as duas; ela NUNCA inclui a senha recebida.
+     */
+    @ExceptionHandler(SenhaFracaException.class)
+    public ResponseEntity<ErrorResponse> handleSenhaFracaException(
+            SenhaFracaException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "SENHA_FRACA",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+    }
+
     @ExceptionHandler(InvalidUserDataException.class)
     public ResponseEntity<ErrorResponse> handleInvalidUserDataException(
             InvalidUserDataException ex, WebRequest request) {

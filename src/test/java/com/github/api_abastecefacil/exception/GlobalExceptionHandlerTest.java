@@ -85,6 +85,99 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void handlePerfilNaoPermitidoException_ShouldReturn403Forbidden() {
+        // Primeiro 403 do projeto. Passa pelo handler, e nao pelo Spring Security, porque a
+        // autorizacao deste fluxo mora no UserService -- so assim sai com ErrorResponse.
+        PerfilNaoPermitidoException ex = new PerfilNaoPermitidoException("Perfil não permitido");
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handlePerfilNaoPermitidoException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("PERFIL_NAO_PERMITIDO");
+    }
+
+    @Test
+    void handleRegionalNaoPermitidaException_ShouldReturn403Forbidden() {
+        RegionalNaoPermitidaException ex = new RegionalNaoPermitidaException("Regional não permitida");
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleRegionalNaoPermitidaException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("REGIONAL_NAO_PERMITIDA");
+    }
+
+    @Test
+    void handleAuthorizationExceptions_ShouldUseDistinctErrorCodes() {
+        // As duas rejeicoes tem o mesmo status. O campo "error" e o unico discriminador
+        // programatico que o ErrorResponse oferece, e o S5 precisa dele para dizer ao
+        // gestor se o que barrou foi o perfil ou a regional.
+        ResponseEntity<ErrorResponse> perfil = exceptionHandler.handlePerfilNaoPermitidoException(
+                new PerfilNaoPermitidoException("x"), webRequest);
+        ResponseEntity<ErrorResponse> regional = exceptionHandler.handleRegionalNaoPermitidaException(
+                new RegionalNaoPermitidaException("y"), webRequest);
+
+        assertThat(perfil.getStatusCode()).isEqualTo(regional.getStatusCode());
+        assertThat(perfil.getBody().error()).isNotEqualTo(regional.getBody().error());
+    }
+
+    @Test
+    void handleSenhaJaDefinidaException_ShouldReturn409Conflict() {
+        // 409 e nao 400: o pedido esta bem formado e quem pediu esta autorizado. O que
+        // impede e a conta ja ter senha, e nenhuma mudanca no corpo mudaria isso.
+        SenhaJaDefinidaException ex = new SenhaJaDefinidaException("Já definiu a senha");
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleSenhaJaDefinidaException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("SENHA_JA_DEFINIDA");
+    }
+
+    @Test
+    void handleSenhaFracaException_ShouldReturn400WithOwnErrorCode() {
+        // Codigo proprio para o formulario do S6 destacar o campo de senha: BAD_REQUEST
+        // generico tambem sai de validacao de bean, matricula e telefone.
+        SenhaFracaException ex = new SenhaFracaException("A senha não pode conter o seu nome ou o seu e-mail");
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleSenhaFracaException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("SENHA_FRACA");
+    }
+
+    @Test
+    void handleMatriculaDuplicadaException_ShouldReturn409Conflict() {
+        MatriculaDuplicadaException ex = new MatriculaDuplicadaException("Matrícula já cadastrada");
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleMatriculaDuplicadaException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(response.getBody()).isNotNull();
+        // "error" proprio, e nao CONFLICT: e-mail e matricula sao dois inputs distintos no
+        // formulario e o gestor precisa saber qual refazer.
+        assertThat(response.getBody().error()).isEqualTo("MATRICULA_DUPLICADA");
+    }
+
+    @Test
+    void handleDominioEmailNaoPermitidoException_ShouldReturn400BadRequest() {
+        // 400 e nao 403: o gestor esta autorizado a criar o usuario, o que esta errado e o
+        // dado. O caso predominante e erro de digitacao.
+        DominioEmailNaoPermitidoException ex =
+                new DominioEmailNaoPermitidoException("Domínio não autorizado. Aceitos: fiesc.org.br");
+
+        ResponseEntity<ErrorResponse> response =
+                exceptionHandler.handleDominioEmailNaoPermitidoException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("DOMINIO_EMAIL_NAO_PERMITIDO");
+        assertThat(response.getBody().message()).contains("fiesc.org.br");
+    }
+
+    @Test
     void handleEnvioEmailException_ShouldReturn502BadGateway() {
         // 502 e nao 500: a requisicao estava correta, quem falhou foi o provedor de
         // e-mail. Acompanha o default do handleFeignException, que ja mapeia falha de
