@@ -438,11 +438,17 @@ A autorização **na camada HTTP** é binária: autenticado ou não. Não há
 `ROLE_<PERFIL>` não é consumida por nenhuma regra de rota.
 
 A partir do S2a existe autorização por perfil, mas ela mora **no serviço**, não em
-anotação — hoje só em `UserService.createUser`. Os motivos estão na §6, item 19; o
-resumo é que o 403 do Spring Security não passa pelo `GlobalExceptionHandler` e sairia
-sem `ErrorResponse`. **Isso substitui o desenho previsto para o P0.4**, que assumia
-`@EnableMethodSecurity`: o P0.4 precisa ser reescrito em cima desta decisão, e não
-duplicá-la.
+anotação. Os motivos estão na §6, item 19; o resumo é que o 403 do Spring Security não
+passa pelo `GlobalExceptionHandler` e sairia sem `ErrorResponse`. **Isso substituiu o
+desenho previsto para o P0.4**, que assumia `@EnableMethodSecurity`.
+
+O **P0.4c** estendeu essa autorização a todo o CRUD de usuário — leitura, listagem,
+alteração e exclusão —, reescrita em cima daquela decisão em vez de duplicá-la. Até ele,
+`GET /api/users/{id}`, `GET /api/users`, `PATCH` e `DELETE` exigiam apenas estar
+autenticado: qualquer colaborador logado lia, alterava e excluía qualquer usuário. O
+`UpdateUserRequest` nunca aceitou `perfil` nem `regionalId`, então autopromoção não era
+possível — mas **aceitava `password`**, e trocar a senha de um administrador dava o mesmo
+resultado por outro caminho.
 
 ### Endpoints
 
@@ -467,13 +473,13 @@ duplicá-la.
 | GET | `/api/incidents/{id}` | autenticado |
 | GET | `/api/incidents/dashboard` | autenticado |
 | PATCH | `/api/incidents/{id}` | autenticado |
-| GET | `/api/users` | autenticado |
-| GET | `/api/users/{userId}` | autenticado |
+| GET | `/api/users` | autenticado — **escopado por perfil** |
+| GET | `/api/users/{userId}` | autenticado — **autorizado por perfil/regional** |
 | GET | `/api/users/dashboard` | autenticado |
 | POST | `/api/users` | autenticado |
 | POST | `/api/users/{userId}/reenviar-ativacao` | autenticado |
-| PATCH | `/api/users/{userId}` | autenticado |
-| DELETE | `/api/users/{userId}` | autenticado |
+| PATCH | `/api/users/{userId}` | autenticado — **autorizado por perfil/regional** |
+| DELETE | `/api/users/{userId}` | autenticado — **só `ADMINISTRADOR`** |
 | GET | `/api/regionais` | autenticado |
 | GET | `/api/regionais/{id}` | autenticado |
 | GET | `/api/cep/info?cep=` | autenticado |
@@ -679,6 +685,39 @@ As duas primeiras compartilham status **e mensagem** de propósito: responder al
 diferente para "usuário desativado" confirmaria a quem segura o link que aquele token era
 bom e que a conta existe.
 
+**Autorização de leitura, alteração e exclusão de usuário (P0.4c).** Quem pode o quê:
+
+| Autor | `GET /{id}` e listagem | `PATCH /{id}` | `DELETE /{id}` |
+|---|---|---|---|
+| `ADMINISTRADOR` | qualquer um | qualquer um | qualquer um, **menos a si mesmo** |
+| `GESTOR_FROTA` | qualquer perfil da **própria regional** | só `COLABORADOR` da própria regional, **e a si mesmo** | ninguém |
+| `COLABORADOR` | **só a si mesmo** | **só a si mesmo** | ninguém |
+
+Gestor **sem** regional não tem escopo: na listagem enxerga apenas a si mesmo, e no
+detalhe recebe 403. A leitura é mais larga que a escrita de propósito — o gestor precisa
+consultar o cadastro de quem trabalha com ele sem por isso poder alterá-lo.
+
+Erros:
+
+| Situação | HTTP | `error` |
+|---|---|---|
+| colaborador lendo outro usuário | 403 | `PERFIL_NAO_PERMITIDO` |
+| gestor lendo/alterando fora da própria regional | 403 | `REGIONAL_NAO_PERMITIDA` |
+| gestor alterando quem não é `COLABORADOR` | 403 | `PERFIL_NAO_PERMITIDO` |
+| senha de outra pessoa no `PATCH` | 403 | `SENHA_DE_TERCEIRO` |
+| senha própria fora da política | 400 | `SENHA_FRACA` |
+| exclusão por quem não é `ADMINISTRADOR` | 403 | `PERFIL_NAO_PERMITIDO` |
+| administrador excluindo a si mesmo | 403 | `AUTO_EXCLUSAO_NAO_PERMITIDA` |
+
+`SENHA_DE_TERCEIRO` e `AUTO_EXCLUSAO_NAO_PERMITIDA` são os 403 números três e quatro do
+projeto, e têm `error` próprio pela razão de sempre: a ação corretiva difere. "Peça a
+recuperação de senha" e "peça a outro administrador" não são a mesma orientação, e o
+`ErrorResponse` só carrega `status`, `error`, `message` e `path`.
+
+A **listagem não responde 403**. A resposta é uma `Page`, e uma página reduzida é a
+resposta correta para "estes são os usuários que você pode ver" — recusar a rota inteira
+obrigaria o frontend a tratar erro onde não há erro.
+
 `EnvioEmailException` responde **502 Bad Gateway** com `error = "EMAIL_NAO_ENVIADO"`, e é
 a terceira exceção ainda não alcançável por endpoint nenhum — o M3 entregou só o canal de
 envio. 502 e não 500 porque a requisição estava correta e quem falhou foi o provedor
@@ -806,7 +845,7 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
     mensagens nomeiam a variável que falta e **nunca incluem o valor recebido**, pelo
     mesmo motivo do hash BCrypt.
 19. **A autorização por perfil mora no serviço, não em `@PreAuthorize`.**
-    `UserService.autorizarCriacao` é a primeira regra de autorização do projeto que
+    `UserService.autorizarSobreUsuario` é a primeira regra de autorização do projeto que
     consome o perfil. Três motivos para não ser anotação, todos deliberados:
 
     - O 403 do Spring Security é lançado pelo `ExceptionTranslationFilter`, **fora do
@@ -818,10 +857,10 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
     - Dividir a regra entre anotação e serviço faz quem lê o controller achar que
       entendeu a autorização quando não entendeu.
 
-    **Consequência para o P0.4**, que previa `@EnableMethodSecurity` e `@PreAuthorize`:
-    ele precisa ser **reescrito** em cima desta decisão. Acrescentar method security
-    depois passaria a ter dois lugares decidindo autorização, com contratos de erro
-    diferentes.
+    **O P0.4c foi escrito em cima desta decisão**, e não com method security:
+    `autorizarLeitura`, `autorizarEdicao` e `autorizarExclusao` ficam ao lado de
+    `autorizarSobreUsuario`, no mesmo service. Acrescentar `@EnableMethodSecurity` depois
+    passaria a ter dois lugares decidindo autorização, com contratos de erro diferentes.
 20. **A regional usada na autorização é lida do banco, nunca do token.**
     `UsuarioAutenticadoProvider` resolve o e-mail autenticado para a entidade `User` e a
     regional sai dali. O JWT **não carrega regional**, e não deve passar a carregar: o
@@ -918,6 +957,77 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
     o limiar —, senão vira manual de como contorná-la. E **a senha recebida nunca entra em
     mensagem, exceção ou log**, inclusive no caminho de rejeição: mesmo cuidado do A3 com
     o hash e do M3 com a chave de API.
+
+29. **A escrita é mais restrita que a leitura, e a exclusão mais que as duas.**
+    `UserService.autorizarEdicao` delega para o mesmo `autorizarSobreUsuario` da criação,
+    com as mensagens do fluxo de edição. Não é economia de linha: um gestor que só pode
+    **criar** `COLABORADOR` mas poderia **editar** qualquer um da regional teria a escrita
+    mais permissiva que a criação, e dois gestores da mesma regional poderiam editar um ao
+    outro — escalação lateral por um caminho que a criação já fecha.
+
+    `autorizarLeitura` é separada justamente por ser mais larga: consultar não é alterar.
+
+    As mensagens de 403 do P0.4c são **novas constantes**, não as do S2a. As do S2a falam
+    em "criar" e "cadastrar"; reusá-las diria ao gestor que ele não pode criar alguém
+    quando o que ele tentou foi ler. O campo `error` continua o mesmo, porque a ação
+    corretiva é a mesma.
+30. **O `PATCH` só aceita senha do próprio autor, e a valida.**
+    `UserService.updatePasswordIfProvided` recebe autor e alvo, e lança
+    `SenhaDeTerceiroException` quando são pessoas diferentes — **inclusive para
+    `ADMINISTRADOR`**. Em nenhum outro ponto do sistema alguém escolhe a senha de terceiro:
+    `CreateUserRequest` não tem o campo, a ativação é a própria pessoa definindo, e a
+    recuperação (S4) também será. O `PATCH` era a única exceção, e era por ela que qualquer
+    autenticado assumia a conta de um administrador.
+
+    A senha passa agora por `UserValidator.validarSenha`, que **não rodava aqui**: o
+    `PATCH` era um segundo caminho para senha fraca depois de o S3 ter fechado o da
+    ativação. A validação usa o e-mail e o nome **já atualizados na mesma requisição**,
+    porque as três alterações acontecem em ordem.
+
+    O que **não** mudou: `UpdateUserRequest` continua sendo `(name, email, password)`.
+    Alterar `perfil` ou `regionalId` segue sem caminho HTTP — ver item 6. Não há guarda
+    contra autopromoção no service porque não há campo por onde ela aconteça; quem guarda
+    a premissa é um teste sobre os componentes do record, que quebra se alguém acrescentar
+    os campos.
+31. **Ninguém exclui a própria conta, nem o administrador.** A exclusão é lógica e, desde
+    o S3, usuário inativo deixa de autenticar (§9, item 14) — o administrador perderia o
+    próprio acesso na hora, e como não há endpoint que reative ninguém, só um `UPDATE`
+    manual no banco o traria de volta. Sendo o único administrador, o sistema ficaria sem
+    caminho administrativo.
+
+    Em `autorizarExclusao` o **perfil é conferido antes** da autoexclusão, de propósito:
+    um colaborador tentando se excluir leva `PERFIL_NAO_PERMITIDO`, e não
+    `AUTO_EXCLUSAO_NAO_PERMITIDA`, porque a segunda mensagem daria a entender que ele
+    poderia excluir outra pessoa.
+32. **Autorizar vem antes de dizer que o usuário está excluído.** Os três fluxos do P0.4c
+    buscam o alvo por `buscarUsuarioPorId` — que **não** confere `is_active` —, autorizam,
+    e só então chamam `validateUserIsActive`. Responder `USER_ALREADY_DELETED` a quem não
+    podia sequer ver o registro confirmaria a existência da conta e o seu estado. É o
+    mesmo raciocínio do item 22, aplicado à leitura.
+
+    `findUserByIdOrThrow` continua existindo, com o comportamento antigo, para
+    `reenviarAtivacao`.
+33. **A listagem é escopada, e por isso a correção não é contornável.** `getAllUsers`
+    escolhe entre três consultas do `UserRepository` conforme o perfil do autor. Sem isso,
+    restringir `GET /api/users/{id}` não valeria nada: o mesmo dado sairia por
+    `GET /api/users`, que devolvia todo mundo para qualquer autenticado.
+
+    Gestor **sem** regional cai no mesmo caso do colaborador — vê só a si mesmo. Não há
+    "própria regional" com que filtrar, e o caminho permissivo seria mostrar-lhe o sistema
+    inteiro. Mesma postura de `autorizarSobreUsuario`.
+
+    **`GET /api/users/dashboard` continua sem escopo** e devolve o total de ativos do
+    sistema a qualquer autenticado. É agregado, não dado de pessoa, e ficou fora do P0.4c
+    de propósito — mas é inconsistência conhecida, não esquecimento.
+34. **O e-mail atual do próprio usuário não conta como duplicado no `PATCH`.** Sem a
+    comparação em `updateEmailIfProvided`, reenviar o formulário inteiro sem mexer no
+    e-mail resultaria em 409, porque `existsByEmail` encontra o registro do próprio alvo.
+    Passou a importar quando o autosserviço virou o uso principal do endpoint.
+
+    **`validarDominioEmail` continua NÃO rodando no `PATCH`** — trocar o e-mail para um
+    domínio fora da lista ainda é aceito, ao contrário do que acontece na criação. É furo
+    conhecido e deliberadamente fora do escopo do P0.4c, que trata de autorização; fechá-lo
+    faz requisições hoje válidas passarem a responder 400 e é decisão de contrato.
 
 ---
 
@@ -1251,7 +1361,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **241 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **264 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -1260,7 +1370,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 241, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 264, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Não existe teste de controller** — zero `MockMvc`, `@WebMvcTest` ou `@SpringBootTest`

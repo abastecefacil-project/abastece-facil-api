@@ -151,6 +151,46 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 403, e nao 400: o pedido esta bem formado e o autor esta autenticado; o que o barra
+     * e quem ele e em relacao ao alvo. O "error" e proprio pelo mesmo motivo dos dois
+     * acima -- a acao corretiva e especifica, e o frontend precisa poder dizer "peca a um
+     * administrador" em vez de "voce nao pode".
+     */
+    @ExceptionHandler(SenhaDeTerceiroException.class)
+    public ResponseEntity<ErrorResponse> handleSenhaDeTerceiroException(
+            SenhaDeTerceiroException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.FORBIDDEN.value(),
+                "SENHA_DE_TERCEIRO",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
+    }
+
+    /**
+     * 403, e nao 400: e regra de autorizacao, nao dado invalido -- o id do path existe e
+     * a requisicao esta correta. O "error" e proprio porque nao ha acao corretiva nenhuma
+     * do lado de quem chamou: outra pessoa precisa executar a exclusao, e o frontend deve
+     * dizer isso em vez de sugerir uma nova tentativa.
+     */
+    @ExceptionHandler(AutoExclusaoNaoPermitidaException.class)
+    public ResponseEntity<ErrorResponse> handleAutoExclusaoNaoPermitidaException(
+            AutoExclusaoNaoPermitidaException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.FORBIDDEN.value(),
+                "AUTO_EXCLUSAO_NAO_PERMITIDA",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error);
+    }
+
+    /**
      * 409, como as outras colisoes de unicidade do projeto. O "error" e proprio, e nao
      * CONFLICT como em UserAlreadyExists, porque o formulario de cadastro do S5 precisa
      * apontar o campo certo: e-mail e matricula sao dois inputs distintos e o gestor

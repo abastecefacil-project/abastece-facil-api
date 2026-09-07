@@ -109,4 +109,53 @@ public class UserConstants {
      */
     public static final String SENHA_COM_DADOS_PESSOAIS_MESSAGE =
             "A senha não pode conter o seu nome ou o seu e-mail";
+
+    // ----------------------------------------------------------------- P0.4c
+
+    /**
+     * Mensagens de autorizacao de leitura, edicao e exclusao de usuario.
+     *
+     * <p>Sao distintas das do S2a de proposito. {@link #PERFIL_NAO_PERMITIDO_MESSAGE} e
+     * {@link #REGIONAL_NAO_PERMITIDA_MESSAGE} falam em "criar" e "cadastrar", que e o que
+     * o S2a autoriza; reusa-las em GET, PATCH e DELETE diria ao usuario que ele nao pode
+     * criar alguem quando o que ele tentou foi ler. O campo "error" do ErrorResponse
+     * continua o mesmo (PERFIL_NAO_PERMITIDO / REGIONAL_NAO_PERMITIDA) porque a acao
+     * corretiva e a mesma: falar com quem tem o perfil, ou com a propria regional.
+     */
+    public static final String PERFIL_NAO_PERMITIDO_LEITURA_MESSAGE =
+            "Seu perfil não permite consultar outros usuários";
+
+    public static final String REGIONAL_NAO_PERMITIDA_LEITURA_MESSAGE =
+            "Gestor de frota só pode consultar usuários da própria regional";
+
+    public static final String PERFIL_NAO_PERMITIDO_EDICAO_MESSAGE =
+            "Seu perfil não permite alterar este usuário";
+
+    public static final String REGIONAL_NAO_PERMITIDA_EDICAO_MESSAGE =
+            "Gestor de frota só pode alterar usuários da própria regional";
+
+    public static final String PERFIL_NAO_PERMITIDO_EXCLUSAO_MESSAGE =
+            "Somente um administrador pode excluir usuários";
+
+    /**
+     * Excluir a si mesmo e sempre recusado, inclusive para ADMINISTRADOR. A exclusao e
+     * logica (is_active = false) e, desde o S3, um usuario inativo deixa de autenticar --
+     * entao um administrador que se exclui perde o proprio acesso na hora, e como nao ha
+     * endpoint que reative ninguem, so um UPDATE manual no banco o traria de volta. Se ele
+     * for o unico administrador, o sistema fica sem caminho administrativo.
+     */
+    public static final String AUTO_EXCLUSAO_NAO_PERMITIDA_MESSAGE =
+            "Você não pode excluir a própria conta";
+
+    /**
+     * O PATCH so aceita senha quando o alvo e o proprio autor.
+     *
+     * <p>Em nenhum outro ponto do sistema alguem escolhe a senha de terceiro: o
+     * CreateUserRequest do S2a nao tem campo de senha, a ativacao do S3 e a propria pessoa
+     * definindo, e a recuperacao (S4) tambem sera. O PATCH era a unica excecao, e era por
+     * ela que qualquer autenticado trocava a senha de um administrador e assumia a conta.
+     */
+    public static final String SENHA_DE_TERCEIRO_MESSAGE =
+            "A senha só pode ser alterada pelo próprio usuário. "
+                    + "Para outra pessoa, use a recuperação de senha.";
 }

@@ -4,6 +4,7 @@ import com.github.api_abastecefacil.dto.email.MensagemAcesso;
 import com.github.api_abastecefacil.dto.user.CreateUserRequest;
 import com.github.api_abastecefacil.dto.user.UpdateUserRequest;
 import com.github.api_abastecefacil.dto.user.UserResponse;
+import com.github.api_abastecefacil.exception.AutoExclusaoNaoPermitidaException;
 import com.github.api_abastecefacil.exception.DominioEmailNaoPermitidoException;
 import com.github.api_abastecefacil.exception.EnvioEmailException;
 import com.github.api_abastecefacil.exception.InvalidUserDataException;
@@ -11,6 +12,8 @@ import com.github.api_abastecefacil.exception.MatriculaDuplicadaException;
 import com.github.api_abastecefacil.exception.NotFoundException;
 import com.github.api_abastecefacil.exception.PerfilNaoPermitidoException;
 import com.github.api_abastecefacil.exception.RegionalNaoPermitidaException;
+import com.github.api_abastecefacil.exception.SenhaDeTerceiroException;
+import com.github.api_abastecefacil.exception.SenhaFracaException;
 import com.github.api_abastecefacil.exception.SenhaJaDefinidaException;
 import com.github.api_abastecefacil.exception.UserAlreadyDeletedException;
 import com.github.api_abastecefacil.exception.UserAlreadyExistsException;
@@ -34,6 +37,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.lang.reflect.RecordComponent;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -115,7 +119,20 @@ class UserServiceTest {
     // ------------------------------------------------------------------ fixtures
 
     private User autor(Perfil perfil, Regional regional) {
-        return new User().setId(99L).setEmail("autor@fiesc.org.br").setPerfil(perfil).setRegional(regional);
+        return autorComId(99L, perfil, regional);
+    }
+
+    /**
+     * Autor com id escolhido. O P0.4c precisa distinguir "o autor e o alvo" de "o autor e
+     * outra pessoa", e a comparacao no service e por id.
+     */
+    private User autorComId(Long id, Perfil perfil, Regional regional) {
+        return new User().setId(id).setName("Autor Um").setEmail("autor@fiesc.org.br")
+                .setPerfil(perfil).setRegional(regional).setActive(true);
+    }
+
+    private Regional florianopolis() {
+        return new Regional().setId(REGIONAL_FLN).setNome("Florianópolis").setSigla("FLN").setAtivo(true);
     }
 
     private CreateUserRequest pedido(Perfil perfil, Long regionalId, String matricula) {
@@ -661,6 +678,8 @@ class UserServiceTest {
 
     @Test
     void getUserById_ShouldReturnUser_WhenUserExistsAndIsActive() {
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.ADMINISTRADOR, null));
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
         when(userMapper.toResponse(user)).thenReturn(userResponse);
 
@@ -672,6 +691,8 @@ class UserServiceTest {
 
     @Test
     void getUserById_ShouldThrowNotFoundException_WhenUserDoesNotExist() {
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.ADMINISTRADOR, null));
         when(userRepository.findById(99L)).thenReturn(Optional.empty());
 
         assertThrows(NotFoundException.class, () -> userService.getUserById(99L));
@@ -680,6 +701,8 @@ class UserServiceTest {
     @Test
     void getUserById_ShouldThrowUserAlreadyDeletedException_WhenUserIsInactive() {
         user.setActive(false);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.ADMINISTRADOR, null));
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
 
         assertThrows(UserAlreadyDeletedException.class, () -> userService.getUserById(1L));
@@ -687,21 +710,28 @@ class UserServiceTest {
 
     @Test
     void updateUser_ShouldUpdateUserSuccessfully() {
-        UpdateUserRequest request = new UpdateUserRequest("Updated Name", "new@test.com", "newpass");
+        // A senha e do proprio autor, unico caso que o PATCH aceita desde o P0.4c, e
+        // passa pela politica do S3 -- 10 caracteres, letra e digito, sem nome nem e-mail.
+        UpdateUserRequest request = new UpdateUserRequest("Updated Name", "nova@test.com", "Chuva2026Forte");
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autorComId(1L, Perfil.COLABORADOR, null));
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
-        when(userRepository.existsByEmail("new@test.com")).thenReturn(false);
-        when(passwordEncoder.encode("newpass")).thenReturn("encodedNewPass");
+        when(userRepository.existsByEmail("nova@test.com")).thenReturn(false);
+        when(passwordEncoder.encode("Chuva2026Forte")).thenReturn("encodedNewPass");
         when(userRepository.save(user)).thenReturn(user);
         when(userMapper.toResponse(user)).thenReturn(userResponse);
 
         UserResponse response = userService.updateUser(1L, request);
 
         assertThat(response).isNotNull();
+        assertThat(user.getPassword()).isEqualTo("encodedNewPass");
         verify(userRepository).save(user);
     }
 
     @Test
     void deleteUser_ShouldDeactivateUser() {
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.ADMINISTRADOR, null));
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
 
         userService.deleteUser(1L);
@@ -715,6 +745,8 @@ class UserServiceTest {
         Pageable pageable = PageRequest.of(0, 10);
         Page<User> page = new PageImpl<>(List.of(user));
 
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.ADMINISTRADOR, null));
         when(userRepository.findByIsActiveAndNameContainingIgnoreCase(true, "User", pageable)).thenReturn(page);
         when(userMapper.toResponse(user)).thenReturn(userResponse);
 
@@ -722,6 +754,266 @@ class UserServiceTest {
 
         assertThat(result).isNotNull();
         assertThat(result.getContent()).hasSize(1);
+    }
+
+    // -------------------------------------------------- P0.4c: leitura de usuario
+
+    @Test
+    void getUserById_ShouldAllowColaborador_ToReadOwnRecord() {
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autorComId(1L, Perfil.COLABORADOR, null));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(userMapper.toResponse(user)).thenReturn(userResponse);
+
+        assertThat(userService.getUserById(1L)).isNotNull();
+    }
+
+    @Test
+    void getUserById_ShouldThrowPerfilNaoPermitido_WhenColaboradorReadsAnotherUser() {
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.COLABORADOR, joinville));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+
+        assertThrows(PerfilNaoPermitidoException.class, () -> userService.getUserById(1L));
+
+        verifyNoInteractions(userMapper);
+    }
+
+    @Test
+    void getUserById_ShouldAllowGestor_OnOwnRegional() {
+        User alvo = alvoPendente();
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.GESTOR_FROTA, joinville));
+        when(userRepository.findById(5L)).thenReturn(Optional.of(alvo));
+        when(userMapper.toResponse(alvo)).thenReturn(userResponse);
+
+        assertThat(userService.getUserById(5L)).isNotNull();
+    }
+
+    @Test
+    void getUserById_ShouldThrowRegionalNaoPermitida_WhenGestorReadsAnotherRegional() {
+        User alvo = alvoPendente().setRegional(florianopolis());
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.GESTOR_FROTA, joinville));
+        when(userRepository.findById(5L)).thenReturn(Optional.of(alvo));
+
+        assertThrows(RegionalNaoPermitidaException.class, () -> userService.getUserById(5L));
+    }
+
+    @Test
+    void getUserById_ShouldAuthorizeBeforeReportingThatTheUserIsDeleted() {
+        // Autorizar vem antes de validar. Responder "usuario deletado" a quem nem podia
+        // ve-lo confirmaria a existencia da conta e o seu estado.
+        user.setActive(false);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.COLABORADOR, joinville));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+
+        assertThrows(PerfilNaoPermitidoException.class, () -> userService.getUserById(1L));
+    }
+
+    // -------------------------------------------------- P0.4c: edicao de usuario
+
+    @Test
+    void updateUser_ShouldThrowPerfilNaoPermitido_WhenColaboradorUpdatesAnotherUser() {
+        UpdateUserRequest request = new UpdateUserRequest("Invadido", null, null);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.COLABORADOR, joinville));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+
+        assertThrows(PerfilNaoPermitidoException.class, () -> userService.updateUser(1L, request));
+
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void updateUser_ShouldAllowGestor_OnOwnRegionalColaborador() {
+        User alvo = alvoPendente();
+        UpdateUserRequest request = new UpdateUserRequest("Nome Corrigido", null, null);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.GESTOR_FROTA, joinville));
+        when(userRepository.findById(5L)).thenReturn(Optional.of(alvo));
+        when(userRepository.save(alvo)).thenReturn(alvo);
+        when(userMapper.toResponse(alvo)).thenReturn(userResponse);
+
+        assertThat(userService.updateUser(5L, request)).isNotNull();
+        assertThat(alvo.getName()).isEqualTo("Nome Corrigido");
+    }
+
+    @Test
+    void updateUser_ShouldThrowPerfilNaoPermitido_WhenGestorUpdatesAnotherGestor() {
+        // A escrita nao pode ser mais permissiva que a criacao: o S2a ja impede um gestor
+        // de criar outro gestor. Sem esta regra, dois gestores da mesma regional poderiam
+        // editar um ao outro -- escalacao lateral.
+        User alvo = alvoPendente().setPerfil(Perfil.GESTOR_FROTA);
+        UpdateUserRequest request = new UpdateUserRequest("Nome", null, null);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.GESTOR_FROTA, joinville));
+        when(userRepository.findById(5L)).thenReturn(Optional.of(alvo));
+
+        assertThrows(PerfilNaoPermitidoException.class, () -> userService.updateUser(5L, request));
+    }
+
+    @Test
+    void updateUser_ShouldThrowRegionalNaoPermitida_WhenGestorUpdatesAnotherRegional() {
+        User alvo = alvoPendente().setRegional(florianopolis());
+        UpdateUserRequest request = new UpdateUserRequest("Nome", null, null);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.GESTOR_FROTA, joinville));
+        when(userRepository.findById(5L)).thenReturn(Optional.of(alvo));
+
+        assertThrows(RegionalNaoPermitidaException.class, () -> userService.updateUser(5L, request));
+    }
+
+    @Test
+    void updateUser_ShouldThrowSenhaDeTerceiro_WhenAdministradorSetsAnotherUsersPassword() {
+        // Era por aqui que qualquer autenticado assumia a conta de um administrador. Nem
+        // o administrador escolhe a senha de outra pessoa: quem esqueceu usa a recuperacao.
+        UpdateUserRequest request = new UpdateUserRequest(null, null, "Chuva2026Forte");
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.ADMINISTRADOR, null));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+
+        assertThrows(SenhaDeTerceiroException.class, () -> userService.updateUser(1L, request));
+
+        verify(userRepository, never()).save(any());
+        verifyNoInteractions(passwordEncoder);
+    }
+
+    @Test
+    void updateUser_ShouldThrowSenhaFraca_WhenTheOwnPasswordViolatesThePolicy() {
+        // O PATCH era um segundo caminho para senha fraca, depois de o S3 ter fechado o
+        // da ativacao.
+        UpdateUserRequest request = new UpdateUserRequest(null, null, "123");
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autorComId(1L, Perfil.COLABORADOR, null));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+
+        assertThrows(SenhaFracaException.class, () -> userService.updateUser(1L, request));
+
+        verifyNoInteractions(passwordEncoder);
+    }
+
+    @Test
+    void updateUser_ShouldNotTreatTheOwnCurrentEmailAsDuplicate() {
+        UpdateUserRequest request = new UpdateUserRequest("Nome Novo", "one@fiesc.org.br", null);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autorComId(1L, Perfil.COLABORADOR, null));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(userRepository.save(user)).thenReturn(user);
+        when(userMapper.toResponse(user)).thenReturn(userResponse);
+
+        assertThat(userService.updateUser(1L, request)).isNotNull();
+
+        verify(userRepository, never()).existsByEmail(anyString());
+    }
+
+    @Test
+    void updateUserRequest_ShouldNotCarryPerfilNorRegional() {
+        // Criterio de aceite do P0.4c: ninguem altera perfil nem regional pelo PATCH, o
+        // proprio inclusive. Nao ha checagem no service porque nao ha campo -- guardar
+        // contra um campo inexistente seria codigo morto sugerindo o contrario. Este
+        // teste guarda a premissa: acrescentar os campos ao DTO quebra aqui e obriga a
+        // decidir a autorizacao junto.
+        assertThat(UpdateUserRequest.class.getRecordComponents())
+                .extracting(RecordComponent::getName)
+                .containsExactly("name", "email", "password");
+    }
+
+    // ------------------------------------------------- P0.4c: exclusao de usuario
+
+    @Test
+    void deleteUser_ShouldThrowPerfilNaoPermitido_WhenAuthorIsColaborador() {
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.COLABORADOR, joinville));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+
+        assertThrows(PerfilNaoPermitidoException.class, () -> userService.deleteUser(1L));
+
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void deleteUser_ShouldThrowPerfilNaoPermitido_WhenAuthorIsGestor() {
+        User alvo = alvoPendente();
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.GESTOR_FROTA, joinville));
+        when(userRepository.findById(5L)).thenReturn(Optional.of(alvo));
+
+        assertThrows(PerfilNaoPermitidoException.class, () -> userService.deleteUser(5L));
+    }
+
+    @Test
+    void deleteUser_ShouldThrowAutoExclusaoNaoPermitida_WhenAdministradorDeletesHimself() {
+        // A exclusao e logica, e desde o S3 usuario inativo deixa de autenticar: o
+        // administrador perderia o proprio acesso na hora, sem endpoint que o reative.
+        User admin = autorComId(1L, Perfil.ADMINISTRADOR, null);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(admin);
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+
+        assertThrows(AutoExclusaoNaoPermitidaException.class, () -> userService.deleteUser(1L));
+
+        assertThat(user.getActive()).isTrue();
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void deleteUser_ShouldRejectSelfDeletion_ByPerfil_WhenAuthorIsNotAdministrador() {
+        // O perfil e conferido antes do autosservico: dizer "voce nao pode excluir a
+        // propria conta" a um colaborador daria a entender que ele poderia excluir outra.
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autorComId(1L, Perfil.COLABORADOR, null));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+
+        assertThrows(PerfilNaoPermitidoException.class, () -> userService.deleteUser(1L));
+
+        assertThat(user.getActive()).isTrue();
+    }
+
+    // ------------------------------------------------- P0.4c: escopo da listagem
+
+    @Test
+    void getAllUsers_ShouldScopeToOwnRegional_WhenAuthorIsGestor() {
+        Pageable pageable = PageRequest.of(0, 10);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.GESTOR_FROTA, joinville));
+        when(userRepository.findByIsActiveAndRegionalIdAndNameContainingIgnoreCase(
+                true, REGIONAL_JOI, "", pageable)).thenReturn(new PageImpl<>(List.of()));
+
+        userService.getAllUsers(true, "", pageable);
+
+        verify(userRepository, never()).findByIsActiveAndNameContainingIgnoreCase(any(), any(), any());
+    }
+
+    @Test
+    void getAllUsers_ShouldScopeToSelf_WhenAuthorIsColaborador() {
+        // Sem isto a restricao do GET /{id} seria contornavel em uma requisicao: o mesmo
+        // dado sairia pela listagem.
+        Pageable pageable = PageRequest.of(0, 10);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.COLABORADOR, joinville));
+        when(userRepository.findByIsActiveAndIdAndNameContainingIgnoreCase(
+                true, 99L, "", pageable)).thenReturn(new PageImpl<>(List.of()));
+
+        userService.getAllUsers(true, "", pageable);
+
+        verify(userRepository, never()).findByIsActiveAndNameContainingIgnoreCase(any(), any(), any());
+    }
+
+    @Test
+    void getAllUsers_ShouldScopeToSelf_WhenGestorHasNoRegional() {
+        // Gestor sem regional nao tem escopo com que filtrar, e o caminho permissivo
+        // seria mostrar-lhe o sistema inteiro. Mesma postura do autorizarSobreUsuario.
+        Pageable pageable = PageRequest.of(0, 10);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.GESTOR_FROTA, null));
+        when(userRepository.findByIsActiveAndIdAndNameContainingIgnoreCase(
+                true, 99L, "", pageable)).thenReturn(new PageImpl<>(List.of()));
+
+        userService.getAllUsers(true, "", pageable);
+
+        verify(userRepository, never()).findByIsActiveAndRegionalIdAndNameContainingIgnoreCase(
+                any(), any(), any(), any());
     }
 
     @Test

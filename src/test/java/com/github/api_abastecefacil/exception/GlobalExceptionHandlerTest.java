@@ -216,4 +216,44 @@ class GlobalExceptionHandlerTest {
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().error()).isEqualTo("COORDINATES_NOT_FOUND");
     }
+
+    @Test
+    void handleSenhaDeTerceiroException_ShouldReturn403Forbidden() {
+        SenhaDeTerceiroException ex = new SenhaDeTerceiroException("Senha de terceiro");
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleSenhaDeTerceiroException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("SENHA_DE_TERCEIRO");
+    }
+
+    @Test
+    void handleAutoExclusaoNaoPermitidaException_ShouldReturn403Forbidden() {
+        AutoExclusaoNaoPermitidaException ex = new AutoExclusaoNaoPermitidaException("Autoexclusão");
+
+        ResponseEntity<ErrorResponse> response =
+                exceptionHandler.handleAutoExclusaoNaoPermitidaException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("AUTO_EXCLUSAO_NAO_PERMITIDA");
+    }
+
+    @Test
+    void handleForbiddenExceptions_ShouldUseDistinctErrorCodes() {
+        // Os quatro 403 do projeto compartilham o status; o campo "error" e o unico
+        // discriminador programatico do ErrorResponse, e cada um leva a uma acao
+        // corretiva diferente do lado de quem chamou.
+        assertThat(java.util.List.of(
+                        exceptionHandler.handlePerfilNaoPermitidoException(
+                                new PerfilNaoPermitidoException("a"), webRequest).getBody().error(),
+                        exceptionHandler.handleRegionalNaoPermitidaException(
+                                new RegionalNaoPermitidaException("b"), webRequest).getBody().error(),
+                        exceptionHandler.handleSenhaDeTerceiroException(
+                                new SenhaDeTerceiroException("c"), webRequest).getBody().error(),
+                        exceptionHandler.handleAutoExclusaoNaoPermitidaException(
+                                new AutoExclusaoNaoPermitidaException("d"), webRequest).getBody().error()))
+                .doesNotHaveDuplicates();
+    }
 }

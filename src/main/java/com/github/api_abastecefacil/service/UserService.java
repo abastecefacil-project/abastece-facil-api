@@ -4,12 +4,14 @@ import com.github.api_abastecefacil.dto.email.MensagemAcesso;
 import com.github.api_abastecefacil.dto.user.CreateUserRequest;
 import com.github.api_abastecefacil.dto.user.UpdateUserRequest;
 import com.github.api_abastecefacil.dto.user.UserResponse;
+import com.github.api_abastecefacil.exception.AutoExclusaoNaoPermitidaException;
 import com.github.api_abastecefacil.exception.EnvioEmailException;
 import com.github.api_abastecefacil.exception.InvalidUserDataException;
 import com.github.api_abastecefacil.exception.MatriculaDuplicadaException;
 import com.github.api_abastecefacil.exception.NotFoundException;
 import com.github.api_abastecefacil.exception.PerfilNaoPermitidoException;
 import com.github.api_abastecefacil.exception.RegionalNaoPermitidaException;
+import com.github.api_abastecefacil.exception.SenhaDeTerceiroException;
 import com.github.api_abastecefacil.exception.SenhaJaDefinidaException;
 import com.github.api_abastecefacil.exception.UserAlreadyDeletedException;
 import com.github.api_abastecefacil.exception.UserAlreadyExistsException;
@@ -202,24 +204,110 @@ public class UserService {
      * na antiga até o próximo login. Ver §6 do CLAUDE.md.
      */
     private void autorizarSobreUsuario(User autor, Perfil perfilAlvo, Long regionalIdAlvo) {
+        autorizarSobreUsuario(autor, perfilAlvo, regionalIdAlvo,
+                PERFIL_NAO_PERMITIDO_MESSAGE, REGIONAL_NAO_PERMITIDA_MESSAGE);
+    }
+
+    /**
+     * A mesma regra, com as mensagens do fluxo que chamou.
+     *
+     * <p>O P0.4c reusa esta autorizacao na edicao, e as mensagens do S2a falam em "criar"
+     * e "cadastrar" -- dizer ao gestor que ele nao pode criar alguem quando o que ele
+     * tentou foi alterar seria informacao errada. O status e o campo "error" nao mudam:
+     * a acao corretiva continua a mesma.
+     */
+    private void autorizarSobreUsuario(User autor, Perfil perfilAlvo, Long regionalIdAlvo,
+                                       String mensagemPerfil, String mensagemRegional) {
         if (Perfil.ADMINISTRADOR.equals(autor.getPerfil())) {
             return;
         }
 
         if (!Perfil.GESTOR_FROTA.equals(autor.getPerfil())) {
-            throw new PerfilNaoPermitidoException(PERFIL_NAO_PERMITIDO_MESSAGE);
+            throw new PerfilNaoPermitidoException(mensagemPerfil);
         }
 
         if (!Perfil.COLABORADOR.equals(perfilAlvo)) {
-            throw new PerfilNaoPermitidoException(PERFIL_NAO_PERMITIDO_MESSAGE);
+            throw new PerfilNaoPermitidoException(mensagemPerfil);
         }
 
         // Gestor sem regional nao cadastra ninguem: nao ha "propria regional" com que
         // comparar, e o caminho permissivo seria deixa-lo criar em qualquer lugar.
         if (autor.getRegional() == null
                 || !autor.getRegional().getId().equals(regionalIdAlvo)) {
-            throw new RegionalNaoPermitidaException(REGIONAL_NAO_PERMITIDA_MESSAGE);
+            throw new RegionalNaoPermitidaException(mensagemRegional);
         }
+    }
+
+    /**
+     * Leitura: ADMINISTRADOR ve qualquer um; GESTOR_FROTA ve quem esta na propria
+     * regional, de qualquer perfil; COLABORADOR ve apenas a si mesmo. Todo mundo ve o
+     * proprio registro.
+     *
+     * <p>A leitura e mais larga que a edicao de proposito: o gestor precisa conseguir
+     * consultar o cadastro de quem trabalha com ele sem, por isso, poder altera-lo.
+     */
+    private void autorizarLeitura(User autor, User alvo) {
+        if (Perfil.ADMINISTRADOR.equals(autor.getPerfil()) || ehOMesmoUsuario(autor, alvo)) {
+            return;
+        }
+
+        if (!Perfil.GESTOR_FROTA.equals(autor.getPerfil())) {
+            throw new PerfilNaoPermitidoException(PERFIL_NAO_PERMITIDO_LEITURA_MESSAGE);
+        }
+
+        if (autor.getRegional() == null
+                || !autor.getRegional().getId().equals(regionalIdDe(alvo))) {
+            throw new RegionalNaoPermitidaException(REGIONAL_NAO_PERMITIDA_LEITURA_MESSAGE);
+        }
+    }
+
+    /**
+     * Edicao: as mesmas regras da criacao (S2a), aplicadas ao perfil e a regional que o
+     * alvo tem hoje, mais o autosservico -- qualquer um altera o proprio registro.
+     *
+     * <p>Reusar {@code autorizarSobreUsuario} nao e economia de linha. Um gestor que cria
+     * apenas COLABORADOR mas edita qualquer um da regional teria a escrita mais permissiva
+     * que a criacao, e dois gestores da mesma regional poderiam trocar a senha um do outro
+     * -- escalacao lateral por um caminho que a criacao ja fecha.
+     */
+    private void autorizarEdicao(User autor, User alvo) {
+        if (ehOMesmoUsuario(autor, alvo)) {
+            return;
+        }
+
+        autorizarSobreUsuario(autor, alvo.getPerfil(), regionalIdDe(alvo),
+                PERFIL_NAO_PERMITIDO_EDICAO_MESSAGE, REGIONAL_NAO_PERMITIDA_EDICAO_MESSAGE);
+    }
+
+    /**
+     * Exclusao: somente ADMINISTRADOR, e nunca a propria conta.
+     *
+     * <p>O perfil e conferido antes do autosservico de proposito. Um colaborador tentando
+     * excluir a si mesmo leva "somente um administrador pode excluir usuarios", que e
+     * verdade; a mensagem de autoexclusao daria a entender que ele poderia excluir outra
+     * pessoa.
+     *
+     * <p>Por que nem o administrador se exclui: a exclusao e logica e, desde o S3, usuario
+     * inativo deixa de autenticar. Ele perderia o proprio acesso na hora, e nao ha
+     * endpoint que reative ninguem -- se for o unico administrador, o sistema fica sem
+     * caminho administrativo.
+     */
+    private void autorizarExclusao(User autor, User alvo) {
+        if (!Perfil.ADMINISTRADOR.equals(autor.getPerfil())) {
+            throw new PerfilNaoPermitidoException(PERFIL_NAO_PERMITIDO_EXCLUSAO_MESSAGE);
+        }
+
+        if (ehOMesmoUsuario(autor, alvo)) {
+            throw new AutoExclusaoNaoPermitidaException(AUTO_EXCLUSAO_NAO_PERMITIDA_MESSAGE);
+        }
+    }
+
+    private boolean ehOMesmoUsuario(User autor, User alvo) {
+        return autor.getId() != null && autor.getId().equals(alvo.getId());
+    }
+
+    private Long regionalIdDe(User user) {
+        return user.getRegional() == null ? null : user.getRegional().getId();
     }
 
     /**
@@ -285,31 +373,89 @@ public class UserService {
         }
     }
 
+    /**
+     * Alteracao administrativa e autosservico pelo mesmo endpoint, com a autorizacao
+     * antes de qualquer escrita.
+     *
+     * <p>{@code UpdateUserRequest} continua sem {@code perfil} e sem {@code regionalId} --
+     * promover alguem segue sendo UPDATE manual no banco. Por isso nao ha guarda contra
+     * autopromocao aqui: ela nao tem campo por onde acontecer, e um teste de campo
+     * inexistente seria codigo morto sugerindo o contrario.
+     *
+     * <p>A ordem e a mesma dos outros fluxos: buscar o alvo, autorizar, so entao validar e
+     * escrever. Conferir "ja excluido" antes de autorizar diria a quem nao pode ver o
+     * usuario se ele esta ativo.
+     */
     @Transactional
     public UserResponse updateUser(Long userId, UpdateUserRequest request) {
-        User user = findUserByIdOrThrow(userId);
-        updateNameIfProvided(user, request.name());
-        updateEmailIfProvided(user, request.email());
-        updatePasswordIfProvided(user, request.password());
-        User updatedUser = userRepository.save(user);
+        User autor = usuarioAutenticadoProvider.obterUsuarioAutenticado();
+        User alvo = buscarUsuarioPorId(userId);
+
+        autorizarEdicao(autor, alvo);
+        validateUserIsActive(alvo);
+
+        updateNameIfProvided(alvo, request.name());
+        updateEmailIfProvided(alvo, request.email());
+        updatePasswordIfProvided(autor, alvo, request.password());
+
+        User updatedUser = userRepository.save(alvo);
         return userMapper.toResponse(updatedUser);
     }
 
     @Transactional
     public void deleteUser(Long userId) {
-        User user = findUserByIdOrThrow(userId);
-        user.setActive(false);
-        userRepository.save(user);
+        User autor = usuarioAutenticadoProvider.obterUsuarioAutenticado();
+        User alvo = buscarUsuarioPorId(userId);
+
+        autorizarExclusao(autor, alvo);
+        validateUserIsActive(alvo);
+
+        alvo.setActive(false);
+        userRepository.save(alvo);
     }
 
     public UserResponse getUserById(Long userId) {
-        User user = findUserByIdOrThrow(userId);
-        return userMapper.toResponse(user);
+        User autor = usuarioAutenticadoProvider.obterUsuarioAutenticado();
+        User alvo = buscarUsuarioPorId(userId);
+
+        autorizarLeitura(autor, alvo);
+        validateUserIsActive(alvo);
+
+        return userMapper.toResponse(alvo);
     }
 
+    /**
+     * Listagem escopada pelo perfil de quem chama: ADMINISTRADOR ve todos, GESTOR_FROTA
+     * ve a propria regional, COLABORADOR ve apenas a si mesmo. O gestor <b>sem</b>
+     * regional cai no ultimo caso -- nao ha escopo com que filtrar, e o caminho permissivo
+     * seria mostrar-lhe o sistema inteiro.
+     *
+     * <p><b>Por que a listagem entrou junto do GET /{id}.</b> Sem ela a restricao do
+     * detalhe seria contornavel em uma requisicao: o mesmo dado sairia por
+     * {@code GET /api/users}, que ate aqui devolvia todo mundo para qualquer autenticado.
+     *
+     * <p>Nao ha 403 neste fluxo, e isso e deliberado: a resposta e uma pagina, e uma
+     * pagina reduzida (ou vazia) e a resposta correta para "estes sao os usuarios que voce
+     * pode ver". Recusar a rota inteira obrigaria o frontend a tratar erro onde nao ha
+     * erro.
+     */
     public Page<UserResponse> getAllUsers(Boolean active, String name, Pageable pageable) {
-        Page<User> usersPage = userRepository.findByIsActiveAndNameContainingIgnoreCase(active, name, pageable);
-        return usersPage.map(userMapper::toResponse);
+        User autor = usuarioAutenticadoProvider.obterUsuarioAutenticado();
+        return buscarUsuariosVisiveis(autor, active, name, pageable).map(userMapper::toResponse);
+    }
+
+    private Page<User> buscarUsuariosVisiveis(User autor, Boolean active, String name, Pageable pageable) {
+        if (Perfil.ADMINISTRADOR.equals(autor.getPerfil())) {
+            return userRepository.findByIsActiveAndNameContainingIgnoreCase(active, name, pageable);
+        }
+
+        if (Perfil.GESTOR_FROTA.equals(autor.getPerfil()) && autor.getRegional() != null) {
+            return userRepository.findByIsActiveAndRegionalIdAndNameContainingIgnoreCase(
+                    active, autor.getRegional().getId(), name, pageable);
+        }
+
+        return userRepository.findByIsActiveAndIdAndNameContainingIgnoreCase(
+                active, autor.getId(), name, pageable);
     }
 
     public Long countAllActiveUsers() {
@@ -317,10 +463,19 @@ public class UserService {
     }
 
     private User findUserByIdOrThrow(Long userId) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new NotFoundException(USER_NOT_FOUND_MESSAGE));
+        User user = buscarUsuarioPorId(userId);
         validateUserIsActive(user);
         return user;
+    }
+
+    /**
+     * Busca sem conferir {@code is_active}, para os fluxos que precisam autorizar antes de
+     * validar: o alvo tem de estar em maos para se decidir se quem chamou pode ve-lo, e so
+     * depois disso "ja excluido" pode ser dito em voz alta.
+     */
+    private User buscarUsuarioPorId(Long userId) {
+        return userRepository.findById(userId)
+                .orElseThrow(() -> new NotFoundException(USER_NOT_FOUND_MESSAGE));
     }
 
     private void validateUserIsActive(User user) {
@@ -341,23 +496,49 @@ public class UserService {
         }
     }
 
+    /**
+     * O e-mail atual do proprio usuario nao conta como duplicado. Sem esta comparacao um
+     * PATCH que reenvia o formulario inteiro sem mexer no e-mail levaria 409, porque
+     * {@code existsByEmail} encontra o registro do proprio alvo -- caminho que passou a
+     * ser comum quando o autosservico virou o uso principal do endpoint.
+     */
     private void updateEmailIfProvided(User user, String email) {
-        if (isBlank(email)) {
+        if (isBlank(email) || email.equals(user.getEmail())) {
             return;
         }
         validateEmailDoesNotExist(email);
         user.setEmail(email);
     }
 
-    private void updatePasswordIfProvided(User user, String password) {
-        if (isNotBlank(password)) {
-            String encodedPassword = passwordEncoder.encode(password);
-            user.setPassword(encodedPassword);
-            // Mantem o invariante password != null <=> senhaDefinida. Sem isto, um
-            // usuario criado sem senha continuaria sem conseguir logar depois de
-            // receber uma.
-            user.setSenhaDefinida(true);
+    /**
+     * Senha so pelo proprio dono, e sujeita a mesma politica do S3.
+     *
+     * <p>Ate o P0.4c este era o unico ponto do sistema em que alguem escolhia a senha de
+     * outra pessoa, e sem autorizacao nenhuma: qualquer autenticado trocava a senha de um
+     * administrador e assumia a conta. Escopar por perfil nao bastaria -- quem pudesse
+     * editar continuaria podendo assumir a conta editada.
+     *
+     * <p>A validacao tambem faltava aqui, o que fazia do PATCH um segundo caminho para
+     * senha fraca depois de o S3 ter fechado o da ativacao. Ela roda sobre o e-mail e o
+     * nome <b>ja atualizados nesta mesma requisicao</b>, porque as tres alteracoes
+     * acontecem em ordem: uma senha que contenha o nome novo deve reprovar.
+     */
+    private void updatePasswordIfProvided(User autor, User alvo, String password) {
+        if (isBlank(password)) {
+            return;
         }
+
+        if (!ehOMesmoUsuario(autor, alvo)) {
+            throw new SenhaDeTerceiroException(SENHA_DE_TERCEIRO_MESSAGE);
+        }
+
+        UserValidator.validarSenha(password, alvo.getEmail(), alvo.getName());
+
+        alvo.setPassword(passwordEncoder.encode(password));
+        // Mantem o invariante password != null <=> senhaDefinida. Sem isto, um
+        // usuario criado sem senha continuaria sem conseguir logar depois de
+        // receber uma.
+        alvo.setSenhaDefinida(true);
     }
 
     private boolean isBlank(String value) {
