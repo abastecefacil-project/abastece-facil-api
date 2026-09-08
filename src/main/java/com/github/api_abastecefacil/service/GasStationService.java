@@ -24,19 +24,23 @@ public class GasStationService {
     private final GasStationRepository gasStationRepository;
     private final OpenStreetMapService openStreetMapService;
     private final GasStationMapper gasStationMapper;
+    private final AutorizacaoOperacional autorizacaoOperacional;
 
     public GasStationService(
             GasStationRepository gasStationRepository,
             OpenStreetMapService openStreetMapService,
-            GasStationMapper gasStationMapper
+            GasStationMapper gasStationMapper,
+            AutorizacaoOperacional autorizacaoOperacional
     ) {
         this.gasStationRepository = gasStationRepository;
         this.openStreetMapService = openStreetMapService;
         this.gasStationMapper = gasStationMapper;
+        this.autorizacaoOperacional = autorizacaoOperacional;
     }
 
     @Transactional
     public GasStationResponse create(CreateGasStationRequest request) {
+        autorizacaoOperacional.autorizarEscrita();
         validateCnpjDoesNotExist(request.cnpj());
         Coordinates coordinates = fetchCoordinatesFromAddress(
                 request.address(),
@@ -52,6 +56,7 @@ public class GasStationService {
 
     @Transactional
     public GasStationResponse update(Long id, UpdateGasStationRequest request) {
+        autorizacaoOperacional.autorizarEscrita();
         GasStation gasStation = findGasStationByIdOrThrow(id);
         validateCnpjNotUsedByAnotherGasStation(gasStation, request.cnpj());
         updateGasStationBasicFields(gasStation, request);
@@ -62,10 +67,17 @@ public class GasStationService {
 
     @Transactional
     public void deleteGasStation(Long id) {
+        autorizacaoOperacional.autorizarEscrita();
         GasStation gasStation = findGasStationByIdOrThrow(id);
         gasStationRepository.delete(gasStation);
     }
 
+    /**
+     * <b>Sem autorização de propósito.</b> Este método e o
+     * {@code getGasStationsByFilters} servem {@code GET /api/public/gas-stations/{id}} e
+     * {@code /filter}, que são públicos por contrato — o usuário final consulta os postos
+     * sem login. Acrescentar guarda aqui derrubaria a lista e o mapa da área pública.
+     */
     public GasStationResponse findById(Long id) {
         GasStation gasStation = findGasStationByIdOrThrow(id);
         return gasStationMapper.toResponse(gasStation);

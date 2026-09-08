@@ -5,6 +5,7 @@ import com.github.api_abastecefacil.dto.incident.IncidentDashboardResponse;
 import com.github.api_abastecefacil.dto.incident.IncidentResponse;
 import com.github.api_abastecefacil.dto.incident.UpdateIncidentRequest;
 import com.github.api_abastecefacil.exception.NotFoundException;
+import com.github.api_abastecefacil.exception.PerfilNaoPermitidoException;
 import com.github.api_abastecefacil.mapper.IncidentMapper;
 import com.github.api_abastecefacil.model.Car;
 import com.github.api_abastecefacil.model.Incident;
@@ -41,6 +42,9 @@ class IncidentServiceTest {
 
     @Mock
     private IncidentMapper incidentMapper;
+
+    @Mock
+    private AutorizacaoOperacional autorizacaoOperacional;
 
     @InjectMocks
     private IncidentService incidentService;
@@ -139,4 +143,67 @@ class IncidentServiceTest {
         assertThat(summary.total()).isEqualTo(5L);
         assertThat(summary.latestIncidents()).hasSize(1);
     }
+
+    // ------------------------------------------------- P0.4: autorizacao por perfil
+
+    @Test
+    void updateIncident_ShouldAuthorizeBeforeTouchingAnythingElse() {
+        doThrow(new PerfilNaoPermitidoException("negado"))
+                .when(autorizacaoOperacional).autorizarEscrita();
+
+        assertThrows(PerfilNaoPermitidoException.class,
+                () -> incidentService.updateIncident(1L, null));
+
+        verifyNoInteractions(incidentRepository, incidentMapper, carRepository);
+    }
+
+    @Test
+    void getIncidentById_ShouldRequireConsulta() {
+        doThrow(new PerfilNaoPermitidoException("negado"))
+                .when(autorizacaoOperacional).autorizarConsulta();
+
+        assertThrows(PerfilNaoPermitidoException.class, () -> incidentService.getIncidentById(1L));
+
+        verifyNoInteractions(incidentRepository, incidentMapper, carRepository);
+    }
+
+    @Test
+    void getIncidentsByFilters_ShouldRequireConsulta() {
+        doThrow(new PerfilNaoPermitidoException("negado"))
+                .when(autorizacaoOperacional).autorizarConsulta();
+
+        assertThrows(PerfilNaoPermitidoException.class,
+                () -> incidentService.getIncidentsByFilters(
+                        null, null, null, null, PageRequest.of(0, 10)));
+
+        verifyNoInteractions(incidentRepository, incidentMapper, carRepository);
+    }
+
+    @Test
+    void getIncidentSummary_ShouldRequireConsulta() {
+        doThrow(new PerfilNaoPermitidoException("negado"))
+                .when(autorizacaoOperacional).autorizarConsulta();
+
+        assertThrows(PerfilNaoPermitidoException.class, () -> incidentService.getIncidentSummary());
+
+        verifyNoInteractions(incidentRepository, incidentMapper, carRepository);
+    }
+
+    @Test
+    void createIncident_ShouldNotAuthorize_BecauseTheRouteIsPublic() {
+        // POST /api/public/incident e publico por contrato: registrar ocorrencia e
+        // exatamente o que o usuario final faz sem login.
+        CreateIncidentRequest request = new CreateIncidentRequest(
+                "ABC1234", "John Doe", LocalDate.now(), "Pneu Furado", "Furo no pneu traseiro"
+        );
+        when(carRepository.findByLicensePlate("ABC1234")).thenReturn(Optional.of(car));
+        when(incidentMapper.toEntity(request)).thenReturn(incident);
+        when(incidentRepository.save(incident)).thenReturn(incident);
+        when(incidentMapper.toResponse(incident)).thenReturn(incidentResponse);
+
+        incidentService.createIncident(request);
+
+        verifyNoInteractions(autorizacaoOperacional);
+    }
+
 }

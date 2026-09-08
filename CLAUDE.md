@@ -465,18 +465,18 @@ resultado por outro caminho.
 | GET | `/api/public/gas-stations/filter` | público |
 | GET | `/api/public/gas-stations/{id}` | público |
 | POST | `/api/public/incident` | público |
-| POST | `/api/gas-stations` | autenticado |
-| PUT | `/api/gas-stations/{id}` | autenticado |
-| DELETE | `/api/gas-stations/{id}` | autenticado |
-| GET | `/api/cars/filter` | autenticado |
-| GET | `/api/cars/{carId}` | autenticado |
-| POST | `/api/cars` | autenticado |
-| PATCH | `/api/cars/{carId}` | autenticado |
-| DELETE | `/api/cars/{carId}` | autenticado |
-| GET | `/api/incidents` | autenticado |
-| GET | `/api/incidents/{id}` | autenticado |
-| GET | `/api/incidents/dashboard` | autenticado |
-| PATCH | `/api/incidents/{id}` | autenticado |
+| POST | `/api/gas-stations` | **gestão** |
+| PUT | `/api/gas-stations/{id}` | **gestão** |
+| DELETE | `/api/gas-stations/{id}` | **gestão** |
+| GET | `/api/cars/filter` | **gestão** |
+| GET | `/api/cars/{carId}` | **gestão** |
+| POST | `/api/cars` | **gestão** |
+| PATCH | `/api/cars/{carId}` | **gestão** |
+| DELETE | `/api/cars/{carId}` | **gestão** |
+| GET | `/api/incidents` | **gestão** |
+| GET | `/api/incidents/{id}` | **gestão** |
+| GET | `/api/incidents/dashboard` | **gestão** |
+| PATCH | `/api/incidents/{id}` | **gestão** |
 | GET | `/api/users` | autenticado — **escopado por perfil** |
 | GET | `/api/users/me` | autenticado — **o próprio registro** |
 | GET | `/api/users/{userId}` | autenticado — **autorizado por perfil/regional** |
@@ -488,6 +488,9 @@ resultado por outro caminho.
 | GET | `/api/regionais` | autenticado |
 | GET | `/api/regionais/{id}` | autenticado |
 | GET | `/api/cep/info?cep=` | autenticado |
+
+**"gestão"** é a marca do P0.4 e significa `ADMINISTRADOR` **ou** `GESTOR_FROTA` —
+COLABORADOR recebe 403. Detalhe na subseção "Autorização do cadastro operacional".
 
 **Note a assimetria:** consultar postos e criar ocorrência são públicos; todo o
 resto exige token. É proposital — o usuário final não faz login.
@@ -849,6 +852,99 @@ segurança está vazio e o Spring Security recusa. Vale para qualquer id não nu
 (`GET /api/users/xyz` responde o mesmo hoje). É indistinguível de "não autenticado", que
 é o pior desfecho possível para quem estiver depurando o frontend.
 
+### Autorização do cadastro operacional (P0.4)
+
+Postos, veículos e ocorrências. Até o P0.4, **qualquer autenticado** criava, editava e
+excluía posto e veículo e alterava ocorrência — o `SecurityConfig` só perguntava se havia
+token. A regra agora:
+
+| Perfil | escrita (POST/PUT/PATCH/DELETE) | leitura autenticada |
+|---|---|---|
+| `ADMINISTRADOR` | tudo | tudo |
+| `GESTOR_FROTA` | tudo | tudo |
+| `COLABORADOR` | **nada** | **nada** |
+
+**Gestor não é segmentado por regional aqui**, ao contrário de `/api/users/**`: posto,
+veículo e ocorrência não têm coluna de regional, então não há o que comparar. Gestor sem
+regional escreve igual ao gestor com regional — o oposto de
+`UserService.autorizarSobreUsuario`, onde a ausência de regional recusa.
+
+**COLABORADOR perdeu também a leitura**, e isso foi decidido olhando o frontend, não por
+simetria. As views do `DefaultLayout` — as únicas que um colaborador abre — chamam
+exclusivamente `apiPublic`: `getStations` vai em `/api/public/gas-stations/filter`,
+`createOccurrences` em `/api/public/incident`, e o mapa idem. **Nenhuma tela de
+colaborador consome `/api/cars/**` ou `/api/incidents/**`**, conferido antes de fechar.
+Se um dia ele precisar ver a frota pela área logada, o afrouxamento é de uma linha —
+`AutorizacaoOperacional.autorizarConsulta` existe separada de `autorizarEscrita`
+justamente por isso, embora hoje as duas apliquem o mesmo predicado.
+
+Erros — um só, porque a ação corretiva é uma só:
+
+| Situação | HTTP | `error` |
+|---|---|---|
+| colaborador em qualquer escrita de posto, veículo ou ocorrência | 403 | `PERFIL_NAO_PERMITIDO` |
+| colaborador em qualquer leitura autenticada de veículo ou ocorrência | 403 | `PERFIL_NAO_PERMITIDO` |
+
+As mensagens são duas (`AutorizacaoConstants`), uma para escrita e uma para consulta, pelo
+mesmo motivo do P0.4c: o `error` diz o que fazer, a mensagem diz o que foi recusado.
+
+**O que continua público** e passa pelos **mesmos métodos de serviço**, sem guarda:
+`GasStationService.findById` e `getGasStationsByFilters`
+(`GET /api/public/gas-stations/{id}` e `/filter`) e `IncidentService.createIncident`
+(`POST /api/public/incident`). Os três têm javadoc dizendo isso, e um teste em cada
+`ServiceTest` com `verifyNoInteractions(autorizacaoOperacional)` — pôr guarda ali
+derrubaria a lista e o mapa da área pública, que é o produto para o usuário final.
+
+**Fora do escopo do P0.4, e conhecido:** `GET /api/cep/info` e `GET /api/regionais`
+continuam abertos a qualquer autenticado. O primeiro é proxy do ViaCEP e só o formulário
+administrativo de posto o usa; o segundo é dado de referência que o `/api/users/me` já
+devolve em parte. Nenhum dos dois expõe cadastro operacional. `GET /api/users/dashboard`
+segue sem escopo desde o P0.4c.
+
+#### Por que não foi `@PreAuthorize` — a medição
+
+O P0.4 previa `@EnableMethodSecurity`, e o desenho foi testado antes de ser recusado. **O
+resultado corrige um detalhe do §6, item 19:**
+
+1. Com `@EnableMethodSecurity` e um `@PreAuthorize` recusando, a resposta é **403 com
+   corpo vazio** — o que o item 19 previa.
+2. Acrescentando `@ExceptionHandler(AccessDeniedException.class)` ao
+   `GlobalExceptionHandler` **existente**, a mesma requisição passou a responder
+   `{"timestamp":...,"status":403,"error":"...","message":"Access Denied","path":"uri=/api/cars"}`
+   — `ErrorResponse` completo, **sem tocar no `SecurityConfig`** e sem
+   `AccessDeniedHandler` nenhum.
+
+Ou seja: o 403 do *method security* **é** alcançável pelo `@ControllerAdvice`, porque é
+lançado dentro do dispatch e o `HandlerExceptionResolver` o vê antes do
+`ExceptionTranslationFilter`. O que o item 19 descreve corretamente é o 403 da **cadeia de
+filtros** (`authorizeHttpRequests`, requisição sem token) — esse continua fora do advice, e
+foi confirmado no mesmo experimento: com o handler registrado, a requisição sem token
+seguiu respondendo 403 vazio.
+
+**Mesmo assim a decisão foi manter no serviço**, por três motivos que a medição não muda:
+
+- **Nenhum teste do projeto sobe contexto Spring.** Um `hasRole` escrito errado — e o §9,
+  item 12 já registra que `hasAuthority("ADMINISTRADOR")` falha silenciosamente neste
+  projeto — compila, passa na suíte inteira e abre a rota. Autorização sem teste é o
+  oposto do que o P0.4 existe para fazer.
+- **`/api/users/**` continua no serviço**, porque tem lógica de dono e regional que não
+  cabe em SpEL. Anotar o resto não unificaria: criaria os dois lugares decidindo
+  autorização que o S2a quis evitar.
+- **O 403 do Spring diz `"Access Denied"`**, em inglês e idêntico para todas as rotas. O
+  projeto escreve mensagem em português e específica do recurso.
+
+O experimento foi revertido por inteiro: **o `SecurityConfig` não mudou no P0.4**, e não
+há `@EnableMethodSecurity` no projeto.
+
+#### Ordem: validação de payload vem antes da autorização
+
+`@Valid` roda no controller; a guarda, no serviço. Um colaborador que mande payload
+malformado recebe **400, não 403** — o request nem chega ao serviço. Não contradiz o §6,
+item 22 ("autorizar antes de validar"), que fala das validações **de negócio** dentro do
+serviço: essas continuam depois da guarda, e há teste para isso em cada `ServiceTest`
+(guarda lançando, `verifyNoInteractions` no repositório e no mapper). Vale igual para
+`POST /api/users` desde o S2a — é propriedade do Bean Validation, não escolha do P0.4.
+
 ### Propriedades de configuração
 
 A tabela completa está na **§3**. Sobre `abastecefacil.token.*`: os prazos são distintos
@@ -975,6 +1071,12 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
       `@ControllerAdvice`**, então sairia sem `ErrorResponse` e sem o campo `error` —
       quebrando o contrato de erro que o projeto mantém desde o início, e justamente onde
       o frontend mais precisa distinguir os casos.
+
+      > **Corrigido pelo P0.4, que mediu:** isso vale para o 403 da **cadeia de filtros**
+      > (requisição sem token). O 403 de um `@PreAuthorize` **é** alcançável pelo
+      > `@ControllerAdvice`, e um `@ExceptionHandler(AccessDeniedException.class)` devolve
+      > `ErrorResponse` normalmente. A decisão de ficar no serviço continua de pé pelos
+      > dois motivos abaixo — ver "Por que não foi `@PreAuthorize`" na §5.
     - **Nenhum teste do projeto sobe contexto Spring**, então uma anotação ficaria sem
       cobertura nenhuma — exatamente nas regras mais sensíveis do fluxo.
     - Dividir a regra entre anotação e serviço faz quem lê o controller achar que
@@ -1179,6 +1281,20 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
     Invalida **expirando**, nunca marcando `usado_em`, como manda o item 14 — na tabela, a
     linha invalidada fica com `expira_em` no passado e `usado_em` nulo. O token recém
     consumido não precisa ser excluído do `UPDATE`: ele já tem `usado_em` preenchido.
+39. **A autorização do cadastro operacional é um componente só, e é chamada do serviço.**
+    `AutorizacaoOperacional` (`autorizarEscrita` / `autorizarConsulta`) é o ponto único da
+    regra do P0.4 para postos, veículos e ocorrências, e os três serviços a chamam como
+    **primeira instrução** do método protegido. O perfil sai do
+    `UsuarioAutenticadoProvider`, isto é, **do banco** — verificado na prática: rebaixar o
+    usuário de `ADMINISTRADOR` para `COLABORADOR` por `UPDATE` fez o **mesmo token**, sem
+    novo login, passar de 201 para 403 na requisição seguinte. É o §6, item 20 valendo
+    para perfil como já valia para regional, e importa mais aqui: o token do COLABORADOR
+    vive 30 dias.
+
+    Por que um componente em vez de um método por serviço: a regra é idêntica nos três, e
+    três cópias divergem na primeira vez que alguém mexer em uma. Por que não
+    `@PreAuthorize`: ver §5.
+
 37. **O limite de solicitações é em memória, com `Clock` injetado, e o estado é por
     instância.** `RateLimitService`: um `ConcurrentHashMap` de deques de instantes, janela
     deslizante, sem Redis, sem Caffeine e sem dependência nova — o projeto não tem cache
@@ -1572,17 +1688,17 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **316 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **338 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
   `AdministradorInicialInitializer`, o `EnviadorEmailConfig`, o `EnviadorEmailLog`, o
   `ResendEnviadorEmail`, o `ConteudoEmail`, o `UserMapper`, o `UserValidator`, o
-  `RateLimitService`, o `RecuperacaoSenhaService`, o `EnvioAcessoService` e o handler
-  global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
+  `RateLimitService`, o `RecuperacaoSenhaService`, o `EnvioAcessoService`, o
+  `AutorizacaoOperacional` e o handler global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 316, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 338, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa

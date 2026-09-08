@@ -5,6 +5,7 @@ import com.github.api_abastecefacil.dto.car.CreateCarRequest;
 import com.github.api_abastecefacil.dto.car.UpdateCarRequest;
 import com.github.api_abastecefacil.exception.CarAlreadyExistsException;
 import com.github.api_abastecefacil.exception.NotFoundException;
+import com.github.api_abastecefacil.exception.PerfilNaoPermitidoException;
 import com.github.api_abastecefacil.mapper.CarMapper;
 import com.github.api_abastecefacil.model.Car;
 import com.github.api_abastecefacil.repository.CarRepository;
@@ -36,6 +37,9 @@ class CarServiceTest {
 
     @Mock
     private CarMapper carMapper;
+
+    @Mock
+    private AutorizacaoOperacional autorizacaoOperacional;
 
     @InjectMocks
     private CarService carService;
@@ -144,4 +148,79 @@ class CarServiceTest {
         assertThat(result).isNotNull();
         assertThat(result.getContent()).hasSize(1);
     }
+
+    // ------------------------------------------------- P0.4: autorizacao por perfil
+
+    /**
+     * A guarda e a PRIMEIRA instrucao de cada metodo protegido, entao o request pode ser
+     * nulo: se algo for tocado antes dela, o teste quebra com NullPointerException em vez
+     * de passar. Mesmo principio do item 22 do CLAUDE.md -- autorizar vem antes de validar.
+     */
+    @Test
+    void createCar_ShouldAuthorizeBeforeTouchingAnythingElse() {
+        doThrow(new PerfilNaoPermitidoException("negado"))
+                .when(autorizacaoOperacional).autorizarEscrita();
+
+        assertThrows(PerfilNaoPermitidoException.class, () -> carService.createCar(null));
+
+        verifyNoInteractions(carRepository, carMapper);
+    }
+
+    @Test
+    void updateCar_ShouldAuthorizeBeforeTouchingAnythingElse() {
+        doThrow(new PerfilNaoPermitidoException("negado"))
+                .when(autorizacaoOperacional).autorizarEscrita();
+
+        assertThrows(PerfilNaoPermitidoException.class, () -> carService.updateCar(1L, null));
+
+        verifyNoInteractions(carRepository, carMapper);
+    }
+
+    @Test
+    void deleteCar_ShouldAuthorizeBeforeTouchingAnythingElse() {
+        doThrow(new PerfilNaoPermitidoException("negado"))
+                .when(autorizacaoOperacional).autorizarEscrita();
+
+        assertThrows(PerfilNaoPermitidoException.class, () -> carService.deleteCar(1L));
+
+        verifyNoInteractions(carRepository, carMapper);
+    }
+
+    @Test
+    void getCarById_ShouldRequireConsulta_NotEscrita() {
+        // Consulta e escrita sao metodos distintos de proposito: se a leitura passar a
+        // chamar autorizarEscrita, este teste quebra.
+        doThrow(new PerfilNaoPermitidoException("negado"))
+                .when(autorizacaoOperacional).autorizarConsulta();
+
+        assertThrows(PerfilNaoPermitidoException.class, () -> carService.getCarById(1L));
+
+        verifyNoInteractions(carRepository, carMapper);
+    }
+
+    @Test
+    void getCarsByFilters_ShouldRequireConsulta() {
+        doThrow(new PerfilNaoPermitidoException("negado"))
+                .when(autorizacaoOperacional).autorizarConsulta();
+
+        assertThrows(PerfilNaoPermitidoException.class,
+                () -> carService.getCarsByFilters(null, null, PageRequest.of(0, 10)));
+
+        verifyNoInteractions(carRepository, carMapper);
+    }
+
+    @Test
+    void createCar_ShouldAuthorizeOnTheHappyPathToo() {
+        // Sem este, um caminho feliz que pulasse a guarda passaria despercebido.
+        CreateCarRequest request = new CreateCarRequest("ABC1234", "Civic");
+        when(carRepository.existsCarByLicensePlate("ABC1234")).thenReturn(false);
+        when(carMapper.toEntity(request)).thenReturn(car);
+        when(carRepository.save(car)).thenReturn(car);
+        when(carMapper.toResponse(car)).thenReturn(carResponse);
+
+        carService.createCar(request);
+
+        verify(autorizacaoOperacional).autorizarEscrita();
+    }
+
 }

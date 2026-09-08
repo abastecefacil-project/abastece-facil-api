@@ -6,6 +6,7 @@ import com.github.api_abastecefacil.dto.gasStation.UpdateGasStationRequest;
 import com.github.api_abastecefacil.exception.CoordinatesNotFoundException;
 import com.github.api_abastecefacil.exception.GasStationAlreadyExistsException;
 import com.github.api_abastecefacil.exception.NotFoundException;
+import com.github.api_abastecefacil.exception.PerfilNaoPermitidoException;
 import com.github.api_abastecefacil.mapper.GasStationMapper;
 import com.github.api_abastecefacil.model.GasStation;
 import com.github.api_abastecefacil.repository.GasStationRepository;
@@ -43,6 +44,9 @@ class GasStationServiceTest {
 
     @Mock
     private GasStationMapper gasStationMapper;
+
+    @Mock
+    private AutorizacaoOperacional autorizacaoOperacional;
 
     @InjectMocks
     private GasStationService gasStationService;
@@ -166,4 +170,61 @@ class GasStationServiceTest {
         assertThat(result).isNotNull();
         assertThat(result.getContent()).hasSize(1);
     }
+
+    // ------------------------------------------------- P0.4: autorizacao por perfil
+
+    @Test
+    void create_ShouldAuthorizeBeforeTouchingAnythingElse() {
+        doThrow(new PerfilNaoPermitidoException("negado"))
+                .when(autorizacaoOperacional).autorizarEscrita();
+
+        assertThrows(PerfilNaoPermitidoException.class, () -> gasStationService.create(null));
+
+        verifyNoInteractions(gasStationRepository, gasStationMapper, openStreetMapService);
+    }
+
+    @Test
+    void update_ShouldAuthorizeBeforeTouchingAnythingElse() {
+        doThrow(new PerfilNaoPermitidoException("negado"))
+                .when(autorizacaoOperacional).autorizarEscrita();
+
+        assertThrows(PerfilNaoPermitidoException.class, () -> gasStationService.update(1L, null));
+
+        verifyNoInteractions(gasStationRepository, gasStationMapper, openStreetMapService);
+    }
+
+    @Test
+    void deleteGasStation_ShouldAuthorizeBeforeTouchingAnythingElse() {
+        doThrow(new PerfilNaoPermitidoException("negado"))
+                .when(autorizacaoOperacional).autorizarEscrita();
+
+        assertThrows(PerfilNaoPermitidoException.class, () -> gasStationService.deleteGasStation(1L));
+
+        verifyNoInteractions(gasStationRepository, gasStationMapper, openStreetMapService);
+    }
+
+    @Test
+    void findById_ShouldNotAuthorize_BecauseTheRouteIsPublic() {
+        // GET /api/public/gas-stations/{id} e publico por contrato: o usuario final
+        // consulta posto sem login. Guarda aqui derrubaria a lista e o mapa publicos.
+        when(gasStationRepository.findById(1L)).thenReturn(Optional.of(gasStation));
+        when(gasStationMapper.toResponse(gasStation)).thenReturn(gasStationResponse);
+
+        gasStationService.findById(1L);
+
+        verifyNoInteractions(autorizacaoOperacional);
+    }
+
+    @Test
+    void getGasStationsByFilters_ShouldNotAuthorize_BecauseTheRouteIsPublic() {
+        Pageable pageable = PageRequest.of(0, 10);
+        when(gasStationRepository.findByFilters(null, null, pageable))
+                .thenReturn(new PageImpl<>(List.of(gasStation)));
+        when(gasStationMapper.toResponse(gasStation)).thenReturn(gasStationResponse);
+
+        gasStationService.getGasStationsByFilters(null, null, pageable);
+
+        verifyNoInteractions(autorizacaoOperacional);
+    }
+
 }

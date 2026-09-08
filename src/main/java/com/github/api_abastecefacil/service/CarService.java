@@ -22,14 +22,20 @@ public class CarService {
 
     private final CarRepository carRepository;
     private final CarMapper carMapper;
+    private final AutorizacaoOperacional autorizacaoOperacional;
 
-    public CarService(CarRepository carRepository, CarMapper carMapper) {
+    public CarService(
+            CarRepository carRepository,
+            CarMapper carMapper,
+            AutorizacaoOperacional autorizacaoOperacional) {
         this.carRepository = carRepository;
         this.carMapper = carMapper;
+        this.autorizacaoOperacional = autorizacaoOperacional;
     }
 
     @Transactional
     public CarResponse createCar(CreateCarRequest request) {
+        autorizacaoOperacional.autorizarEscrita();
         validateLicensePlateDoesNotExist(request.licensePlate());
         Car car = carMapper.toEntity(request);
         Car savedCar = carRepository.save(car);
@@ -37,12 +43,14 @@ public class CarService {
     }
 
     public CarResponse getCarById(Long carId) {
+        autorizacaoOperacional.autorizarConsulta();
         Car car = findCarByIdOrThrow(carId);
         return carMapper.toResponse(car);
     }
 
     @Transactional
     public CarResponse updateCar(Long carId, UpdateCarRequest request) {
+        autorizacaoOperacional.autorizarEscrita();
         Car car = findCarByIdOrThrow(carId);
         updateLicensePlateIfProvided(car, carId, request.licensePlate());
         updateModelIfProvided(car, request.model());
@@ -53,11 +61,13 @@ public class CarService {
 
     @Transactional
     public void deleteCar(Long carId) {
+        autorizacaoOperacional.autorizarEscrita();
         Car car = findCarByIdOrThrow(carId);
         carRepository.delete(car);
     }
 
     public Page<CarResponse> getCarsByFilters(String search, Boolean active, Pageable pageable) {
+        autorizacaoOperacional.autorizarConsulta();
         Page<Car> carsPage = carRepository.findByFilters(search, active, pageable);
         return carsPage.map(carMapper::toResponse);
     }

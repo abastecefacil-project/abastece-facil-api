@@ -28,18 +28,25 @@ public class IncidentService {
     private final CarRepository carRepository;
     private final IncidentRepository incidentRepository;
     private final IncidentMapper incidentMapper;
+    private final AutorizacaoOperacional autorizacaoOperacional;
 
     public IncidentService(
             CarRepository carRepository,
             IncidentRepository incidentRepository,
-            IncidentMapper incidentMapper
+            IncidentMapper incidentMapper,
+            AutorizacaoOperacional autorizacaoOperacional
     ) {
         this.carRepository = carRepository;
         this.incidentRepository = incidentRepository;
         this.incidentMapper = incidentMapper;
+        this.autorizacaoOperacional = autorizacaoOperacional;
     }
     
     @Transactional
+    /**
+     * <b>Sem autorização de propósito.</b> Atende {@code POST /api/public/incident}, que é
+     * público por contrato: registrar ocorrência é o que o usuário final faz sem login.
+     */
     public IncidentResponse createIncident(CreateIncidentRequest request) {
         validateCarExistsByPlate(request.licensePlate());
         Incident incident = incidentMapper.toEntity(request);
@@ -48,6 +55,7 @@ public class IncidentService {
     }
 
     public IncidentResponse getIncidentById(Long incidentId) {
+        autorizacaoOperacional.autorizarConsulta();
         Incident incident = findIncidentByIdOrThrow(incidentId);
         return incidentMapper.toResponse(incident);
     }
@@ -59,6 +67,7 @@ public class IncidentService {
             LocalDate occurrenceDate,
             Pageable pageable
     ) {
+        autorizacaoOperacional.autorizarConsulta();
         Page<Incident> incidentsPage = incidentRepository.findByFilters(
                 carPlate,
                 title,
@@ -71,6 +80,7 @@ public class IncidentService {
 
     @Transactional
     public IncidentResponse updateIncident(Long incidentId, UpdateIncidentRequest request) {
+        autorizacaoOperacional.autorizarEscrita();
         Incident incident = findIncidentByIdOrThrow(incidentId);
         updateIncidentDescription(incident, request.description());
         Incident updatedIncident = incidentRepository.save(incident);
@@ -78,6 +88,7 @@ public class IncidentService {
     }
 
     public IncidentDashboardResponse getIncidentSummary() {
+        autorizacaoOperacional.autorizarConsulta();
         long totalIncidents = countAllIncidents();
         List<IncidentResponse> latestIncidents = fetchLatestIncidents();
         return new IncidentDashboardResponse(totalIncidents, latestIncidents);

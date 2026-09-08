@@ -117,10 +117,16 @@ public class GlobalExceptionHandler {
      * O ErrorResponse so carrega status, error, message e path, entao esse campo e o
      * unico discriminador programatico disponivel.
      *
-     * <p>Nota de arquitetura: a autorizacao deste fluxo mora no UserService, nao em
-     * @PreAuthorize, justamente para poder passar por aqui. O 403 do Spring Security e
-     * lancado pelo ExceptionTranslationFilter, fora do @ControllerAdvice, e sairia sem
-     * ErrorResponse e sem o campo error. Ver §6 do CLAUDE.md.
+     * <p>Nota de arquitetura: a autorizacao mora no servico -- UserService para
+     * /api/users/**, AutorizacaoOperacional para posto, veiculo e ocorrencia (P0.4) --
+     * e nao em @PreAuthorize.
+     *
+     * <p>O motivo mudou de forma no P0.4, que mediu a alternativa: o 403 de um
+     * @PreAuthorize E alcancavel por este @ControllerAdvice, porque e lancado dentro do
+     * dispatch. Quem fica de fora e o 403 da cadeia de filtros (requisicao sem token),
+     * lancado pelo ExceptionTranslationFilter. O que sustenta a decisao hoje e que
+     * nenhum teste do projeto sobe contexto Spring, entao anotacao de autorizacao ficaria
+     * sem cobertura. Ver §5 do CLAUDE.md, "Por que nao foi @PreAuthorize".
      */
     @ExceptionHandler(PerfilNaoPermitidoException.class)
     public ResponseEntity<ErrorResponse> handlePerfilNaoPermitidoException(
