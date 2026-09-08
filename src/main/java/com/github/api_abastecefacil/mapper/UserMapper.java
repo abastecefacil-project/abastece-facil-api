@@ -1,55 +1,35 @@
 package com.github.api_abastecefacil.mapper;
 
 
-import com.github.api_abastecefacil.dto.auth.RegisterRequest;
 import com.github.api_abastecefacil.dto.user.CreateUserRequest;
 import com.github.api_abastecefacil.dto.user.UserResponse;
 import com.github.api_abastecefacil.model.Perfil;
 import com.github.api_abastecefacil.model.Regional;
 import com.github.api_abastecefacil.model.User;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 @Component
 public class UserMapper {
 
-    private final PasswordEncoder passwordEncoder;
     private final RegionalMapper regionalMapper;
 
-    public UserMapper(PasswordEncoder passwordEncoder, RegionalMapper regionalMapper) {
-        this.passwordEncoder = passwordEncoder;
+    public UserMapper(RegionalMapper regionalMapper) {
         this.regionalMapper = regionalMapper;
     }
 
     /**
-     * Registro público ({@code POST /api/auth/register}). Perfil fixo em COLABORADOR e
-     * senha vinda do payload — quem se registra escolhe a própria senha.
+     * Cadastro administrativo ({@code POST /api/users}) — desde o S8, o <b>único</b>
+     * caminho de criação de usuário do sistema.
      *
-     * <p>Intocado pelo S2a de propósito: este endpoint continua público e sai só no S2b.
-     * Se ele mudasse junto, o cadastro administrativo e o registro público voltariam a
-     * ficar acoplados, que é exatamente o problema que o S2a desfez.
-     */
-    public User toEntity(RegisterRequest request) {
-        return new User()
-                .setName(request.name())
-                .setEmail(request.email())
-                .setPassword(passwordEncoder.encode(request.password()))
-                .setPerfil(Perfil.COLABORADOR)
-                .setSenhaDefinida(true);
-    }
-
-    /**
-     * Cadastro administrativo ({@code POST /api/users}).
+     * <p>Três propriedades centrais ao S2a: o <b>perfil vem do request</b>; a
+     * <b>regional é gravada</b> (a entidade já resolvida chega pronta, para o mapper não
+     * tocar em repositório); e a <b>senha é nula com {@code senhaDefinida = false}</b>.
      *
-     * <p>Três diferenças em relação ao registro público, todas centrais ao S2a:
-     * o <b>perfil vem do request</b> em vez de ser fixo; a <b>regional é gravada</b>
-     * (a entidade já resolvida chega pronta, para o mapper não tocar em repositório); e
-     * a <b>senha é nula com {@code senhaDefinida = false}</b>.
-     *
-     * <p>O {@code PasswordEncoder} não é chamado aqui, e não há o que codificar: o
-     * usuário nasce sem senha e sem meio de entrar, até o convite do S2b1. O
-     * {@code AuthService.validateSenhaDefinida} é quem barra o login nesse intervalo,
-     * com 401 {@code PASSWORD_NOT_SET}.
+     * <p>Não há senha a codificar, e desde o S8 <b>o mapper nem recebe mais o
+     * {@code PasswordEncoder}</b>: ele existia aqui só para o registro público, removido
+     * junto com o endpoint. O usuário nasce sem senha e sem meio de entrar, até o convite
+     * do S2b1; o {@code AuthService.validateSenhaDefinida} é quem barra o login nesse
+     * intervalo, com 401 {@code PASSWORD_NOT_SET}.
      *
      * <p>{@code active = true} é redundante com o {@code @PrePersist} da entidade, e está
      * explícito por ser regra do fluxo, não detalhe de persistência: o usuário é criado

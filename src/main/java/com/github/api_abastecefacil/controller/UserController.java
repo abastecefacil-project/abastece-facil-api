@@ -4,6 +4,7 @@ import com.github.api_abastecefacil.dto.user.CreateUserRequest;
 import com.github.api_abastecefacil.dto.user.UpdateUserRequest;
 import com.github.api_abastecefacil.dto.user.UserResponse;
 import com.github.api_abastecefacil.service.UserService;
+import com.github.api_abastecefacil.util.IpSolicitante;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
@@ -21,6 +22,18 @@ public class UserController {
 
     public UserController(UserService userService) {
         this.userService = userService;
+    }
+
+    /**
+     * Registrado <b>antes</b> de {@code /{userId}} de propósito, ainda que a precedência
+     * não dependa disso: o {@code PathPattern} do Spring ordena segmento literal acima de
+     * segmento com variável, então {@code /me} venceria mesmo declarado depois — é o que
+     * já acontece com {@code /dashboard}. A ordem aqui é para quem lê, não para o
+     * roteador.
+     */
+    @GetMapping("/me")
+    public ResponseEntity<UserResponse> getUsuarioAutenticado() {
+        return ResponseEntity.ok(userService.getUsuarioAutenticado());
     }
 
     @GetMapping("/{userId}")
@@ -44,7 +57,7 @@ public class UserController {
     @PostMapping
     public ResponseEntity<UserResponse> createUser(
             @Valid @RequestBody CreateUserRequest request, HttpServletRequest httpRequest) {
-        UserResponse createdUser = userService.createUser(request, extrairIp(httpRequest));
+        UserResponse createdUser = userService.createUser(request, IpSolicitante.extrair(httpRequest));
         URI location = URI.create("/api/users/" + createdUser.id());
         return ResponseEntity.created(location).body(createdUser);
     }
@@ -59,26 +72,7 @@ public class UserController {
     @PostMapping("/{userId}/reenviar-ativacao")
     public ResponseEntity<UserResponse> reenviarAtivacao(
             @PathVariable Long userId, HttpServletRequest httpRequest) {
-        return ResponseEntity.ok(userService.reenviarAtivacao(userId, extrairIp(httpRequest)));
-    }
-
-    /**
-     * IP de quem solicitou o convite, gravado em {@code tokens_acesso.ip_solicitante} para
-     * auditoria.
-     *
-     * <p><b>Ponto único de propósito.</b> {@code getRemoteAddr()} devolve o endereço do
-     * proxy quando a aplicação roda atrás de load balancer ou reverse proxy — em produção,
-     * isso faria a auditoria registrar sempre o mesmo IP. O endereço real chegaria em
-     * {@code X-Forwarded-For}.
-     *
-     * <p>O parsing desse header <b>não</b> está implementado, e isso é deliberado: confiar
-     * no {@code X-Forwarded-For} sem saber se existe um proxy confiável na frente é pior
-     * que não ter auditoria nenhuma, porque qualquer cliente pode forjá-lo e o registro
-     * passaria a ser uma mentira assinada. A correção vem quando o deploy definir a
-     * topologia — e é aqui, num lugar só.
-     */
-    private String extrairIp(HttpServletRequest request) {
-        return request.getRemoteAddr();
+        return ResponseEntity.ok(userService.reenviarAtivacao(userId, IpSolicitante.extrair(httpRequest)));
     }
 
     // O @Valid fica no corpo, e nao no path variable. Ate o S2a ele estava no

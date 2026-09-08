@@ -1,12 +1,11 @@
 package com.github.api_abastecefacil.service;
 
-import com.github.api_abastecefacil.dto.email.MensagemAcesso;
+import com.github.api_abastecefacil.dto.regional.RegionalSummaryResponse;
 import com.github.api_abastecefacil.dto.user.CreateUserRequest;
 import com.github.api_abastecefacil.dto.user.UpdateUserRequest;
 import com.github.api_abastecefacil.dto.user.UserResponse;
 import com.github.api_abastecefacil.exception.AutoExclusaoNaoPermitidaException;
 import com.github.api_abastecefacil.exception.DominioEmailNaoPermitidoException;
-import com.github.api_abastecefacil.exception.EnvioEmailException;
 import com.github.api_abastecefacil.exception.InvalidUserDataException;
 import com.github.api_abastecefacil.exception.MatriculaDuplicadaException;
 import com.github.api_abastecefacil.exception.NotFoundException;
@@ -42,7 +41,6 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
-import static com.github.api_abastecefacil.constants.UserConstants.ROTA_DEFINIR_SENHA;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -55,10 +53,7 @@ class UserServiceTest {
 
     private static final List<String> DOMINIOS = List.of("fiesc.org.br", "sesisenai.org.br");
 
-    private static final String FRONTEND_URL = "https://app.abastecefacil.com.br";
-    private static final long ATIVACAO_HORAS = 48L;
     private static final String IP = "10.0.0.7";
-    private static final String TOKEN = "Zm9vYmFyLXRva2VuLWRlLXRlc3Rl";
 
     private static final Long REGIONAL_JOI = 1L;
     private static final Long REGIONAL_FLN = 2L;
@@ -78,11 +73,9 @@ class UserServiceTest {
     @Mock
     private UsuarioAutenticadoProvider usuarioAutenticadoProvider;
 
-    @Mock
-    private TokenAcessoService tokenAcessoService;
 
     @Mock
-    private EnviadorEmail enviadorEmail;
+    private EnvioAcessoService envioAcessoService;
 
     private UserService userService;
 
@@ -96,8 +89,7 @@ class UserServiceTest {
         // configuracao e e o proprio objeto de varios testes.
         userService = new UserService(
                 userRepository, regionalRepository, userMapper, passwordEncoder,
-                usuarioAutenticadoProvider, tokenAcessoService, enviadorEmail,
-                DOMINIOS, FRONTEND_URL, ATIVACAO_HORAS);
+                usuarioAutenticadoProvider, envioAcessoService, DOMINIOS);
 
         joinville = new Regional().setId(REGIONAL_JOI).setNome("Joinville").setSigla("JOI").setAtivo(true);
 
@@ -462,64 +454,22 @@ class UserServiceTest {
                 .setActive(true).setSenhaDefinida(false).setPassword(null);
     }
 
+    /**
+     * A montagem da mensagem, do link e do prazo saiu daqui no S4: ela e a mesma da
+     * recuperacao de senha e passou a viver no EnvioAcessoService, que tem teste proprio.
+     * O que cabe ao UserService provar e a delegacao -- que o cadastro dispara o envio,
+     * para o usuario recem-criado, com a finalidade de ATIVACAO e o IP do solicitante.
+     */
     @Test
-    void createUser_ShouldIssueAnAtivacaoTokenAndSendTheInvite() {
+    void createUser_ShouldDelegateTheInvite_WithAtivacaoFinalidade() {
         CreateUserRequest request = pedidoColaborador();
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
                 .thenReturn(autor(Perfil.ADMINISTRADOR, null));
         stubCaminhoFeliz(request);
-        when(tokenAcessoService.gerarToken(user.getEmail(), FinalidadeToken.ATIVACAO, IP)).thenReturn(TOKEN);
 
         userService.createUser(request, IP);
 
-        ArgumentCaptor<MensagemAcesso> captor = ArgumentCaptor.forClass(MensagemAcesso.class);
-        verify(enviadorEmail).enviar(captor.capture());
-
-        MensagemAcesso enviada = captor.getValue();
-        assertThat(enviada.destinatario()).isEqualTo(user.getEmail());
-        assertThat(enviada.nomeDestinatario()).isEqualTo(user.getName());
-        assertThat(enviada.finalidade()).isEqualTo(FinalidadeToken.ATIVACAO);
-        // A validade exibida tem que ser a configurada, nao uma constante do corpo.
-        assertThat(enviada.validadeHoras()).isEqualTo(ATIVACAO_HORAS);
-    }
-
-    @Test
-    void createUser_ShouldBuildTheLinkOverTheConfiguredFrontendUrl() {
-        CreateUserRequest request = pedidoColaborador();
-        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
-                .thenReturn(autor(Perfil.ADMINISTRADOR, null));
-        stubCaminhoFeliz(request);
-        when(tokenAcessoService.gerarToken(anyString(), any(), anyString())).thenReturn(TOKEN);
-
-        userService.createUser(request, IP);
-
-        ArgumentCaptor<MensagemAcesso> captor = ArgumentCaptor.forClass(MensagemAcesso.class);
-        verify(enviadorEmail).enviar(captor.capture());
-
-        assertThat(captor.getValue().urlAcao())
-                .isEqualTo(FRONTEND_URL + ROTA_DEFINIR_SENHA + TOKEN);
-    }
-
-    @Test
-    void createUser_ShouldNotDoubleTheSlash_WhenFrontendUrlEndsWithOne() {
-        // Escrever a base com barra final e natural em configuracao.
-        UserService comBarra = new UserService(
-                userRepository, regionalRepository, userMapper, passwordEncoder,
-                usuarioAutenticadoProvider, tokenAcessoService, enviadorEmail,
-                DOMINIOS, FRONTEND_URL + "/", ATIVACAO_HORAS);
-
-        CreateUserRequest request = pedidoColaborador();
-        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
-                .thenReturn(autor(Perfil.ADMINISTRADOR, null));
-        stubCaminhoFeliz(request);
-        when(tokenAcessoService.gerarToken(anyString(), any(), anyString())).thenReturn(TOKEN);
-
-        comBarra.createUser(request, IP);
-
-        ArgumentCaptor<MensagemAcesso> captor = ArgumentCaptor.forClass(MensagemAcesso.class);
-        verify(enviadorEmail).enviar(captor.capture());
-
-        assertThat(captor.getValue().urlAcao()).doesNotContain("//definir-senha");
+        verify(envioAcessoService).enviar(user, FinalidadeToken.ATIVACAO, IP);
     }
 
     @Test
@@ -528,6 +478,7 @@ class UserServiceTest {
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
                 .thenReturn(autor(Perfil.ADMINISTRADOR, null));
         stubCaminhoFeliz(request);
+        when(envioAcessoService.enviar(user, FinalidadeToken.ATIVACAO, IP)).thenReturn(true);
 
         userService.createUser(request, IP);
 
@@ -544,7 +495,7 @@ class UserServiceTest {
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
                 .thenReturn(autor(Perfil.ADMINISTRADOR, null));
         stubCaminhoFeliz(request);
-        doThrow(new EnvioEmailException("provedor fora do ar")).when(enviadorEmail).enviar(any());
+        when(envioAcessoService.enviar(user, FinalidadeToken.ATIVACAO, IP)).thenReturn(false);
 
         assertThatCode(() -> userService.createUser(request, IP)).doesNotThrowAnyException();
 
@@ -554,35 +505,9 @@ class UserServiceTest {
         assertThat(captor.getValue()).isFalse();
     }
 
-    @Test
-    void createUser_ShouldNeverLogTheActivationLink() {
-        // A URL carrega o token em claro. So o EnviadorEmailLog pode registra-la.
-        ch.qos.logback.classic.Logger logger =
-                (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(UserService.class);
-        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
-                new ch.qos.logback.core.read.ListAppender<>();
-        appender.start();
-        logger.addAppender(appender);
-        try {
-            CreateUserRequest request = pedidoColaborador();
-            when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
-                    .thenReturn(autor(Perfil.ADMINISTRADOR, null));
-            stubCaminhoFeliz(request);
-            when(tokenAcessoService.gerarToken(anyString(), any(), anyString())).thenReturn(TOKEN);
-            doThrow(new EnvioEmailException("falhou")).when(enviadorEmail).enviar(any());
-
-            userService.createUser(request, IP);
-
-            assertThat(appender.list).isNotEmpty();
-            assertThat(appender.list.stream()
-                    .map(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage))
-                    .noneMatch(m -> m.contains(TOKEN));
-            // O ERROR existe: o campo avisa o gestor, o log permite investigar depois.
-            assertThat(appender.list).anyMatch(e -> e.getLevel().equals(ch.qos.logback.classic.Level.ERROR));
-        } finally {
-            logger.detachAppender(appender);
-        }
-    }
+    // O teste de segredo do log -- "nada aqui registra a URL, que carrega o token em
+    // claro" -- migrou para o EnvioAcessoServiceTest junto com o codigo que ele guarda.
+    // O UserService nao tem mais logger: ele nao emite token nem envia e-mail.
 
     // ------------------------------------------------------------ reenvio
 
@@ -592,14 +517,12 @@ class UserServiceTest {
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
                 .thenReturn(autor(Perfil.ADMINISTRADOR, null));
         when(userRepository.findById(5L)).thenReturn(Optional.of(alvo));
-        when(tokenAcessoService.gerarToken(alvo.getEmail(), FinalidadeToken.ATIVACAO, IP)).thenReturn(TOKEN);
         when(userMapper.toResponse(eq(alvo), any())).thenReturn(userResponse);
 
         userService.reenviarAtivacao(5L, IP);
 
         // Gerar token novo invalida o anterior -- garantia do M2, no repository.
-        verify(tokenAcessoService).gerarToken(alvo.getEmail(), FinalidadeToken.ATIVACAO, IP);
-        verify(enviadorEmail).enviar(any(MensagemAcesso.class));
+        verify(envioAcessoService).enviar(alvo, FinalidadeToken.ATIVACAO, IP);
     }
 
     @Test
@@ -611,7 +534,7 @@ class UserServiceTest {
 
         assertThrows(SenhaJaDefinidaException.class, () -> userService.reenviarAtivacao(5L, IP));
 
-        verifyNoInteractions(tokenAcessoService, enviadorEmail);
+        verifyNoInteractions(envioAcessoService);
     }
 
     @Test
@@ -624,7 +547,7 @@ class UserServiceTest {
 
         assertThrows(RegionalNaoPermitidaException.class, () -> userService.reenviarAtivacao(5L, IP));
 
-        verifyNoInteractions(tokenAcessoService, enviadorEmail);
+        verifyNoInteractions(envioAcessoService);
     }
 
     @Test
@@ -646,7 +569,7 @@ class UserServiceTest {
         when(userMapper.toResponse(eq(alvo), any())).thenReturn(userResponse);
 
         assertThat(userService.reenviarAtivacao(5L, IP)).isNotNull();
-        verify(enviadorEmail).enviar(any(MensagemAcesso.class));
+        verify(envioAcessoService).enviar(alvo, FinalidadeToken.ATIVACAO, IP);
     }
 
     @Test
@@ -665,7 +588,7 @@ class UserServiceTest {
                 .thenReturn(autor(Perfil.ADMINISTRADOR, null));
         when(userRepository.findById(5L)).thenReturn(Optional.of(alvo));
         when(userMapper.toResponse(eq(alvo), any())).thenReturn(userResponse);
-        doThrow(new EnvioEmailException("falhou")).when(enviadorEmail).enviar(any());
+        when(envioAcessoService.enviar(alvo, FinalidadeToken.ATIVACAO, IP)).thenReturn(false);
 
         assertThatCode(() -> userService.reenviarAtivacao(5L, IP)).doesNotThrowAnyException();
 
@@ -754,6 +677,47 @@ class UserServiceTest {
 
         assertThat(result).isNotNull();
         assertThat(result.getContent()).hasSize(1);
+    }
+
+    // ------------------------------------------------ P0.5b: GET /api/users/me
+
+    @Test
+    void getUsuarioAutenticado_ShouldReturnOwnRecord_WithRegional() {
+        User gestor = autorComId(9L, Perfil.GESTOR_FROTA, joinville);
+        UserResponse esperado = new UserResponse(
+                9L, "Autor Um", "autor@fiesc.org.br", true, LocalDateTime.now(), null,
+                Perfil.GESTOR_FROTA, new RegionalSummaryResponse(REGIONAL_JOI, "Joinville", "JOI"),
+                null, null, true, null);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(gestor);
+        when(userMapper.toResponse(gestor)).thenReturn(esperado);
+
+        UserResponse response = userService.getUsuarioAutenticado();
+
+        assertThat(response.id()).isEqualTo(9L);
+        assertThat(response.regional().sigla()).isEqualTo("JOI");
+    }
+
+    @Test
+    void getUsuarioAutenticado_ShouldReturnOwnRecord_WhenColaborador() {
+        User colaborador = autorComId(1L, Perfil.COLABORADOR, joinville);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(colaborador);
+        when(userMapper.toResponse(colaborador)).thenReturn(userResponse);
+
+        assertThat(userService.getUsuarioAutenticado()).isSameAs(userResponse);
+    }
+
+    @Test
+    void getUsuarioAutenticado_ShouldNotLookUpAnyUserById() {
+        // O alvo e o proprio autor: nao ha id de entrada, nao ha busca e nao ha
+        // autorizacao a aplicar. Se algum dia isso passar por buscarUsuarioPorId, o
+        // endpoint deixou de ser "eu mesmo".
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autorComId(1L, Perfil.COLABORADOR, null));
+        when(userMapper.toResponse(any(User.class))).thenReturn(userResponse);
+
+        userService.getUsuarioAutenticado();
+
+        verify(userRepository, never()).findById(any());
     }
 
     // -------------------------------------------------- P0.4c: leitura de usuario

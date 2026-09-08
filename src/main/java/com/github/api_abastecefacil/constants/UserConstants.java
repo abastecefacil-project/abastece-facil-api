@@ -59,21 +59,44 @@ public class UserConstants {
      */
     public static final String ROTA_DEFINIR_SENHA = "/definir-senha?token=";
 
+    /**
+     * Rota do frontend para onde o link de <b>recuperação</b> aponta, definida no S4 pela
+     * mesma razão da anterior: o link precisa existir antes da tela. O S6b implementa esta
+     * rota, e mudá-la de um lado exige mudar do outro. Registrada também na §5 do CLAUDE.md.
+     *
+     * <p>Fica ao lado de {@link #ROTA_DEFINIR_SENHA} de propósito: quem escolhe entre as
+     * duas é um único {@code switch} sobre {@code FinalidadeToken}, em
+     * {@code EnvioAcessoService.rotaDe}, e separá-las esconderia esse par.
+     *
+     * <p>É uma tela distinta de {@code /definir-senha}, e não a mesma com outro texto,
+     * porque o contexto do usuário é outro: um está concluindo o primeiro acesso, o outro
+     * já tinha senha e a perdeu.
+     */
+    public static final String ROTA_REDEFINIR_SENHA = "/redefinir-senha?token=";
+
+    /**
+     * Falha inesperada no envio assíncrono da recuperação — banco fora do ar ao emitir o
+     * token, por exemplo. A falha do <i>provedor de e-mail</i> não passa por aqui: o
+     * {@code EnvioAcessoService} já a registra e devolve {@code false}.
+     *
+     * <p>O log é o <b>único</b> canal deste erro. Quem pediu a recuperação já recebeu 200
+     * antes de o envio começar, e essa resposta não pode mudar — é o que impede a
+     * enumeração de contas. Sem esta linha, uma configuração quebrada só apareceria quando
+     * um usuário reclamasse que o e-mail nunca chegou.
+     */
+    public static final String RECUPERACAO_ENVIO_FALHOU_LOG =
+            "Falha ao processar solicitação de recuperação de senha: usuario={}. "
+                    + "O solicitante recebeu a resposta genérica de sucesso, de propósito.";
+
     public static final String SENHA_JA_DEFINIDA_MESSAGE =
             "Este usuário já definiu a senha e não precisa de novo convite. "
                     + "Para trocar a senha, use a recuperação de senha.";
 
-    public static final String CONVITE_ENVIADO_LOG =
-            "Convite de ativação enviado: usuario={} perfil={}";
-
-    /**
-     * A URL NÃO entra nesta mensagem: ela contém o token em claro, e só o
-     * {@code EnviadorEmailLog} pode registrá-lo. Ver §6 do CLAUDE.md.
-     */
-    public static final String CONVITE_FALHOU_LOG =
-            "Falha ao enviar convite de ativação: usuario={} perfil={}. O usuário FOI criado "
-                    + "e continua sem acesso até um reenvio bem-sucedido "
-                    + "(POST /api/users/{}/reenviar-ativacao).";
+    // As mensagens de log do envio do convite viviam aqui ate o S4. Mudaram para
+    // EmailConstants.ENVIO_ACESSO_*, quando a emissao do token e o envio sairam do
+    // UserService para o EnvioAcessoService, compartilhado com a recuperacao de senha:
+    // o texto passou a precisar da finalidade como parametro, em vez de falar so de
+    // ativacao.
 
     // ------------------------------------------------------------------ S3
 

@@ -128,6 +128,40 @@ public class TokenAcessoService {
     }
 
     /**
+     * Invalida todos os tokens pendentes do e-mail, <b>de qualquer finalidade</b>, e
+     * devolve quantos foram atingidos.
+     *
+     * <p>É o contraponto de {@link #gerarToken}, que invalida apenas os do mesmo par
+     * (e-mail, finalidade). Aqui a finalidade não filtra de propósito: o chamador é o
+     * fluxo que acabou de definir uma senha nova, e a partir desse momento qualquer link
+     * pendente daquele e-mail é a capacidade de definir a senha outra vez. Um convite de
+     * ativação esquecido na caixa de entrada serve tão bem para isso quanto um link de
+     * recuperação.
+     *
+     * <p>Invalida <b>expirando</b>, nunca marcando {@code usado_em} — a garantia do M2
+     * de que {@code usado_em} significa somente consumo real pelo usuário continua valendo.
+     */
+    @Transactional
+    public int invalidarTodosPendentes(String email) {
+        return tokenAcessoRepository.invalidarTodosPendentes(email);
+    }
+
+    /**
+     * Prazo de validade, em horas, dos tokens da finalidade — a mesma origem que
+     * {@link #gerarToken} usa para calcular {@code expira_em}.
+     *
+     * <p>É público porque o corpo do e-mail exibe esse prazo, e quem monta a mensagem
+     * precisa dele. A alternativa — um {@code @Value} de {@code abastecefacil.token.*}
+     * paralelo no serviço de envio — foi o que existiu até o S4 e é exatamente a
+     * duplicação a evitar: dois lugares lendo a mesma propriedade divergem no dia em que
+     * alguém muda um só, e o sintoma seria um e-mail anunciando um prazo que o token não
+     * tem.
+     */
+    public long validadeHoras(FinalidadeToken finalidade) {
+        return resolverHoras(finalidade);
+    }
+
+    /**
      * Remove diariamente os tokens expirados há mais de
      * {@value com.github.api_abastecefacil.constants.TokenAcessoConstants#DIAS_RETENCAO_EXPIRADOS}
      * dias. A janela de retenção existe para que um token recém-vencido ainda apareça

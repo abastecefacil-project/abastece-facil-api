@@ -119,6 +119,28 @@ public final class EmailConstants {
             "[E-MAIL SIMULADO] Nenhuma mensagem foi enviada. destinatario={} finalidade={} "
                     + "assunto=\"{}\" validade={} link={}";
 
+    /**
+     * Sucesso do envio de acesso, registrado pelo {@code EnvioAcessoService}. Substituiu
+     * o {@code CONVITE_ENVIADO_LOG} do S2b1, que só sabia falar de ativação — o mesmo
+     * caminho passou a servir também à recuperação no S4, e a finalidade virou parâmetro.
+     *
+     * <p>Sem a URL, como toda linha de log do projeto fora do {@code EnviadorEmailLog}.
+     */
+    public static final String ENVIO_ACESSO_ENVIADO_LOG =
+            "E-mail de acesso enviado: usuario={} finalidade={}";
+
+    /**
+     * A URL NÃO entra nesta mensagem: ela contém o token em claro, e só o
+     * {@code EnviadorEmailLog} pode registrá-lo. Ver §6 do CLAUDE.md.
+     *
+     * <p>O token emitido continua válido mesmo com o envio falho — ele existe no banco.
+     * O que falta é o canal de entrega, e o conserto é um novo envio, que invalida este.
+     */
+    public static final String ENVIO_ACESSO_FALHOU_LOG =
+            "Falha ao enviar e-mail de acesso: usuario={} finalidade={}. O token foi emitido, "
+                    + "mas não chegou ao destinatário: o acesso só se completa após um novo "
+                    + "envio bem-sucedido.";
+
     public static final String RESEND_ENVIADO_MESSAGE =
             "E-mail enviado pelo Resend: destinatario={} finalidade={} id={}";
 

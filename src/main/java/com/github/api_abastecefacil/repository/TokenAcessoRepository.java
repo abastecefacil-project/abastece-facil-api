@@ -92,6 +92,32 @@ public interface TokenAcessoRepository extends JpaRepository<TokenAcesso, Long> 
             """, nativeQuery = true)
     int invalidarPendentes(@Param("email") String email, @Param("finalidade") String finalidade);
 
+    // Invalidacao total, sem filtro de finalidade -- o irmao mais largo de
+    // invalidarPendentes, usado quando a senha acabou de ser definida.
+    //
+    // A diferenca e a ausencia do AND finalidade = :finalidade, e ela e o ponto: depois
+    // de a pessoa definir uma senha nova, QUALQUER link pendente para aquele e-mail
+    // representa a capacidade de definir a senha de novo, nao importa para que ele tenha
+    // sido emitido. Um convite de ativacao esquecido na caixa de entrada e um caminho tao
+    // bom para trocar a senha quanto um link de recuperacao, e invalidar so a finalidade
+    // consumida deixaria o outro valendo.
+    //
+    // Expira em vez de marcar usado_em, pela mesma razao de invalidarPendentes: usado_em
+    // continua significando consumo real pelo usuario.
+    //
+    // Nao precisa excluir o token recem-consumido: ele ja tem usado_em preenchido e falha
+    // o predicado. E, sem parametro de enum, a armadilha do bind por ordinal descrita no
+    // javadoc desta interface nao se aplica aqui.
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(value = """
+            UPDATE tokens_acesso
+               SET expira_em = now()
+             WHERE email = :email
+               AND usado_em IS NULL
+               AND expira_em > now()
+            """, nativeQuery = true)
+    int invalidarTodosPendentes(@Param("email") String email);
+
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query(value = "DELETE FROM tokens_acesso WHERE expira_em < :limite", nativeQuery = true)
     int deleteExpiradosAntesDe(@Param("limite") LocalDateTime limite);

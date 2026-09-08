@@ -9,11 +9,12 @@ import jakarta.validation.constraints.Size;
 /**
  * Payload do cadastro administrativo, {@code POST /api/users}.
  *
- * <p>Existe separado de {@code RegisterRequest} de propósito. Até o S2a os dois fluxos —
- * o registro público e o cadastro administrativo — compartilhavam o mesmo record, o que
- * fazia o endpoint administrativo exigir senha e ser incapaz de gravar perfil, regional,
- * telefone e matrícula. Alterar o record compartilhado quebraria
- * {@code POST /api/auth/register}, que continua público e intocado até o S2b.
+ * <p>Nasceu separado do {@code RegisterRequest} do registro público. Até o S2a os dois
+ * fluxos compartilhavam o mesmo record, o que fazia o endpoint administrativo exigir
+ * senha e ser incapaz de gravar perfil, regional, telefone e matrícula; alterar o record
+ * compartilhado quebraria {@code POST /api/auth/register}. O S8 removeu aquele endpoint e
+ * o seu DTO, e este passou a ser o <b>único</b> payload de criação de usuário — mas a
+ * separação foi o que permitiu chegar até aqui.
  *
  * <p><b>Não tem {@code password}, e isso é a regra central deste fluxo.</b> O usuário
  * nasce com senha nula e {@code senhaDefinida = false}; quem define a senha é o próprio

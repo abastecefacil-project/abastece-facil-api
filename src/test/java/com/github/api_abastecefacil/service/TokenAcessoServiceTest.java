@@ -234,6 +234,43 @@ class TokenAcessoServiceTest {
                 .isBetween(antes.minusDays(7), LocalDateTime.now().minusDays(7));
     }
 
+    // -------------------------------------------------- invalidarTodosPendentes
+
+    @Test
+    void invalidarTodosPendentes_ShouldNotFilterByFinalidade() {
+        // O irmao mais largo de invalidarPendentes: depois de a senha ser definida,
+        // qualquer link pendente daquele e-mail e a capacidade de defini-la de novo,
+        // inclusive um convite de ativacao esquecido na caixa de entrada.
+        when(tokenAcessoRepository.invalidarTodosPendentes(EMAIL)).thenReturn(2);
+
+        assertThat(tokenAcessoService.invalidarTodosPendentes(EMAIL)).isEqualTo(2);
+
+        verify(tokenAcessoRepository).invalidarTodosPendentes(EMAIL);
+        verify(tokenAcessoRepository, never()).invalidarPendentes(anyString(), anyString());
+    }
+
+    // --------------------------------------------------------- validadeHoras
+
+    @Test
+    void validadeHoras_ShouldReturnTheConfiguredTtlPerFinalidade() {
+        // E publico porque o corpo do e-mail exibe este prazo. Um @Value paralelo no
+        // servico de envio -- o que existia ate o S4 -- divergiria no dia em que alguem
+        // mudasse so um dos dois.
+        assertThat(tokenAcessoService.validadeHoras(FinalidadeToken.ATIVACAO)).isEqualTo(ATIVACAO_HORAS);
+        assertThat(tokenAcessoService.validadeHoras(FinalidadeToken.RECUPERACAO)).isEqualTo(RECUPERACAO_HORAS);
+    }
+
+    @Test
+    void validadeHoras_ShouldMatchTheTtlUsedToComputeExpiraEm() {
+        LocalDateTime antes = LocalDateTime.now();
+
+        tokenAcessoService.gerarToken(EMAIL, FinalidadeToken.RECUPERACAO, IP);
+
+        long horas = tokenAcessoService.validadeHoras(FinalidadeToken.RECUPERACAO);
+        assertThat(capturarSalvo().getExpiraEm())
+                .isBetween(antes.plusHours(horas), LocalDateTime.now().plusHours(horas));
+    }
+
     private TokenAcesso capturarSalvo() {
         ArgumentCaptor<TokenAcesso> captor = ArgumentCaptor.forClass(TokenAcesso.class);
         verify(tokenAcessoRepository, atLeastOnce()).save(captor.capture());

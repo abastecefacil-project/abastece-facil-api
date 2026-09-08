@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.context.request.WebRequest;
 
+import static com.github.api_abastecefacil.constants.AuthConstants.LIMITE_SOLICITACOES_EXCEDIDO_MESSAGE;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
@@ -255,5 +256,39 @@ class GlobalExceptionHandlerTest {
                         exceptionHandler.handleAutoExclusaoNaoPermitidaException(
                                 new AutoExclusaoNaoPermitidaException("d"), webRequest).getBody().error()))
                 .doesNotHaveDuplicates();
+    }
+
+    // ------------------------------------------------------------------- S4
+
+    @Test
+    void handleLimiteSolicitacoesExcedidoException_ShouldReturn429TooManyRequests() {
+        LimiteSolicitacoesExcedidoException ex =
+                new LimiteSolicitacoesExcedidoException("Muitas solicitações");
+
+        ResponseEntity<ErrorResponse> response =
+                exceptionHandler.handleLimiteSolicitacoesExcedidoException(ex, webRequest);
+
+        // 429 e nao 403: nao ha nada de errado com o solicitante, e a mesma requisicao
+        // seria aceita alguns minutos depois.
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("LIMITE_SOLICITACOES_EXCEDIDO");
+        assertThat(response.getBody().message()).isEqualTo("Muitas solicitações");
+    }
+
+    @Test
+    void handleLimiteSolicitacoesExcedidoException_ShouldNotSayWhichLimitWasHit() {
+        // A mensagem e a constante generica, identica para o limite por e-mail e o por IP.
+        // Dizer qual estourou revelaria que aquele endereco vinha sendo tentado.
+        LimiteSolicitacoesExcedidoException ex =
+                new LimiteSolicitacoesExcedidoException(LIMITE_SOLICITACOES_EXCEDIDO_MESSAGE);
+
+        ResponseEntity<ErrorResponse> response =
+                exceptionHandler.handleLimiteSolicitacoesExcedidoException(ex, webRequest);
+
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().message())
+                .doesNotContainIgnoringCase("e-mail")
+                .doesNotContainIgnoringCase("ip");
     }
 }

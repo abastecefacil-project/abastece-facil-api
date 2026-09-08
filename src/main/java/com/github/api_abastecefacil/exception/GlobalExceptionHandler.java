@@ -419,8 +419,13 @@ public class GlobalExceptionHandler {
      * <p>A mensagem e uma constante generica. Status HTTP do provedor, corpo da resposta
      * e causa encadeada ficam so no log -- ver ResendEnviadorEmail.
      *
-     * <p>Ainda nao alcancavel por endpoint nenhum: o M3 entrega so o canal de envio. O
-     * status deve ser reconfirmado quando existir rota que dispare envio (S2 e S4).
+     * <p><b>Continua nao alcancavel por endpoint nenhum, agora por escolha e nao por
+     * ausencia de rota.</b> O S2b1 e o S4 disparam envio, mas os dois capturam a excecao
+     * no {@code EnvioAcessoService}: o cadastro sinaliza a falha no campo
+     * {@code conviteEnviado} em vez de derrubar a criacao (§6, item 24), e a recuperacao
+     * ja respondeu ao cliente antes de o envio comecar. Este handler existe como rede de
+     * seguranca -- sem ele, um caminho futuro que deixasse a excecao escapar viraria 500
+     * cru, porque nao ha fallback Exception.class.
      */
     @ExceptionHandler(EnvioEmailException.class)
     public ResponseEntity<ErrorResponse> handleEnvioEmailException(
@@ -434,6 +439,36 @@ public class GlobalExceptionHandler {
         );
 
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(error);
+    }
+
+    /**
+     * 429 Too Many Requests: o primeiro do projeto, introduzido pelo limite de
+     * solicitacoes da recuperacao de senha (S4).
+     *
+     * <p>429 e nao 403: nao ha nada de errado com o solicitante nem com a requisicao, que
+     * seria aceita alguns minutos depois. O 429 e o unico status que comunica "correto,
+     * mas agora nao" -- e e o que permite ao frontend exibir "aguarde" em vez de "sem
+     * permissao".
+     *
+     * <p>A mensagem e generica e identica para os dois limites, por e-mail e por IP. Dizer
+     * qual estourou revelaria que aquele endereco vinha sendo tentado, o que reintroduziria
+     * pela porta do erro a enumeracao de contas que o resto do fluxo evita. Pelo mesmo
+     * motivo nao ha cabecalho {@code Retry-After}: o prazo exato ate a proxima tentativa
+     * depende de quando as anteriores aconteceram, e devolve-lo seria contar parte dessa
+     * historia.
+     */
+    @ExceptionHandler(LimiteSolicitacoesExcedidoException.class)
+    public ResponseEntity<ErrorResponse> handleLimiteSolicitacoesExcedidoException(
+            LimiteSolicitacoesExcedidoException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.TOO_MANY_REQUESTS.value(),
+                "LIMITE_SOLICITACOES_EXCEDIDO",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(error);
     }
 
     @ExceptionHandler(FeignException.class)

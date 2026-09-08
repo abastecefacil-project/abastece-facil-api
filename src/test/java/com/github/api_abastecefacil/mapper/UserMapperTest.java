@@ -1,6 +1,5 @@
 package com.github.api_abastecefacil.mapper;
 
-import com.github.api_abastecefacil.dto.auth.RegisterRequest;
 import com.github.api_abastecefacil.dto.regional.RegionalSummaryResponse;
 import com.github.api_abastecefacil.dto.user.CreateUserRequest;
 import com.github.api_abastecefacil.dto.user.UserResponse;
@@ -9,22 +8,12 @@ import com.github.api_abastecefacil.model.Regional;
 import com.github.api_abastecefacil.model.User;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.verifyNoInteractions;
-import static org.mockito.Mockito.when;
 
-@ExtendWith(MockitoExtension.class)
 class UserMapperTest {
-
-    @Mock
-    private PasswordEncoder passwordEncoder;
 
     private UserMapper userMapper;
 
@@ -37,7 +26,9 @@ class UserMapperTest {
     @BeforeEach
     void setUp() {
         // RegionalMapper real, nao mockado: e conversao pura, sem colaborador nenhum.
-        userMapper = new UserMapper(passwordEncoder, new RegionalMapper());
+        // Desde o S8 esta classe nao tem mock nenhum -- saiu junto o PasswordEncoder,
+        // que so servia ao registro publico -- e por isso dispensa o MockitoExtension.
+        userMapper = new UserMapper(new RegionalMapper());
 
         regional = new Regional()
                 .setId(1L)
@@ -104,23 +95,6 @@ class UserMapperTest {
     }
 
     @Test
-    void toEntity_ShouldSetPerfilColaboradorAndEncodePassword() {
-        RegisterRequest request = new RegisterRequest("Novo Usuario", "novo@test.com", "password123");
-        when(passwordEncoder.encode("password123")).thenReturn("encodedPassword");
-
-        User entity = userMapper.toEntity(request);
-
-        assertThat(entity.getPerfil()).isEqualTo(Perfil.COLABORADOR);
-        assertThat(entity.getName()).isEqualTo("Novo Usuario");
-        assertThat(entity.getEmail()).isEqualTo("novo@test.com");
-        assertThat(entity.getPassword()).isEqualTo("encodedPassword");
-        assertThat(entity.getRegional()).isNull();
-        assertThat(entity.getSenhaDefinida()).isTrue();
-        assertThat(entity.getTelefone()).isNull();
-        assertThat(entity.getMatricula()).isNull();
-    }
-
-    @Test
     void toResponse_ShouldLeaveConviteEnviadoNull_OnReads() {
         // Em GET a pergunta nao se aplica: a resposta descreve o usuario, nao uma
         // tentativa de envio. null NAO significa falha -- so false significa.
@@ -148,7 +122,9 @@ class UserMapperTest {
 
         assertThat(entity.getPassword()).isNull();
         assertThat(entity.getSenhaDefinida()).isFalse();
-        verifyNoInteractions(passwordEncoder);
+        // Ate o S8 havia aqui um verifyNoInteractions(passwordEncoder). A garantia ficou
+        // mais forte, nao mais fraca: com o registro publico removido o mapper deixou de
+        // receber PasswordEncoder, entao nao ha mais o que ele possa chamar.
     }
 
     @Test
