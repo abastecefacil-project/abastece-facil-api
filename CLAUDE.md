@@ -191,7 +191,7 @@ que a forma canônica, não porque fosse necessário.
 | `abastecefacil.admin.nome` | `Administrador` | — | `ABASTECEFACIL_ADMIN_NOME` | não |
 | `abastecefacil.admin.email` | vazio | — | `ABASTECEFACIL_ADMIN_EMAIL` | **sim** |
 | `abastecefacil.admin.senha-hash` | vazio | — | `ABASTECEFACIL_ADMIN_SENHA_HASH` | **sim** |
-| `abastecefacil.auth.dominios-permitidos` | `fiesc.org.br,sesisenai.org.br` — **provisório** | — | `ABASTECEFACIL_AUTH_DOMINIOS_PERMITIDOS` | **sim** |
+| `abastecefacil.auth.dominios-permitidos` | `fiesc.org.br,sesisenai.org.br` | — | `ABASTECEFACIL_AUTH_DOMINIOS_PERMITIDOS` | **sim** |
 | `abastecefacil.email.provedor` | `log` | — | `ABASTECEFACIL_EMAIL_PROVEDOR` | **sim** (`resend`) |
 | `abastecefacil.email.remetente` | `Abastece Fácil <onboarding@resend.dev>` | — | `ABASTECEFACIL_EMAIL_REMETENTE` | **sim** |
 | `abastecefacil.email.api-key` | vazio | — | `ABASTECEFACIL_EMAIL_API_KEY` | **sim** |
@@ -227,11 +227,11 @@ Os "precisa em produção" que não são o banco:
   propósito (ver §6, item 16). O remetente precisa ser um endereço verificado no Resend;
   o default é o domínio de teste deles, que só entrega para a conta dona da chave.
 - **`ABASTECEFACIL_AUTH_DOMINIOS_PERMITIDOS`** — lista, separada por vírgula, dos
-  domínios de e-mail aceitos no cadastro administrativo. **A lista versionada é
-  provisória**, pendente de confirmação do cliente (FIESC/UNISENAI): um domínio que falte
-  ali é um colaborador que **não consegue ser cadastrado**, porque o gestor recebe 400 e
-  não tem como contornar pela interface. Lista vazia recusa todo mundo — *deny by
-  default*, deliberado. É CSV, e não sequência YAML, para o `@Value` converter para
+  domínios de e-mail aceitos no cadastro administrativo. A lista versionada —
+  `fiesc.org.br` e `sesisenai.org.br` — foi **confirmada pelo cliente (FIESC/UNISENAI)**
+  e é a lista definitiva. Um domínio que falte ali é um colaborador que **não consegue
+  ser cadastrado**, porque o gestor recebe 400 e não tem como contornar pela interface.
+  Lista vazia recusa todo mundo — *deny by default*, deliberado. É CSV, e não sequência YAML, para o `@Value` converter para
   `List<String>` sozinho e o override por ambiente ser direto; sequência YAML exigiria
   `@ConfigurationProperties`, que o projeto não usa.
 - **`ABASTECEFACIL_EMAIL_FRONTEND_URL`** — é a base do link que vai no e-mail. Com o
@@ -351,9 +351,9 @@ propósito: a anotação descreveria uma constraint total, que não é o que exi
 ### `regionais`
 `id`, `nome`, `sigla` (única), `ativo`, `created_at`, `updated_at`
 
-Regionais da FIESC. Criada pela `V2__regionais.sql`, que já popula **duas** das 13:
-Joinville (`JOI`) e Florianópolis (`FLN`). As 11 restantes entram numa migration
-posterior, quando o cliente confirmar a lista oficial.
+Regionais da FIESC. Criada pela `V2__regionais.sql`, que popula as **duas** do escopo:
+Joinville (`JOI`) e Florianópolis (`FLN`). O cliente confirmou que são só essas — não
+há outras regionais a cadastrar.
 
 Note a mistura de idiomas nas colunas: `nome`/`sigla`/`ativo` em português (nomes de
 domínio, como manda a convenção do projeto) e `created_at`/`updated_at` em inglês,
@@ -509,9 +509,8 @@ Parâmetros de filtro:
 
 **Exceção: `/api/regionais`.** Só leitura, sem filtro, e `size = 20` por padrão em
 vez de 10, ordenado por `nome`. O consumidor é um `select` de formulário, não uma
-tabela navegável — com as 13 regionais da FIESC cadastradas, o default de 10
-truncaria a lista silenciosamente. Não há teto próprio: o cliente pode pedir `size`
-maior (vale o limite de 2000 do Spring). Não tem `/filter` no caminho justamente
+tabela navegável — a lista precisa sair inteira, sem truncar em silêncio. Não há teto
+próprio: o cliente pode pedir `size` maior (vale o limite de 2000 do Spring). Não tem `/filter` no caminho justamente
 porque não filtra.
 
 ### Formatos relevantes
