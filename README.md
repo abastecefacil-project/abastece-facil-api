@@ -29,7 +29,8 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Esse comando executa PostgreSQL, API e frontend.
+Esse comando executa PostgreSQL, API e frontend. O frontend deve estar clonado na
+pasta irmã `../front-abastecefacil`.
 
 #### **Opção 2: Desenvolvimento Local**
 
