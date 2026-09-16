@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: abastecefacil-db-dev
+    environment:
+      POSTGRES_DB: abastecefacil
+      POSTGRES_USER: abastecefacil_user
+      POSTGRES_PASSWORD: abastecefacil_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d:ro
+    networks:
+      - abastecefacil-dev
+
+volumes:
+  postgres_data_dev:
+
+networks:
+  abastecefacil-dev:

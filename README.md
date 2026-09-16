@@ -1,0 +1,213 @@
+# API AbasteceFacil
+
+## Configuração do Banco de Dados
+
+Este projeto utiliza PostgreSQL rodando em Docker para desenvolvimento.
+
+### Pré-requisitos
+
+- Docker
+- Docker Compose
+- Java 21 (apenas para desenvolvimento local)
+- Maven (apenas para desenvolvimento local)
+
+### Como executar
+
+#### **Opção 1: Docker Compose completo**
+
+Com a API e o frontend clonados em pastas irmãs:
+
+```text
+workspace/
+├── api-abastecefacil/
+└── front-abastecefacil/
+```
+
+```bash
+cp .env.example .env
+# Edite o .env antes de usar em produção
+docker compose up -d --build
+```
+
+Esse comando executa PostgreSQL, API e frontend.
+
+#### **Opção 2: Desenvolvimento Local**
+
+1. **Iniciar o banco de dados:**
+   ```bash
+   docker compose -f docker-compose.dev.yml up -d
+   ```
+
+2. **Executar a aplicação:**
+   ```bash
+   ./mvnw spring-boot:run
+   ```
+
+#### Comando rápido
+
+No Linux/WSL:
+
+```bash
+./dev.sh
+```
+
+No Windows:
+
+```bat
+dev.cmd
+```
+
+Esses comandos iniciam o PostgreSQL em Docker e executam a API localmente.
+
+#### Comandos separados
+
+Para iniciar somente o banco:
+
+```bash
+./start-db
+```
+
+Para iniciar somente a API:
+
+```bash
+./start-api
+```
+
+No Windows, use `start-db.cmd` e `start-api.cmd`.
+
+### Configurações do Banco
+
+- **Host:** localhost (dev) / postgres (docker)
+- **Porta:** **5432** no host (dev) / 5432 dentro da rede do compose (docker)
+- **Database:** abastecefacil
+- **Usuário:** abastecefacil_user
+- **Senha:** abastecefacil_password
+
+> A porta publicada é 5432. A API em Docker fala com o banco usando `postgres:5432`
+> pelo DNS interno da rede.
+
+### Arquivos de configuração
+
+- `application.yml` — base e defaults de desenvolvimento local (`./mvnw spring-boot:run`).
+- `application-docker.yml` — sobrescreve só o datasource quando o perfil `docker`
+  está ativo, o que o `docker-compose.yml` faz via `SPRING_PROFILES_ACTIVE`.
+
+Variável de ambiente tem precedência sobre os dois. A tabela completa de propriedades
+está no `CLAUDE.md`, seção 3.
+
+### Administrador inicial
+
+O primeiro administrador é criado na subida da aplicação, por configuração — não existe
+endpoint de bootstrap e não há como promover alguém pela interface ainda. Três variáveis:
+
+| Variável | Obrigatória | Default |
+|---|---|---|
+| `ABASTECEFACIL_ADMIN_EMAIL` | sim | — |
+| `ABASTECEFACIL_ADMIN_SENHA_HASH` | sim | — |
+| `ABASTECEFACIL_ADMIN_NOME` | não | `Administrador` |
+
+Sem e-mail e hash, a criação é pulada e a aplicação sobe normalmente — é o esperado em
+desenvolvimento. Subir várias vezes cria no máximo um usuário: se o e-mail já existe,
+nada é alterado.
+
+> **Não use `admin@abastecefacil.com`.** Esse endereço já vem no `init-scripts/dump.sql`
+> com perfil `COLABORADOR` e senha de origem desconhecida. Configurá-lo faz o
+> inicializador encontrar o registro e não criar nada — você fica com um "administrador"
+> que não é administrador e não loga. Escolha outro endereço.
+
+#### Gerar o hash BCrypt
+
+A senha nunca é passada para a aplicação em texto plano: o que se configura é o **hash
+BCrypt**. Para gerá-lo, use o teste `GerarHashBCryptTest`, que existe para isso — o
+projeto já tem Spring Security no classpath, então não é preciso instalar nada.
+
+Em **PowerShell**, a partir de `abastece-facil-api/`:
+
+```powershell
+$env:BCRYPT_SENHA = 'a-senha-escolhida'
+.\mvnw.cmd test -Dtest=GerarHashBCryptTest
+Get-Content target/hash-bcrypt.txt
+Remove-Item Env:\BCRYPT_SENHA
+```
+
+O hash sai em `target/hash-bcrypt.txt`, que o `.gitignore` já cobre. A senha entra por
+variável de ambiente e nada é impresso no console, para que nem o hash nem a senha
+sobrem no scroll do terminal ou em log de CI.
+
+Confira o resultado antes de usar: deve ter **60 caracteres** e começar com `$2a$10$`.
+Copie o valor para `ABASTECEFACIL_ADMIN_SENHA_HASH` no ambiente de execução —
+**nunca no `application.yml`**, que é versionado.
+
+Sem `BCRYPT_SENHA` definida o teste não escreve nada e passa em silêncio, então
+`./mvnw clean test` continua verde normalmente.
+
+Se o valor configurado não tiver formato de hash BCrypt, a aplicação sobe, **não** cria
+o usuário e registra dois `ERROR` no log — um no ponto da falha e um resumo ao final. O
+valor recebido não é registrado em lugar nenhum.
+
+### Envio de e-mail
+
+Os e-mails de acesso (convite de primeiro acesso e recuperação de senha) saem por um
+adaptador escolhido na subida, em `abastecefacil.email.provedor`.
+
+| Variável | Obrigatória em produção | Default |
+|---|---|---|
+| `ABASTECEFACIL_EMAIL_PROVEDOR` | sim (`resend`) | `log` |
+| `ABASTECEFACIL_EMAIL_API_KEY` | sim | — |
+| `ABASTECEFACIL_EMAIL_REMETENTE` | sim | `Abastece Fácil <onboarding@resend.dev>` |
+| `ABASTECEFACIL_EMAIL_FRONTEND_URL` | sim | `http://localhost:5173` |
+| `ABASTECEFACIL_EMAIL_API_URL` | não | `https://api.resend.com` |
+
+**Em desenvolvimento não configure nada.** O default `log` não envia mensagem nenhuma:
+escreve o link no console, prefixado por `[E-MAIL SIMULADO]`. Assim a aplicação sobe sem
+chave, sem rede e sem consumir cota.
+
+> **`log` não pode ir para produção.** O link contém o token de acesso em claro, então
+> deixá-lo lá equivale a publicar tokens no log da aplicação — quem lê o log define a
+> senha de qualquer usuário convidado.
+
+Com `ABASTECEFACIL_EMAIL_PROVEDOR=resend`, a chave e o remetente passam a ser
+obrigatórios e a aplicação **não sobe** sem eles, com uma mensagem dizendo qual variável
+falta. A chave nunca é registrada em log, nem quando é rejeitada.
+
+A chave se obtém no painel do Resend e **nunca entra no `application.yml`**, que é
+versionado — mesma regra do hash do administrador inicial. O remetente precisa ser um
+endereço verificado no Resend; o default é o domínio de teste deles, que só entrega para
+a conta dona da chave.
+
+### Endpoints da API
+
+- **URL Base:** http://localhost:8081
+- **Health Check:** http://localhost:8081/actuator/health
+
+### Comandos úteis
+
+```bash
+# Executar tudo
+docker-compose up -d
+
+# Parar os containers
+docker-compose down
+
+# Parar e remover volumes (cuidado: apaga os dados)
+docker-compose down -v
+
+# Ver logs da API
+docker-compose logs api
+
+# Ver logs do PostgreSQL
+docker-compose logs postgres
+
+# Rebuild da API
+docker-compose up -d --build api
+
+# Acessar o PostgreSQL via CLI
+docker-compose exec postgres psql -U abastecefacil_user -d abastecefacil
+```
+
+### Estrutura do Docker Compose
+
+- **postgres:** Banco de dados PostgreSQL 15
+- **api:** Aplicação Spring Boot
+- **Volumes:** Dados persistentes do PostgreSQL
+- **Network:** Rede isolada para comunicação entre serviços

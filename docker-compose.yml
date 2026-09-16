@@ -1,0 +1,55 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: abastecefacil-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-abastecefacil}
+      POSTGRES_USER: ${POSTGRES_USER:-abastecefacil_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - abastecefacil
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: abastecefacil-api
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-abastecefacil}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-abastecefacil_user}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - abastecefacil
+
+  frontend:
+    build:
+      context: ../front-abastecefacil
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+    container_name: abastecefacil-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+    networks:
+      - abastecefacil
+
+volumes:
+  postgres_data:
+
+networks:
+  abastecefacil:

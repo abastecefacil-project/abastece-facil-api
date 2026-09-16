@@ -1,0 +1,1852 @@
+# Abastece Fácil — Contexto do sistema
+
+Documento de contexto para assistentes de IA. Descreve arquitetura, contratos,
+regras de negócio e armadilhas conhecidas do projeto.
+
+Projeto de TCC. Sistema de consulta e gestão de postos conveniados da
+**FIESC / UNISENAI Joinville**.
+
+---
+
+## 1. Visão geral do domínio
+
+O sistema atende dois públicos, com dois layouts e dois conjuntos de rotas:
+
+- **Usuário final** — consulta os postos conveniados numa lista ou num mapa, vê a
+  rota até o posto, e registra ocorrências sobre veículos da frota.
+- **Administrador** — gerencia postos, veículos, usuários e analisa as ocorrências
+  registradas, com um dashboard de totais.
+
+Quatro entidades: **posto de combustível**, **veículo**, **usuário** e **ocorrência**.
+
+Uma ocorrência é um relato sobre um **veículo da frota** (ex.: "devolvido com menos
+de meio tanque", "sujo internamente"). Não é um relato sobre o posto — este é um
+ponto que costuma ser mal interpretado.
+
+---
+
+## 2. Arquitetura
+
+Dois repositórios independentes, lado a lado:
+
+```
+abastece_ai_tcc/
+├── abastece-facil-api/                                    ← backend
+└── front-abastece-facil-main/front-abastece-facil-main/   ← frontend
+```
+
+O backend é um clone e o código fica direto em `abastece-facil-api/`. O frontend
+ainda tem **um nível de pasta duplicado**, herdado de download de ZIP: o caminho
+real é `front-abastece-facil-main/front-abastece-facil-main/`.
+
+Versionamento: backend em `abastecefacil-project/abastece-facil-api`, frontend em
+`abastecefacil-project/abastece-facil-web`. Ambos privados.
+
+### Backend
+
+| Item | Valor |
+|---|---|
+| Stack | Java 21, Spring Boot 3.5.4, Spring Security, Spring Data JPA |
+| Banco | PostgreSQL 15 |
+| Autenticação | JWT (biblioteca jjwt), stateless |
+| Porta | 8081 |
+| Build | Maven (`./mvnw`), wrapper incluso |
+| Execução | Docker Compose (API + Postgres + pgAdmin) |
+| Pacote raiz | `com.github.api_abastecefacil` |
+
+Integrações externas: **ViaCEP** (consulta de endereço por CEP) e
+**Nominatim/OpenStreetMap** (geocodificação de endereço para coordenadas).
+
+### Frontend
+
+| Item | Valor |
+|---|---|
+| Stack | Vue 3.5 (Composition API, `<script setup>`), Vite 7 |
+| UI | Vuetify 3.9 |
+| Ícones | Material Design Icons (`@mdi/font`) |
+| Estado | Pinia 3 |
+| HTTP | Axios |
+| Mapa | Leaflet + leaflet.markercluster + OpenStreetMap |
+| Fonte | Manrope |
+| Porta (dev) | 5173 |
+| Deploy | Render, via GitHub Actions em push na `main` |
+
+---
+
+## 3. Como executar
+
+O backend sobe por Docker; o frontend roda local.
+
+```bash
+# 1. Backend (API + banco + pgAdmin)
+cd abastece-facil-api
+docker compose up -d
+
+# 2. Frontend
+cd front-abastece-facil-main/front-abastece-facil-main
+npm run dev
+```
+
+| Serviço | URL |
+|---|---|
+| Aplicação | http://localhost:5173 |
+| API | http://localhost:8081 |
+| pgAdmin | http://localhost:5050 — `admin@abastecefacil.com` / `admin` |
+| PostgreSQL | **localhost:5432** — `abastecefacil_user` / `abastecefacil_password` / db `abastecefacil` |
+
+### O banco atende em duas portas diferentes
+
+Ponto que já custou tempo de diagnóstico e vai custar de novo se não for lido:
+
+| De onde se conecta | Endereço |
+|---|---|
+| Do host — `psql`, DBeaver, `./mvnw spring-boot:run` | `localhost:5432` |
+| De dentro da rede do compose — container da API, pgAdmin | `postgres:5432` |
+
+O compose publica `5432:5432`.
+uma instalação nativa do PostgreSQL (no Windows, o serviço `postgresql-x64-18`) costuma
+já estar escutando nela. Quando isso acontece o Docker não consegue bindar `0.0.0.0` e
+publica **só em IPv6** (`[::]:5432`), enquanto o Postgres nativo fica com o IPv4. O
+resultado é traiçoeiro: a conexão para `localhost:5432` funciona — só que chega no
+banco errado, e falha com
+
+```
+FATAL: autenticação do tipo senha falhou para o usuário "abastecefacil_user"
+```
+
+que parece senha divergente e não é. **Sinal para distinguir:** o container é Alpine com
+locale C e responde em inglês; se a mensagem vier em **português**, quem respondeu foi o
+Postgres nativo do Windows. Confirmar com
+`Get-NetTCPConnection -LocalPort 5432 -State Listen`.
+
+Como a porta 5432 foi verificada e está livre nesta máquina, ela será usada tanto pelo
+host quanto dentro da rede do compose.
+
+Observações operacionais:
+
+- O **Vite leva ~20 segundos** para ficar pronto. Só abra o navegador depois que a
+  linha `➜ Local: http://localhost:5173/` aparecer.
+- `http://localhost:8081` sozinho retorna erro: a raiz é bloqueada pelo Spring
+  Security. Endpoints válidos começam em `/api/`.
+- **Nunca use `docker compose down -v`** em desenvolvimento: o `-v` apaga o volume
+  e o banco volta ao dump inicial, perdendo os cadastros feitos pela interface.
+- O `docker-compose.yml` monta `./init-scripts`, executado apenas na **primeira**
+  inicialização (volume vazio). É onde fica a carga inicial derivada de `dump.sql`.
+- Rodar o backend fora do Docker exige **JDK 21**. Um terminal com ambiente conda
+  ativo, ou aberto antes da instalação do JDK, pode resolver um Java diferente do
+  configurado em `JAVA_HOME`. Confirme com `./mvnw -version` antes de investigar
+  erro de compilação, e observe também o `platform encoding`, que precisa ser UTF-8
+  por causa dos acentos nas mensagens em português.
+- Os containers têm nome fixo (`abastecefacil-api`, `abastecefacil-db`,
+  `abastecefacil-pgadmin`). `docker compose down` só remove os containers do projeto
+  onde é executado, então containers antigos de outra pasta causam conflito de nome.
+  Nesse caso, `docker rm -f <nome>` antes de subir.
+
+### Configuração por ambiente
+
+Dois arquivos em `src/main/resources/`, e a regra é simples: **o que muda por ser
+container mora no `application-docker.yml`; todo o resto mora no `application.yml`.**
+
+| Arquivo | Quando vale | Conteúdo |
+|---|---|---|
+| `application.yml` | sempre (base), e sozinho no dev local | tudo, com defaults de desenvolvimento local |
+| `application-docker.yml` | só com o perfil `docker` ativo | **apenas** o datasource apontando para `postgres:5432` |
+
+O perfil `docker` é ativado por `SPRING_PROFILES_ACTIVE: docker` no `docker-compose.yml`.
+O `application-docker.yml` **sobrescreve**, não substitui: o `application.yml` continua
+sendo carregado como base, então `jwt`, `abastecefacil.token`, `viacep-api`,
+`openstreetmap-api`, `flyway`, `jpa` e `server.port` valem nos dois ambientes e são
+declarados uma vez só.
+
+Precedência: **variável de ambiente > `application-docker.yml` > `application.yml`.**
+
+Nota histórica: até o P0.7 o `application-docker.yml` **não existia**. O perfil estava
+ativo mas vazio, e o endereço do banco chegava por `SPRING_DATASOURCE_URL` no compose —
+o que fazia o mesmo valor viver em dois lugares. Se alguém encontrar essa env var num
+compose antigo, é resíduo.
+
+### Tabela de propriedades
+
+Toda propriedade aceita override por variável de ambiente na forma maiúscula com
+underscore (*relaxed binding* do Spring): `spring.datasource.url` →
+`SPRING_DATASOURCE_URL`. Não é preciso declarar `${VAR}` no YAML para isso funcionar —
+o único `${...}` do projeto existe porque quisemos um nome de variável **mais curto** do
+que a forma canônica, não porque fosse necessário.
+
+| Propriedade | `application.yml` (local) | `application-docker.yml` | Env var | Precisa em produção? |
+|---|---|---|---|---|
+| `spring.datasource.url` | `jdbc:postgresql://localhost:5432/abastecefacil` | `jdbc:postgresql://postgres:5432/abastecefacil` | `SPRING_DATASOURCE_URL` | **sim** |
+| `spring.datasource.username` | `abastecefacil_user` | `abastecefacil_user` | `SPRING_DATASOURCE_USERNAME` | **sim** |
+| `spring.datasource.password` | `abastecefacil_password` | `abastecefacil_password` | `SPRING_DATASOURCE_PASSWORD` | **sim** |
+| `spring.jpa.hibernate.ddl-auto` | `validate` | — | `SPRING_JPA_HIBERNATE_DDL_AUTO` | não — nunca mudar |
+| `spring.flyway.baseline-on-migrate` | `true` | — | `SPRING_FLYWAY_BASELINE_ON_MIGRATE` | não |
+| `spring.http.client.connect-timeout` | `5s` | — | `SPRING_HTTP_CLIENT_CONNECT_TIMEOUT` | não |
+| `spring.http.client.read-timeout` | `10s` | — | `SPRING_HTTP_CLIENT_READ_TIMEOUT` | não |
+| `server.port` | `8081` | — | `SERVER_PORT` | não |
+| `jwt.secret` | segredo de dev, versionado | — | `JWT_SECRET` | **sim** |
+| `jwt.expiration` | `86400000` (24h) — GESTOR_FROTA e ADMINISTRADOR | — | `JWT_EXPIRATION` | não |
+| `jwt.expiration-colaborador` | `2592000000` (30 dias) — só COLABORADOR | — | `JWT_EXPIRATION_COLABORADOR` | não |
+| `abastecefacil.token.ativacao-horas` | `48` | — | `ABASTECEFACIL_TOKEN_ATIVACAO_HORAS` | não |
+| `abastecefacil.token.recuperacao-horas` | `1` | — | `ABASTECEFACIL_TOKEN_RECUPERACAO_HORAS` | não |
+| `abastecefacil.admin.nome` | `Administrador` | — | `ABASTECEFACIL_ADMIN_NOME` | não |
+| `abastecefacil.admin.email` | vazio | — | `ABASTECEFACIL_ADMIN_EMAIL` | **sim** |
+| `abastecefacil.admin.senha-hash` | vazio | — | `ABASTECEFACIL_ADMIN_SENHA_HASH` | **sim** |
+| `abastecefacil.auth.dominios-permitidos` | `fiesc.org.br,sesisenai.org.br` | — | `ABASTECEFACIL_AUTH_DOMINIOS_PERMITIDOS` | **sim** |
+| `abastecefacil.email.provedor` | `log` | — | `ABASTECEFACIL_EMAIL_PROVEDOR` | **sim** (`resend`) |
+| `abastecefacil.email.remetente` | `Abastece Fácil <onboarding@resend.dev>` | — | `ABASTECEFACIL_EMAIL_REMETENTE` | **sim** |
+| `abastecefacil.email.api-key` | vazio | — | `ABASTECEFACIL_EMAIL_API_KEY` | **sim** |
+| `abastecefacil.email.api-url` | `https://api.resend.com` | — | `ABASTECEFACIL_EMAIL_API_URL` | não |
+| `abastecefacil.email.frontend-url` | `http://localhost:5173` | — | `ABASTECEFACIL_EMAIL_FRONTEND_URL` | **sim** |
+| `viacep-api.url` | `https://viacep.com.br/ws/` | — | `VIACEP_API_URL` | não |
+| `openstreetmap-api.url` | `https://nominatim.openstreetmap.org` | — | `OPENSTREETMAP_API_URL` | não |
+| `openstreetmap-api.user-agent` | `AbasteceFacil/1.0 (contato@abastecefacil.com.br)` | — | `OPENSTREETMAP_USER_AGENT` | **sim** |
+
+Os "precisa em produção" que não são o banco:
+
+- **`JWT_SECRET`** — o valor no repositório é de desenvolvimento e está versionado em
+  texto claro desde o início do projeto. Quem conhece o segredo forja token de qualquer
+  usuário. Sobrescrever por variável, nunca editar o arquivo.
+- **`OPENSTREETMAP_USER_AGENT`** — a política de uso do Nominatim exige contato válido.
+  O default atual é genérico de propósito (substituiu o e-mail pessoal de um integrante
+  da equipe anterior, que estava versionado); em produção precisa apontar para um
+  endereço realmente monitorado, senão o serviço pode bloquear as requisições.
+- **Credenciais do banco** — as versionadas são as do compose de desenvolvimento e não
+  devem viajar para fora dele.
+- **`ABASTECEFACIL_ADMIN_EMAIL` e `ABASTECEFACIL_ADMIN_SENHA_HASH`** — sem elas nenhum
+  administrador é criado, e como não há endpoint que promova ninguém, o sistema fica sem
+  caminho administrativo. O que se configura é o **hash BCrypt**, nunca a senha: o
+  `application.yml` é versionado e o valor em claro não pode entrar nele. Como gerar o
+  hash está no README, seção "Gerar o hash BCrypt". Ver §6, item 6.
+- **`ABASTECEFACIL_EMAIL_PROVEDOR`** — o default `log` **não envia nada**: escreve o link
+  no log da aplicação. É o que faz o desenvolvimento não depender de rede nem consumir
+  cota, e é exatamente o que não se pode deixar em produção — o link contém o token em
+  claro, então `log` lá equivale a publicar tokens de acesso no log, e quem lê o log
+  define a senha de qualquer convidado. Em produção: `resend`.
+- **`ABASTECEFACIL_EMAIL_API_KEY` e `ABASTECEFACIL_EMAIL_REMETENTE`** — com
+  `provedor: resend`, faltando qualquer um dos dois a **aplicação não sobe**, de
+  propósito (ver §6, item 16). O remetente precisa ser um endereço verificado no Resend;
+  o default é o domínio de teste deles, que só entrega para a conta dona da chave.
+- **`ABASTECEFACIL_AUTH_DOMINIOS_PERMITIDOS`** — lista, separada por vírgula, dos
+  domínios de e-mail aceitos no cadastro administrativo. A lista versionada —
+  `fiesc.org.br` e `sesisenai.org.br` — foi **confirmada pelo cliente (FIESC/UNISENAI)**
+  e é a lista definitiva. Um domínio que falte ali é um colaborador que **não consegue
+  ser cadastrado**, porque o gestor recebe 400 e não tem como contornar pela interface.
+  Lista vazia recusa todo mundo — *deny by default*, deliberado. É CSV, e não sequência YAML, para o `@Value` converter para
+  `List<String>` sozinho e o override por ambiente ser direto; sequência YAML exigiria
+  `@ConfigurationProperties`, que o projeto não usa.
+- **`ABASTECEFACIL_EMAIL_FRONTEND_URL`** — é a base do link que vai no e-mail. Com o
+  valor de desenvolvimento, todo convite e toda recuperação apontam para `localhost:5173`
+  e não funcionam para ninguém. Desde o S4 quem a lê é o **`EnvioAcessoService`**, ponto
+  único: ele monta o link das duas finalidades e o `EnviadorEmail` continua recebendo a
+  URL pronta. Barra final na base é tratada — escrever `http://localhost:5173/` não gera
+  `//definir-senha`.
+
+**Onde colocar valor novo:** se muda entre local e container, vai nos dois arquivos; se
+não muda, vai só no `application.yml`. Se for segredo, entra no `application.yml` apenas
+com um default **inócuo** de desenvolvimento e ganha uma linha nesta tabela marcada como
+obrigatória em produção — segredo real nunca é versionado.
+
+---
+
+## 4. Modelo de dados
+
+Cinco tabelas. O schema é versionado por **Flyway**, com as migrations em
+`src/main/resources/db/migration/`. `ddl-auto: validate`: o Hibernate apenas confere
+o schema contra as entidades e recusa subir se houver divergência, sem nunca
+alterá-lo.
+
+**Toda alteração de schema passa por migration.** A `V1__baseline.sql` reproduz o
+schema original, derivada de `pg_dump --schema-only`, preservando os nomes de
+constraint gerados pelo Hibernate (`uk6dotkott2kjsp8vw4d0m25fb7` em `users.email`,
+`uk8atkmpnk417qqgkf1r1gw7ujk` em `gas_stations.cnpj`, `ukdbc9idlyetvssufb2vxicvb87`
+em `cars.license_plate`).
+
+**Convenção de nomenclatura de constraints, vigente da V2 em diante:**
+
+| Padrão | Uso | Exemplo |
+|---|---|---|
+| `pk_<tabela>` | chave primária | `pk_regionais` |
+| `uk_<tabela>_<coluna>` | restrição de unicidade | `uk_regionais_sigla` |
+| `fk_<tabela>_<referência>` | chave estrangeira | `fk_gas_stations_regional` |
+
+A V1 é a única exceção, por ser baseline de um schema pré-existente. A convenção
+foi fixada pela `V2__regionais.sql`, que a registra em comentário no topo.
+
+Detalhe importante: a JPA **não tem anotação para nomear a chave primária**, então
+`pk_<tabela>` existe apenas na migration. O `validate` do Hibernate confere tabelas
+e colunas, **não nomes de constraint** — a garantia de que os nomes escolhidos estão
+no banco vem de `SELECT conname FROM pg_constraint WHERE conrelid = '<tabela>'::regclass`.
+Já a unicidade é declarada na entidade com
+`@Table(uniqueConstraints = @UniqueConstraint(name = "...", columnNames = "..."))`,
+e não com `@Column(unique = true)`, que geraria um nome anônimo.
+
+**Pendência conhecida: duas fontes de verdade para o schema.**
+`init-scripts/dump.sql` também cria as tabelas, e roda na inicialização do
+Postgres, antes de a aplicação subir. Em volume novo, o Flyway encontra o banco já
+populado, faz baseline na versão 1 (`baseline-on-migrate: true`, `baseline-version`
+não definido, default 1) e a V1 nunca executa — a migração começa da V2.
+
+As duas fontes eram idênticas até a V1. **Da V2 em diante elas divergem por
+construção**: `regionais` e as colunas que a V3 e a V4 acrescentam a `users`
+existem só no Flyway. Isso é seguro porque V2, V3 e V4 são auto-suficientes
+(`CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`,
+`CREATE UNIQUE INDEX IF NOT EXISTS`, sem depender de nada que a V1 crie), então
+rodam igual nos dois caminhos. Migrations futuras precisam manter essa propriedade
+enquanto o init-script existir.
+
+Existe ainda um `dump.sql` na **raiz** do repositório, divergente do de
+`init-scripts/` (2 usuários em vez de 3, hashes diferentes) e que ninguém consome.
+Não confundir os dois.
+
+A correção é mover o seed para dentro do Flyway e esvaziar o `init-scripts`.
+Reduzir o init-script a apenas `INSERT` **não funciona**: as tabelas ainda não
+existiriam no momento em que ele roda. Resolver antes do deploy em produção, onde
+não haverá init-script e a V1 vai precisar rodar de verdade pela primeira vez.
+
+### `users`
+`id`, `name`, `email` (único), `password` (BCrypt, **nullable**), `is_active`,
+`created_at`, `updated_at`, `perfil`, `regional_id`, `telefone`, `matricula`,
+`senha_definida`
+
+`perfil` e `regional_id` entraram pela `V3__perfil_usuario.sql`. `perfil` é
+`varchar not null default 'COLABORADOR'` — o default faz o backfill das linhas
+existentes na mesma instrução que impõe o `NOT NULL`. `regional_id` é nullable, com
+FK `fk_users_regional` para `regionais`.
+
+Na entidade, `perfil` é o **primeiro `@Enumerated(EnumType.STRING)` do projeto**
+(enum `model/Perfil.java`, valores `COLABORADOR`, `GESTOR_FROTA`, `ADMINISTRADOR`)
+e `regional` é o **primeiro `@ManyToOne` do projeto** — até a V3 não havia nenhum
+relacionamento JPA no código. O `prePersist` define `COLABORADOR` quando o perfil
+vem nulo.
+
+`telefone`, `matricula` e `senha_definida` entraram pela `V4__identidade_usuario.sql`,
+que também **tornou `password` nullable**. Os três primeiros são nullable exceto
+`senha_definida`, que é `boolean not null default true` — o default preserva todos os
+usuários existentes, e o cadastro administrativo (S2) cria com `false`. `telefone` é
+normalizado para apenas dígitos no `@PrePersist`/`@PreUpdate` da entidade, via
+`UserValidator.normalizarTelefone` — é a **única entidade do projeto que normaliza
+campo em callback**; nas demais os callbacks só cuidam de timestamp e flag.
+
+`matricula` é única **ignorando nulos**, garantida por
+`CREATE UNIQUE INDEX uk_users_matricula ON users (matricula) WHERE matricula IS NOT NULL`.
+Atenção: por ter predicado `WHERE`, isso é obrigatoriamente um **índice**, não uma
+constraint — o Postgres não aceita predicado em `UNIQUE CONSTRAINT`. Consequência
+prática: `uk_users_matricula` **não aparece em `pg_constraint`**, só em `pg_indexes`.
+É a única exceção ao padrão de constraint usado da V2 em diante, e o nome segue a
+convenção mesmo assim. A entidade não declara `@UniqueConstraint` para o campo, de
+propósito: a anotação descreveria uma constraint total, que não é o que existe.
+
+### `gas_stations`
+`id`, `name`, `fantasy_name`, `cnpj` (único), `latitude` (10,8), `longitude` (11,8),
+`cep`, `district`, `address`, `state`, `city`, `phone`, `business_hours`, `is_active`,
+`created_at`, `updated_at`
+
+### `cars`
+`id`, `license_plate` (único), `model`, `active`, `created_at`, `updated_at`
+
+### `incidents`
+`id`, `car_plate`, `user_name`, `occurrence_date` (date), `title`, `description`,
+`created_at`
+
+### `regionais`
+`id`, `nome`, `sigla` (única), `ativo`, `created_at`, `updated_at`
+
+Regionais da FIESC. Criada pela `V2__regionais.sql`, que popula as **duas** do escopo:
+Joinville (`JOI`) e Florianópolis (`FLN`). O cliente confirmou que são só essas — não
+há outras regionais a cadastrar.
+
+Note a mistura de idiomas nas colunas: `nome`/`sigla`/`ativo` em português (nomes de
+domínio, como manda a convenção do projeto) e `created_at`/`updated_at` em inglês,
+para acompanhar as quatro tabelas anteriores.
+
+O único vínculo existente é `users.regional_id` (`fk_users_regional`, V3). As
+demais FKs (`gas_stations.regional_id` e afins) entram depois.
+
+Não há relacionamento JPA entre `incidents` e `cars`: a ligação é pela **string da
+placa**, validada em tempo de criação.
+
+### `tokens_acesso`
+`id`, `email`, `token_hash` (único), `finalidade`, `expira_em`, `usado_em`,
+`ip_solicitante`, `created_at`
+
+Tokens de uso único enviados por e-mail, criados pela `V5__token_acesso.sql`. É a
+tabela mais isolada do schema: a V5 não depende de nenhuma anterior, o que a torna
+auto-suficiente nos dois caminhos de inicialização por construção, sem esforço.
+
+`finalidade` é o segundo `@Enumerated(EnumType.STRING)` do projeto (enum
+`model/FinalidadeToken.java`, valores `ATIVACAO` e `RECUPERACAO`), depois do `perfil`.
+
+**Não há FK para `users`, de propósito.** O token é solicitado por e-mail e o usuário
+pode não existir no momento da solicitação — o que também mantém a recuperação de
+senha com a mesma resposta para conta existente e inexistente. A coluna guarda o
+e-mail em texto.
+
+`token_hash` guarda o **SHA-256 hexadecimal** do token, 64 caracteres minúsculos,
+nunca o valor em claro. Uma consulta direta na tabela não devolve nada que sirva para
+autenticar.
+
+`TokenAcesso` é a única entidade **sem `@PreUpdate`**: ela nunca é atualizada pela
+JPA. Consumo e invalidação passam por `UPDATE` nativo no repository, que a JPA não
+intercepta — um callback ali nunca dispararia.
+
+**Extensão da convenção de nomes, válida da V5 em diante:**
+
+| Padrão | Uso | Exemplo |
+|---|---|---|
+| `ix_<tabela>_<coluna>` | índice não único | `ix_tokens_acesso_email` |
+
+A V2 fixou `pk_`/`uk_`/`fk_` e não previu índice comum. Como o `uk_users_matricula`
+da V4, `ix_tokens_acesso_email` aparece em `pg_indexes` e **não** em `pg_constraint`.
+
+---
+
+## 5. API
+
+Prefixo geral: `/api`.
+
+### Regra de autorização (`SecurityConfig`)
+
+```
+/api/auth/**    → público
+/api/public/**  → público
+qualquer outro  → exige JWT válido
+```
+
+Sessão **stateless**, CSRF desabilitado. O token vai no header
+`Authorization: Bearer <token>`.
+
+**A expiração varia por perfil desde o S3:** 24 horas para `GESTOR_FROTA` e
+`ADMINISTRADOR`, **30 dias para `COLABORADOR`**. O colaborador usa o sistema poucas vezes
+por ano e, com 24 horas, encontrava a sessão sempre vencida — era obrigado a recuperar a
+senha em toda visita, que é a dor que o cliente relatou. Quem administra mantém prazo
+curto porque tem poderes destrutivos. O `switch` fica em `AuthService.resolverExpiracao`;
+o `JwtService` continua sem conhecer `Perfil`.
+
+> **JWT stateless não é revogável.** Não existe lista de revogação nem consulta de sessão:
+> um token vale até o `exp`, ponto. Consequências que precisam ser ditas em voz alta:
+> **redefinir a senha NÃO invalida sessões já emitidas**, e o mesmo vale para o convite e
+> a recuperação. Com 30 dias, uma sessão vazada de colaborador continua valendo por até um
+> mês. O único corte imediato disponível hoje é desativar o usuário
+> (`is_active = false`), que passa a barrar na hora desde o S3 — ver §9, item 14.
+
+**A aplicação responde 403, e não 401, para requisição não autenticada.** Vale para token
+ausente, token inválido e usuário desativado. Contraria a convenção HTTP, onde 401 é "não
+autenticado" e 403 é "autenticado sem permissão", mas é o comportamento desde o início do
+projeto e o frontend já o trata assim. Mudar para 401 é **alteração de contrato global**,
+a ser decidida junto com o frontend — não "corrija" pontualmente.
+
+A autorização **na camada HTTP** é binária: autenticado ou não. Não há
+`@EnableMethodSecurity` nem `@PreAuthorize` em lugar nenhum, e a authority
+`ROLE_<PERFIL>` não é consumida por nenhuma regra de rota.
+
+A partir do S2a existe autorização por perfil, mas ela mora **no serviço**, não em
+anotação. Os motivos estão na §6, item 19; o resumo é que o 403 do Spring Security não
+passa pelo `GlobalExceptionHandler` e sairia sem `ErrorResponse`. **Isso substituiu o
+desenho previsto para o P0.4**, que assumia `@EnableMethodSecurity`.
+
+O **P0.4c** estendeu essa autorização a todo o CRUD de usuário — leitura, listagem,
+alteração e exclusão —, reescrita em cima daquela decisão em vez de duplicá-la. Até ele,
+`GET /api/users/{id}`, `GET /api/users`, `PATCH` e `DELETE` exigiam apenas estar
+autenticado: qualquer colaborador logado lia, alterava e excluía qualquer usuário. O
+`UpdateUserRequest` nunca aceitou `perfil` nem `regionalId`, então autopromoção não era
+possível — mas **aceitava `password`**, e trocar a senha de um administrador dava o mesmo
+resultado por outro caminho.
+
+### Endpoints
+
+| Método | Rota | Acesso |
+|---|---|---|
+| POST | `/api/auth/login` | público |
+| GET | `/api/auth/ativacao/validar?token=` | público |
+| POST | `/api/auth/ativacao` | público |
+| POST | `/api/auth/recuperacao` | público — **com rate limit** |
+| GET | `/api/auth/recuperacao/validar?token=` | público |
+| POST | `/api/auth/recuperacao/confirmar` | público |
+| GET | `/api/public/gas-stations/filter` | público |
+| GET | `/api/public/gas-stations/{id}` | público |
+| POST | `/api/public/incident` | público |
+| POST | `/api/gas-stations` | **gestão** |
+| PUT | `/api/gas-stations/{id}` | **gestão** |
+| DELETE | `/api/gas-stations/{id}` | **gestão** |
+| GET | `/api/cars/filter` | **gestão** |
+| GET | `/api/cars/{carId}` | **gestão** |
+| POST | `/api/cars` | **gestão** |
+| PATCH | `/api/cars/{carId}` | **gestão** |
+| DELETE | `/api/cars/{carId}` | **gestão** |
+| GET | `/api/incidents` | **gestão** |
+| GET | `/api/incidents/{id}` | **gestão** |
+| GET | `/api/incidents/dashboard` | **gestão** |
+| PATCH | `/api/incidents/{id}` | **gestão** |
+| GET | `/api/users` | autenticado — **escopado por perfil** |
+| GET | `/api/users/me` | autenticado — **o próprio registro** |
+| GET | `/api/users/{userId}` | autenticado — **autorizado por perfil/regional** |
+| GET | `/api/users/dashboard` | autenticado |
+| POST | `/api/users` | autenticado |
+| POST | `/api/users/{userId}/reenviar-ativacao` | autenticado |
+| PATCH | `/api/users/{userId}` | autenticado — **autorizado por perfil/regional** |
+| DELETE | `/api/users/{userId}` | autenticado — **só `ADMINISTRADOR`** |
+| GET | `/api/regionais` | autenticado |
+| GET | `/api/regionais/{id}` | autenticado |
+| GET | `/api/cep/info?cep=` | autenticado |
+
+**"gestão"** é a marca do P0.4 e significa `ADMINISTRADOR` **ou** `GESTOR_FROTA` —
+COLABORADOR recebe 403. Detalhe na subseção "Autorização do cadastro operacional".
+
+**Note a assimetria:** consultar postos e criar ocorrência são públicos; todo o
+resto exige token. É proposital — o usuário final não faz login.
+
+### Paginação
+
+Endpoints de filtro retornam `Page<T>` do Spring Data, com `size = 10` por padrão.
+O corpo traz `content`, `number`, `totalPages`, `totalElements`.
+
+Parâmetros de filtro:
+
+- `gas-stations/filter` → `search`, `active`
+- `cars/filter` → `search`, `active`
+- `incidents` → `carPlate`, `title`, `userName`, `occurrenceDate` (ISO)
+- `users` → `active` (obrigatório), `name`
+
+**Exceção: `/api/regionais`.** Só leitura, sem filtro, e `size = 20` por padrão em
+vez de 10, ordenado por `nome`. O consumidor é um `select` de formulário, não uma
+tabela navegável — a lista precisa sair inteira, sem truncar em silêncio. Não há teto
+próprio: o cliente pode pedir `size` maior (vale o limite de 2000 do Spring). Não tem `/filter` no caminho justamente
+porque não filtra.
+
+### Formatos relevantes
+
+`GasStationResponse` devolve **latitude e longitude como String**, não número.
+
+`CreateIncidentRequest`:
+```json
+{
+  "licensePlate": "ABC1234",
+  "userName": "Fulano",
+  "occurrenceDate": "2026-08-18",
+  "title": "Combustível Abaixo de Meio Tanque",
+  "description": "texto livre"
+}
+```
+
+`AuthResponse`: `{ token, type, message, perfil }`. O `perfil` foi acrescentado no
+P0.3 — quebra de contrato deliberada e **aditiva**, para o frontend rotear sem uma
+chamada extra. Nenhum campo foi removido ou renomeado.
+
+`UserResponse` ganhou dois campos no mesmo movimento:
+
+```json
+{
+  "id": 4, "name": "...", "email": "...", "isActive": true,
+  "createdAt": "...", "updatedAt": null,
+  "perfil": "COLABORADOR",
+  "regional": { "id": 1, "nome": "Joinville", "sigla": "JOI" }
+}
+```
+
+Depois, o S1 acrescentou `telefone`, `matricula` e `senhaDefinida` ao mesmo record.
+`senhaDefinida` é o que permite ao frontend distinguir "aguardando ativação" de
+"ativo" e decidir quando oferecer o reenvio — não expõe hash nem senha.
+
+`regional` é `null` quando não há vínculo, e é um `RegionalSummaryResponse`
+**enxuto de propósito**: só `id`, `nome` e `sigla`. `ativo`, `createdAt` e
+`updatedAt` da regional não têm consumidor dentro do usuário e criariam
+acoplamento — o `RegionalResponse` completo continua exclusivo de `/api/regionais`.
+
+**Claims do JWT:** `sub` (email), `iat`, `exp` e `perfil` (o nome do enum, como
+string). O `perfil` entrou no P0.3; antes o token não carregava papel nenhum.
+
+**`POST /api/users` mudou no S2a.** Deixou de receber `RegisterRequest` — que
+compartilhava com `POST /api/auth/register` e exigia senha — e passou a receber
+`dto/user/CreateUserRequest`. Desde o **S8** este é o **único** caminho de criação de
+usuário do sistema:
+
+```json
+{
+  "name": "Nova Colaboradora",
+  "email": "nova@fiesc.org.br",
+  "telefone": "(47) 99999-8888",
+  "matricula": "12345",
+  "perfil": "COLABORADOR",
+  "regionalId": 1
+}
+```
+
+**Não tem `password`, e essa é a regra central**: o usuário nasce com senha nula,
+`senhaDefinida = false` e ativo. `matricula` e `regionalId` são obrigatórias para
+`COLABORADOR` e `GESTOR_FROTA`, e opcionais para `ADMINISTRADOR` — conta de
+infraestrutura pode não pertencer a regional nenhuma, como o administrador inicial do A3.
+
+**O `POST /api/auth/register` foi removido pelo S8**, e com ele o `RegisterRequest` e o
+`AuthService.register`. Era autocadastro público: qualquer pessoa criava a própria conta
+sem gestor, sem regional, sem matrícula e escolhendo a senha **sem passar pela política do
+S3** — o `RegisterRequest` só tinha `@Size(min = 6)`. O frontend nunca o consumiu:
+`grep -rni register front-.../src` não devolvia nada no dia da remoção.
+
+**A rota removida responde 403, não 404 nem 405** — medido, e vale a pena saber por quê,
+porque contraria a expectativa. Sem handler, o Spring encaminha para `/error`; esse
+encaminhamento reentra na cadeia de filtros **sem** passar pelo `JwtAuthenticationFilter`,
+o contexto de segurança fica vazio, e como `/error` não casa com `/api/auth/**` nem com
+`/api/public/**`, o `anyRequest().authenticated()` recusa. O corpo vem vazio. **Não é
+específico da rota removida:** qualquer caminho inexistente responde igual
+(`POST /api/auth/rota-que-nunca-existiu` → 403), e é o mesmo mecanismo que faz
+`GET /api/users/xyz` responder 403 em vez de 400. Mudar isso é alteração global de
+tratamento de erro — mexeria em toda rota inexistente e em toda exceção sem handler —, e
+por isso ficou fora do S8.
+
+**`conviteEnviado`, acrescentado ao `UserResponse` pelo S2b1.** É o resultado do envio do
+convite, e **não** um atributo do usuário:
+
+| Onde | Valor |
+|---|---|
+| `POST /api/users` | `true` / `false` |
+| `POST /api/users/{id}/reenviar-ativacao` | `true` / `false` |
+| **qualquer GET** | **`null`** |
+
+**`null` não significa falha.** Em leitura a pergunta não se aplica — a resposta descreve
+o usuário, não uma tentativa de envio. Só `false` quer dizer que o e-mail não saiu e o
+convite precisa ser reenviado. Tratar `null` como falha faria a listagem inteira exibir
+alerta.
+
+**Rota do link de ativação: `/definir-senha?token=<token>`.** Definida no S2b1 porque o
+link precisa existir antes da tela, e **implementada pelo S6** — é contrato entre os dois
+lados, e mudar de um exige mudar do outro. A origem única é
+`UserConstants.ROTA_DEFINIR_SENHA`; a base vem de `abastecefacil.email.frontend-url`. O
+token vai em query string, e não em path, porque é Base64 URL-safe (sem `+`, `/` ou `=`)
+e não precisa de escape.
+
+Escrita de `perfil`, `regional`, `telefone` e `matricula` pelo **`PATCH`** continua sem
+caminho HTTP: `UpdateUserRequest` não aceita esses campos. Promover alguém já existente
+ainda é `UPDATE` manual no banco. Ver §6.
+
+**`GET /api/auth/ativacao/validar?token=` responde 200 SEMPRE**, inclusive para token
+inválido — e essa é uma **exceção deliberada** ao contrato de erro do projeto:
+
+```json
+{ "valido": true,  "nome": "Mariana Prado" }
+{ "valido": false, "nome": null }
+```
+
+O endpoint é uma **sonda**: link expirado é desfecho esperado do fluxo, não erro, e o que
+falharia seria a consulta, não o token. Obrigar o frontend a tratar exceção para exibir a
+tela mais comum do fluxo seria pior. **Não "corrija" para 410 por consistência** — o
+`POST /api/auth/ativacao` continua respondendo 410 `TOKEN_INVALIDO`, porque ali a operação
+de fato falhou.
+
+A resposta negativa é **idêntica para as quatro rejeições** (inexistente, expirado, já
+usado, finalidade divergente): sem campo dizendo qual ocorreu, mesma razão da mensagem
+única do M2. E o único dado do usuário que sai daqui é o `nome`, para a tela cumprimentar
+antes de pedir a senha.
+
+**A sonda não consome o token.** Chamá-la N vezes deixa o link exatamente como estava —
+é o que permite recarregar a página sem queimar o convite.
+
+**`POST /api/auth/ativacao`** recebe `{ "token": "...", "senha": "..." }` e devolve o
+**mesmo `AuthResponse` do login**, já autenticando a pessoa. A senha trafega só no corpo;
+o token da sonda em query string é exceção consciente, porque ela não consome nada e é o
+que o navegador entrega ao abrir o link.
+
+**Erros do login.** Três rejeições distintas, todas com `error` próprio para o
+frontend poder diferenciá-las — o `ErrorResponse` só carrega `status`, `error`,
+`message` e `path`, então o campo `error` é o único discriminador programático:
+
+| Situação | HTTP | `error` |
+|---|---|---|
+| email não cadastrado | 404 | `NOT_FOUND` |
+| usuário inativo | 401 | `UNAUTHORIZED` |
+| senha ainda não definida | 401 | `PASSWORD_NOT_SET` |
+| credencial inválida | 401 | `UNAUTHORIZED` |
+
+`InvalidUserDataException` (matrícula ou telefone fora do formato) responde 400 com
+`error = "BAD_REQUEST"`, mas ainda não é alcançável por endpoint nenhum. Ver §6.
+
+`TokenInvalidoException` responde **410 Gone** com `error = "TOKEN_INVALIDO"`, e
+também ainda não é alcançável por endpoint nenhum — o M2 entregou só domínio e
+persistência. 410 e não 400 porque o caso predominante não é requisição malformada e
+sim um token que existiu e não vale mais: consumido, expirado ou substituído por um
+reenvio. O status deve ser reconfirmado quando existir rota consumindo o token.
+
+**Erros do cadastro administrativo** (`POST /api/users`), todos com `error` próprio pelo
+mesmo motivo — o campo é o único discriminador programático que o frontend tem:
+
+| Situação | HTTP | `error` |
+|---|---|---|
+| autor não pode criar esse perfil | 403 | `PERFIL_NAO_PERMITIDO` |
+| gestor tentando criar fora da própria regional | 403 | `REGIONAL_NAO_PERMITIDA` |
+| domínio do e-mail fora da lista | 400 | `DOMINIO_EMAIL_NAO_PERMITIDO` |
+| matrícula ou regional faltando para o perfil | 400 | `BAD_REQUEST` |
+| e-mail já cadastrado | 409 | `CONFLICT` |
+| matrícula já cadastrada | 409 | `MATRICULA_DUPLICADA` |
+| regional inexistente | 404 | `NOT_FOUND` |
+
+No **reenvio** valem os mesmos 403 da criação, mais:
+
+| Situação | HTTP | `error` |
+|---|---|---|
+| usuário já definiu a senha | 409 | `SENHA_JA_DEFINIDA` |
+| usuário inexistente | 404 | `NOT_FOUND` |
+
+Os dois 403 são os **primeiros do projeto**. Têm `error` distintos de propósito: a ação
+corretiva do gestor é diferente em cada caso, e o S5 precisa dizer qual. Pelo mesmo
+motivo `MATRICULA_DUPLICADA` não reusa `CONFLICT` — e-mail e matrícula são dois inputs
+distintos no formulário.
+
+`DOMINIO_EMAIL_NAO_PERMITIDO` é **400 e não 403**: quem está autenticado e autorizado é o
+gestor, e ele pode criar o usuário; o que está errado é o dado. A mensagem lista os
+domínios aceitos, porque o caso predominante é erro de digitação e recusar sem dizer
+quais são deixaria o gestor sem saída — a lista é configuração operacional, não segredo.
+
+**Erros da ativação** (`POST /api/auth/ativacao`):
+
+| Situação | HTTP | `error` |
+|---|---|---|
+| token inexistente, expirado, usado ou de finalidade divergente | 410 | `TOKEN_INVALIDO` |
+| usuário sumiu ou foi desativado depois da emissão | 410 | `TOKEN_INVALIDO` |
+| senha fora da política | 400 | `SENHA_FRACA` |
+
+As duas primeiras compartilham status **e mensagem** de propósito: responder algo
+diferente para "usuário desativado" confirmaria a quem segura o link que aquele token era
+bom e que a conta existe.
+
+### Recuperação de senha (S4)
+
+Três rotas públicas sob `/api/auth/`, que **não exigiram mudança no `SecurityConfig`**: o
+matcher `/api/auth/**` já é `permitAll()`. Acrescentar matchers explícitos seria redundante
+e sugeriria que a regra mudou — mesma constatação do S3.
+
+**`POST /api/auth/recuperacao`** recebe **só o e-mail** e responde **200 com um corpo
+único**:
+
+```json
+{ "message": "Se houver uma conta com este e-mail, enviaremos as instruções de redefinição de senha em instantes. Verifique também a caixa de spam." }
+```
+
+**Idêntico para e-mail inexistente, conta inativa, conta sem senha definida e conta
+normal** — o texto é condicional ("se houver uma conta") justamente por isso. Nenhum campo
+descreve o resultado do envio, ao contrário do `conviteEnviado` do `UserResponse`: quando a
+resposta é montada, o envio ainda nem começou.
+
+**O envio é assíncrono, e isso é requisito de segurança, não otimização.** O critério do S4
+é que os casos sejam indistinguíveis pela resposta, pelo status **e pelo tempo**. O
+`AuthService` não consulta o usuário: ele aplica o limite, despacha para
+`RecuperacaoSenhaService` (`@Async`) e responde. Como nenhum I/O acontece antes da resposta,
+não há tempo a vazar — a propriedade é **estrutural**, não um atraso calibrado. Medido:
+~6 ms para e-mail existente e inexistente.
+
+> **`@EnableAsync` mora em `config/SchedulingConfig`, junto do `@EnableScheduling`.** Sem
+> ele o `@Async` é **ignorado em silêncio** e o método roda síncrono na thread da
+> requisição: a aplicação sobe, nada falha, e a garantia de tempo constante evapora sem
+> aviso. É a mesma armadilha do `@Scheduled` desde o M2.
+
+**Rate limit: 3 por e-mail a cada 15 min, 10 por IP a cada hora**, respondendo **429**
+`LIMITE_SOLICITACOES_EXCEDIDO` — o primeiro 429 do projeto. É conferido **antes** de
+qualquer outra coisa e vale para **e-mail inexistente também**: aplicá-lo só a contas reais
+faria do próprio 429 o oráculo de existência que o resto do desenho evita. A mensagem é
+genérica e não diz qual dos dois limites estourou, e não há `Retry-After` pela mesma razão.
+
+**`GET /api/auth/recuperacao/validar?token=`** é a sonda, gêmea da do S3: 200 sempre, mesmo
+`{ "valido": ..., "nome": ... }`, e **não consome**.
+
+**`POST /api/auth/recuperacao/confirmar`** recebe `{ "token": "...", "senha": "..." }` e
+devolve o **mesmo `AuthResponse` do login**, com `message` = "Senha redefinida com sucesso".
+
+**Erros da recuperação:**
+
+| Situação | HTTP | `error` |
+|---|---|---|
+| limite de solicitações excedido (por e-mail ou por IP) | **429** | `LIMITE_SOLICITACOES_EXCEDIDO` |
+| token inexistente, expirado, usado ou **de finalidade divergente** | 410 | `TOKEN_INVALIDO` |
+| usuário sumiu ou foi desativado depois da emissão | 410 | `TOKEN_INVALIDO` |
+| senha fora da política | 400 | `SENHA_FRACA` |
+
+**Token de `ATIVACAO` não serve em `/recuperacao/confirmar`, e o inverso também** — a
+finalidade faz parte do predicado de validade das duas consultas.
+
+**Rota do link: `/redefinir-senha?token=<token>`**, definida no S4 e **implementada pelo
+S6b** — contrato entre os dois lados, como `/definir-senha` foi entre o S2b1 e o S6. A
+origem única é `UserConstants.ROTA_REDEFINIR_SENHA`, ao lado de `ROTA_DEFINIR_SENHA`; quem
+escolhe entre as duas é um `switch` sobre `FinalidadeToken` em `EnvioAcessoService.rotaDe`.
+É tela distinta, e não a mesma com outro texto: um usuário está concluindo o primeiro
+acesso, o outro já tinha senha e a perdeu.
+
+**Os DTOs de ativação foram renomeados e passaram a ser compartilhados. O JSON não mudou:**
+
+| Antes (S3) | Agora (S4) | Usado por |
+|---|---|---|
+| `AtivacaoRequest` | `DefinicaoSenhaRequest` | `/ativacao` e `/recuperacao/confirmar` |
+| `AtivacaoValidacaoResponse` | `TokenValidacaoResponse` | as duas sondas |
+
+Os corpos já eram idênticos — `(token, senha)` e `(valido, nome)`, com as mesmas validações.
+Criar gêmeos seria a duplicação que o próprio S4 proíbe.
+
+**Autorização de leitura, alteração e exclusão de usuário (P0.4c).** Quem pode o quê:
+
+| Autor | `GET /{id}` e listagem | `PATCH /{id}` | `DELETE /{id}` |
+|---|---|---|---|
+| `ADMINISTRADOR` | qualquer um | qualquer um | qualquer um, **menos a si mesmo** |
+| `GESTOR_FROTA` | qualquer perfil da **própria regional** | só `COLABORADOR` da própria regional, **e a si mesmo** | ninguém |
+| `COLABORADOR` | **só a si mesmo** | **só a si mesmo** | ninguém |
+
+Gestor **sem** regional não tem escopo: na listagem enxerga apenas a si mesmo, e no
+detalhe recebe 403. A leitura é mais larga que a escrita de propósito — o gestor precisa
+consultar o cadastro de quem trabalha com ele sem por isso poder alterá-lo.
+
+Erros:
+
+| Situação | HTTP | `error` |
+|---|---|---|
+| colaborador lendo outro usuário | 403 | `PERFIL_NAO_PERMITIDO` |
+| gestor lendo/alterando fora da própria regional | 403 | `REGIONAL_NAO_PERMITIDA` |
+| gestor alterando quem não é `COLABORADOR` | 403 | `PERFIL_NAO_PERMITIDO` |
+| senha de outra pessoa no `PATCH` | 403 | `SENHA_DE_TERCEIRO` |
+| senha própria fora da política | 400 | `SENHA_FRACA` |
+| exclusão por quem não é `ADMINISTRADOR` | 403 | `PERFIL_NAO_PERMITIDO` |
+| administrador excluindo a si mesmo | 403 | `AUTO_EXCLUSAO_NAO_PERMITIDA` |
+
+`SENHA_DE_TERCEIRO` e `AUTO_EXCLUSAO_NAO_PERMITIDA` são os 403 números três e quatro do
+projeto, e têm `error` próprio pela razão de sempre: a ação corretiva difere. "Peça a
+recuperação de senha" e "peça a outro administrador" não são a mesma orientação, e o
+`ErrorResponse` só carrega `status`, `error`, `message` e `path`.
+
+A **listagem não responde 403**. A resposta é uma `Page`, e uma página reduzida é a
+resposta correta para "estes são os usuários que você pode ver" — recusar a rota inteira
+obrigaria o frontend a tratar erro onde não há erro.
+
+`EnvioEmailException` responde **502 Bad Gateway** com `error = "EMAIL_NAO_ENVIADO"`, e é
+a terceira exceção ainda não alcançável por endpoint nenhum — o M3 entregou só o canal de
+envio. 502 e não 500 porque a requisição estava correta e quem falhou foi o provedor
+externo, o que acompanha o `default` do `handleFeignException`, já existente. A mensagem
+é uma **constante genérica**: status HTTP do provedor, corpo da resposta e causa
+encadeada ficam apenas no log. O status deve ser reconfirmado quando existir rota que
+dispare envio (S2 e S4).
+
+### `GET /api/users/me` (P0.5b)
+
+Autenticado, **sem parâmetro**, devolve o `UserResponse` de quem está chamando — mesmo
+DTO dos demais endpoints de usuário, com `conviteEnviado: null` como em qualquer GET.
+
+Existe porque o S5 precisava da regional do gestor autenticado para travar o formulário
+de cadastro e não havia por onde obtê-la: o contorno era o frontend **decodificar o `sub`
+do JWT e procurar o usuário na listagem paginada**, que só funciona enquanto ele cair na
+página consultada.
+
+**Não há autorização a aplicar, e a ausência é deliberada.** O alvo é o próprio autor, e
+ler o próprio cadastro é o único caso que o P0.4c libera para os três perfis —
+`autorizarLeitura` compararia o autor consigo mesmo e nunca recusaria. Também não há
+`validateUserIsActive`: desde o S3 o usuário inativo não autentica, então ele não chega
+ao handler.
+
+**Sobre a colisão com `GET /api/users/{userId}`:** não há. O `PathPattern` do Spring
+ordena segmento **literal** acima de segmento com variável, então `/me` vence
+independentemente da ordem de declaração — é o que já acontecia com `/dashboard` desde
+antes. O método fica declarado antes do `/{userId}` mesmo assim, por legibilidade. No
+`SecurityConfig` não há matcher que capture `/me`: os dois `permitAll` são prefixos
+literais (`/api/auth/**`, `/api/public/**`) e todo o resto cai em
+`anyRequest().authenticated()`.
+
+Vale registrar o que aconteceria **sem** a rota, porque foi medido: `/me` cairia em
+`/{userId}`, `"me"` não converteria para `Long` e a `MethodArgumentTypeMismatchException`
+sairia como **403 com corpo vazio** — não 400 e não 500. O encaminhamento para `/error`
+reentra na cadeia de filtros sem o `JwtAuthenticationFilter`, então o contexto de
+segurança está vazio e o Spring Security recusa. Vale para qualquer id não numérico
+(`GET /api/users/xyz` responde o mesmo hoje). É indistinguível de "não autenticado", que
+é o pior desfecho possível para quem estiver depurando o frontend.
+
+### Autorização do cadastro operacional (P0.4)
+
+Postos, veículos e ocorrências. Até o P0.4, **qualquer autenticado** criava, editava e
+excluía posto e veículo e alterava ocorrência — o `SecurityConfig` só perguntava se havia
+token. A regra agora:
+
+| Perfil | escrita (POST/PUT/PATCH/DELETE) | leitura autenticada |
+|---|---|---|
+| `ADMINISTRADOR` | tudo | tudo |
+| `GESTOR_FROTA` | tudo | tudo |
+| `COLABORADOR` | **nada** | **nada** |
+
+**Gestor não é segmentado por regional aqui**, ao contrário de `/api/users/**`: posto,
+veículo e ocorrência não têm coluna de regional, então não há o que comparar. Gestor sem
+regional escreve igual ao gestor com regional — o oposto de
+`UserService.autorizarSobreUsuario`, onde a ausência de regional recusa.
+
+**COLABORADOR perdeu também a leitura**, e isso foi decidido olhando o frontend, não por
+simetria. As views do `DefaultLayout` — as únicas que um colaborador abre — chamam
+exclusivamente `apiPublic`: `getStations` vai em `/api/public/gas-stations/filter`,
+`createOccurrences` em `/api/public/incident`, e o mapa idem. **Nenhuma tela de
+colaborador consome `/api/cars/**` ou `/api/incidents/**`**, conferido antes de fechar.
+Se um dia ele precisar ver a frota pela área logada, o afrouxamento é de uma linha —
+`AutorizacaoOperacional.autorizarConsulta` existe separada de `autorizarEscrita`
+justamente por isso, embora hoje as duas apliquem o mesmo predicado.
+
+Erros — um só, porque a ação corretiva é uma só:
+
+| Situação | HTTP | `error` |
+|---|---|---|
+| colaborador em qualquer escrita de posto, veículo ou ocorrência | 403 | `PERFIL_NAO_PERMITIDO` |
+| colaborador em qualquer leitura autenticada de veículo ou ocorrência | 403 | `PERFIL_NAO_PERMITIDO` |
+
+As mensagens são duas (`AutorizacaoConstants`), uma para escrita e uma para consulta, pelo
+mesmo motivo do P0.4c: o `error` diz o que fazer, a mensagem diz o que foi recusado.
+
+**O que continua público** e passa pelos **mesmos métodos de serviço**, sem guarda:
+`GasStationService.findById` e `getGasStationsByFilters`
+(`GET /api/public/gas-stations/{id}` e `/filter`) e `IncidentService.createIncident`
+(`POST /api/public/incident`). Os três têm javadoc dizendo isso, e um teste em cada
+`ServiceTest` com `verifyNoInteractions(autorizacaoOperacional)` — pôr guarda ali
+derrubaria a lista e o mapa da área pública, que é o produto para o usuário final.
+
+**Fora do escopo do P0.4, e conhecido:** `GET /api/cep/info` e `GET /api/regionais`
+continuam abertos a qualquer autenticado. O primeiro é proxy do ViaCEP e só o formulário
+administrativo de posto o usa; o segundo é dado de referência que o `/api/users/me` já
+devolve em parte. Nenhum dos dois expõe cadastro operacional. `GET /api/users/dashboard`
+segue sem escopo desde o P0.4c.
+
+#### Por que não foi `@PreAuthorize` — a medição
+
+O P0.4 previa `@EnableMethodSecurity`, e o desenho foi testado antes de ser recusado. **O
+resultado corrige um detalhe do §6, item 19:**
+
+1. Com `@EnableMethodSecurity` e um `@PreAuthorize` recusando, a resposta é **403 com
+   corpo vazio** — o que o item 19 previa.
+2. Acrescentando `@ExceptionHandler(AccessDeniedException.class)` ao
+   `GlobalExceptionHandler` **existente**, a mesma requisição passou a responder
+   `{"timestamp":...,"status":403,"error":"...","message":"Access Denied","path":"uri=/api/cars"}`
+   — `ErrorResponse` completo, **sem tocar no `SecurityConfig`** e sem
+   `AccessDeniedHandler` nenhum.
+
+Ou seja: o 403 do *method security* **é** alcançável pelo `@ControllerAdvice`, porque é
+lançado dentro do dispatch e o `HandlerExceptionResolver` o vê antes do
+`ExceptionTranslationFilter`. O que o item 19 descreve corretamente é o 403 da **cadeia de
+filtros** (`authorizeHttpRequests`, requisição sem token) — esse continua fora do advice, e
+foi confirmado no mesmo experimento: com o handler registrado, a requisição sem token
+seguiu respondendo 403 vazio.
+
+**Mesmo assim a decisão foi manter no serviço**, por três motivos que a medição não muda:
+
+- **Nenhum teste do projeto sobe contexto Spring.** Um `hasRole` escrito errado — e o §9,
+  item 12 já registra que `hasAuthority("ADMINISTRADOR")` falha silenciosamente neste
+  projeto — compila, passa na suíte inteira e abre a rota. Autorização sem teste é o
+  oposto do que o P0.4 existe para fazer.
+- **`/api/users/**` continua no serviço**, porque tem lógica de dono e regional que não
+  cabe em SpEL. Anotar o resto não unificaria: criaria os dois lugares decidindo
+  autorização que o S2a quis evitar.
+- **O 403 do Spring diz `"Access Denied"`**, em inglês e idêntico para todas as rotas. O
+  projeto escreve mensagem em português e específica do recurso.
+
+O experimento foi revertido por inteiro: **o `SecurityConfig` não mudou no P0.4**, e não
+há `@EnableMethodSecurity` no projeto.
+
+#### Ordem: validação de payload vem antes da autorização
+
+`@Valid` roda no controller; a guarda, no serviço. Um colaborador que mande payload
+malformado recebe **400, não 403** — o request nem chega ao serviço. Não contradiz o §6,
+item 22 ("autorizar antes de validar"), que fala das validações **de negócio** dentro do
+serviço: essas continuam depois da guarda, e há teste para isso em cada `ServiceTest`
+(guarda lançando, `verifyNoInteractions` no repositório e no mapper). Vale igual para
+`POST /api/users` desde o S2a — é propriedade do Bean Validation, não escolha do P0.4.
+
+### Propriedades de configuração
+
+A tabela completa está na **§3**. Sobre `abastecefacil.token.*`: os prazos são distintos
+de propósito — ativação é longa porque o usuário pode demorar a abrir o convite;
+recuperação é curta porque a ação é imediata e o risco, maior. O TTL é decisão
+operacional e por isso **não** está compilado no enum `FinalidadeToken` — quem resolve
+finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
+
+---
+
+## 6. Regras de negócio que não são óbvias pelo código
+
+1. **Criar ocorrência exige que o veículo exista.** `IncidentService` busca o carro
+   por placa e lança `NotFoundException` se não achar. Uma placa não cadastrada
+   resulta em erro, mesmo o endpoint sendo público.
+2. **Criar posto dispara geocodificação.** `GasStationService` monta o endereço e
+   consulta o Nominatim para obter latitude/longitude. Se não encontrar, lança
+   `CoordinatesNotFoundException`. Isso significa que **cadastrar posto depende de
+   internet** e está sujeito ao rate limit do Nominatim.
+3. **CNPJ é único** e verificado tanto na criação quanto na atualização.
+4. **Login rejeita usuário inativo** com mensagem específica, distinta de
+   credencial inválida.
+5. Exclusões são **lógicas** (`is_active` / `active` em `false`), não físicas. Há
+   exceções dedicadas para "já excluído" (`UserAlreadyDeletedException`,
+   `CarAlreadyDeletedException`).
+6. **Todo usuário nasce `COLABORADOR` com regional nula**, e não existe endpoint
+   que altere isso. `UserMapper.toEntity` fixa o perfil na criação; o `prePersist`
+   da entidade é a rede de segurança. A escrita administrativa de perfil e regional
+   é o S2. **Promover alguém já existente continua sendo `UPDATE` manual no banco** —
+   limitação conhecida e aceita, não esquecimento.
+
+   O **primeiro** `ADMINISTRADOR` já não é mais manual: vem do A3, criado na subida por
+   `config/AdministradorInicialInitializer`, a partir de `abastecefacil.admin.*`. Quatro
+   propriedades do desenho valem registro:
+
+   - **O hash chega pronto e é gravado literalmente.** O inicializador não injeta
+     `PasswordEncoder` de propósito — passar o valor por `encode` produziria o BCrypt de
+     um BCrypt, e o login falharia com um 401 que não se parece nada com erro de
+     configuração. Por isso também não reusa `UserMapper.toEntity`, que codifica e fixa
+     `COLABORADOR`.
+   - **Não é migration.** O Flyway roda fora do contexto de configuração do Spring e não
+     lê `@Value` nem propriedades, então uma `V6` não teria como receber e-mail e hash
+     externos — ficaria obrigada a embutir credencial em SQL versionado.
+   - **Idempotente por e-mail.** Se o e-mail já existe, nada acontece e nada é alterado.
+     A constraint única de `users.email` é o backstop real: `findByEmail` seguido de
+     `save` tem janela de corrida, e a violação é capturada porque um
+     `CommandLineRunner` que lança **derruba a subida**.
+   - **Hash malformado não vira usuário.** O valor é validado contra
+     `^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$` — os três prefixos em uso, mais o
+     comprimento, que pega hash truncado no copiar e colar. Falhando, a aplicação sobe,
+     nada é criado, e saem dois `ERROR`: o detalhado e um resumo no
+     `ApplicationReadyEvent`. **O valor rejeitado nunca entra no log** — se alguém colou
+     a senha em texto plano por engano, logá-la transformaria erro de configuração em
+     vazamento.
+7. **Login rejeita usuário sem senha definida antes de tocar no `PasswordEncoder`.**
+   `AuthService.validateSenhaDefinida` roda entre a checagem de inativo e o
+   `authenticationManager.authenticate`, e lança `PasswordNotSetException` (401,
+   `error = "PASSWORD_NOT_SET"`). A condição é dupla — `senhaDefinida == false`
+   **ou** `password == null` — para que uma linha inconsistente, criada por `UPDATE`
+   manual, também seja barrada em vez de falhar mais adiante.
+8. **Definir senha liga `senha_definida`.** `UserService.updatePasswordIfProvided`
+   seta a flag junto com o hash, mantendo o invariante
+   `password != null ⟺ senhaDefinida`. Sem isso um usuário criado sem senha
+   receberia uma senha válida e continuaria sem conseguir logar.
+9. **Telefone é persistido só com dígitos.** A máscara é aceita na entrada e
+   descartada no `@PrePersist`/`@PreUpdate`. Consultar `users.telefone` esperando
+   `(47) 99999-8888` não encontra nada — o que está gravado é `47999998888`.
+10. **Matrícula é única entre os não nulos.** Vários usuários sem matrícula
+    convivem; dois com a mesma matrícula são rejeitados pelo banco.
+11. **O token de acesso em claro existe uma única vez.** É o valor de retorno de
+    `TokenAcessoService.gerarToken` e nada além disso: não é persistido, não vai para
+    log — nem de debug —, não entra em DTO e não aparece em mensagem de exceção. O
+    banco só conhece o SHA-256 dele. SHA-256 e não BCrypt de propósito: o custo
+    deliberado do BCrypt existe para senhas humanas, de baixa entropia; este token tem
+    256 bits sorteados por `SecureRandom` e é rehasheado a cada validação.
+12. **O consumo do token é atômico, e a validade é a contagem de linhas.**
+    `TokenAcessoRepository.consumir` é um único `UPDATE ... SET usado_em = now()
+    WHERE token_hash = ? AND finalidade = ? AND usado_em IS NULL AND expira_em > now()`,
+    e o token só vale quando ele afeta **exatamente 1** linha. `findByTokenHash`
+    seguido de `save` teria janela de corrida entre ler e marcar: duas requisições
+    simultâneas com o mesmo token leriam as duas `usado_em = null` e passariam as
+    duas. O `UPDATE` condicional fecha a janela porque o Postgres serializa a escrita
+    na linha.
+13. **As quatro rejeições compartilham uma mensagem.** Token inexistente, expirado, já
+    usado e de finalidade divergente caem todos no mesmo predicado, viram a mesma
+    `TokenInvalidoException` e a mesma string. Mensagens distintas revelariam a quem
+    tem o token se ele existe, se já foi consumido ou para que servia. Um token
+    `ATIVACAO` validado como `RECUPERACAO` é rejeitado, e o inverso também.
+14. **Gerar um token invalida os pendentes anteriores do mesmo par (e-mail,
+    finalidade)** — senão um reenvio deixaria dois links válidos circulando. A
+    invalidação é feita **expirando** o anterior (`expira_em = now()`), nunca marcando
+    `usado_em`. Consequência para quem lê a tabela: `usado_em` significa só consumo
+    real pelo usuário, e uma linha vencida sem `usado_em` pode ter sido substituída em
+    vez de ter vencido sozinha.
+15. **Tokens expirados há mais de 7 dias são apagados diariamente** por
+    `TokenAcessoService.limparTokensExpirados` (`@Scheduled`, 3h). A janela de
+    retenção existe para que um token recém-vencido ainda apareça numa investigação
+    de suporte.
+16. **O prazo exibido no e-mail vem sempre do parâmetro, nunca de constante.**
+    `ConteudoEmail.de` recebe `validadeHoras` em `MensagemAcesso` e o interpola no
+    texto. Os TTLs são configuráveis desde o M2 (`abastecefacil.token.*`), então uma
+    constante no corpo do e-mail passaria a mentir assim que alguém mudasse a
+    propriedade — e a mentira só apareceria quando um usuário reclamasse que o link
+    venceu antes da hora. O único caso especial é 1, que vira "1 hora" em vez de
+    "1 horas".
+17. **`EnviadorEmailLog` é a única classe autorizada a registrar a URL com o token.**
+    A regra do M2 continua valendo em todo o resto do projeto. Ali ela é suspensa
+    porque o log **é** o canal de entrega dessa implementação — sem isso ela não teria
+    função. `ResendEnviadorEmail` nunca loga a URL, nunca loga a chave e nunca loga o
+    corpo da resposta do provedor, que pode ecoar configuração.
+18. **Configuração de e-mail inválida derruba a subida, ao contrário do A3.**
+    `EnviadorEmailConfig` lança quando o provedor é desconhecido, e quando é `resend`
+    sem chave ou sem remetente. É o oposto deliberado do
+    `AdministradorInicialInitializer`, que sobe mesmo com configuração ruim: lá um
+    `CommandLineRunner` que lança causaria indisponibilidade; aqui, subir com o canal
+    quebrado significa descobrir o problema só quando o primeiro convite não chegar. As
+    mensagens nomeiam a variável que falta e **nunca incluem o valor recebido**, pelo
+    mesmo motivo do hash BCrypt.
+19. **A autorização por perfil mora no serviço, não em `@PreAuthorize`.**
+    `UserService.autorizarSobreUsuario` é a primeira regra de autorização do projeto que
+    consome o perfil. Três motivos para não ser anotação, todos deliberados:
+
+    - O 403 do Spring Security é lançado pelo `ExceptionTranslationFilter`, **fora do
+      `@ControllerAdvice`**, então sairia sem `ErrorResponse` e sem o campo `error` —
+      quebrando o contrato de erro que o projeto mantém desde o início, e justamente onde
+      o frontend mais precisa distinguir os casos.
+
+      > **Corrigido pelo P0.4, que mediu:** isso vale para o 403 da **cadeia de filtros**
+      > (requisição sem token). O 403 de um `@PreAuthorize` **é** alcançável pelo
+      > `@ControllerAdvice`, e um `@ExceptionHandler(AccessDeniedException.class)` devolve
+      > `ErrorResponse` normalmente. A decisão de ficar no serviço continua de pé pelos
+      > dois motivos abaixo — ver "Por que não foi `@PreAuthorize`" na §5.
+    - **Nenhum teste do projeto sobe contexto Spring**, então uma anotação ficaria sem
+      cobertura nenhuma — exatamente nas regras mais sensíveis do fluxo.
+    - Dividir a regra entre anotação e serviço faz quem lê o controller achar que
+      entendeu a autorização quando não entendeu.
+
+    **O P0.4c foi escrito em cima desta decisão**, e não com method security:
+    `autorizarLeitura`, `autorizarEdicao` e `autorizarExclusao` ficam ao lado de
+    `autorizarSobreUsuario`, no mesmo service. Acrescentar `@EnableMethodSecurity` depois
+    passaria a ter dois lugares decidindo autorização, com contratos de erro diferentes.
+20. **A regional usada na autorização é lida do banco, nunca do token.**
+    `UsuarioAutenticadoProvider` resolve o e-mail autenticado para a entidade `User` e a
+    regional sai dali. O JWT **não carrega regional**, e não deve passar a carregar: o
+    token vive 24 horas, então alguém movido de regional continuaria autorizado a
+    cadastrar na regional antiga até o próximo login. **Autorizar sobre dado
+    potencialmente desatualizado é falha de segurança**, e o custo evitado seria um
+    `SELECT` — o filtro já faz um por requisição de qualquer forma.
+
+    Esta nota existe porque "colocar a regional no token" parece uma otimização óbvia
+    para quem chega depois. Não é.
+21. **Domínio de e-mail é comparado depois do ÚLTIMO arroba, com igualdade exata ou
+    subdomínio.** `UserValidator.validarDominioEmail`. Nunca `contains` sobre o e-mail
+    inteiro: `fiesc.org.br@gmail.com` casaria, e o endereço é do Gmail. O ponto em
+    `"." + permitido` também não é enfeite — sem ele `notfiesc.org.br` passaria. E como a
+    comparação é sobre o trecho final inteiro, `contato@fiesc.org.br.exemplo.com` é
+    rejeitado, porque ali o domínio real é `exemplo.com`. Lista vazia recusa todo mundo.
+22. **Autorizar vem antes de validar.** Quem não pode criar o usuário não recebe pistas
+    sobre o payload: um gestor tentando criar administrador leva 403 com matrícula certa
+    ou errada, e não descobre pela mensagem o que mais estava errado.
+23. **Matrícula duplicada é 409, com checagem prévia e backstop de constraint.**
+    `existsByMatricula` seguido de `save` tem janela de corrida, então o índice parcial
+    `uk_users_matricula` é a garantia real — mesmo raciocínio do
+    `AdministradorInicialInitializer` com o e-mail. `UserService.salvarComBackstop`
+    captura a `DataIntegrityViolationException` e traduz para 409; sem isso ela escaparia
+    como 500 cru, porque não há handler registrado nem fallback. A distinção entre
+    matrícula e e-mail sai do **nome do índice na mensagem da exceção**, o que é frágil
+    por depender de texto de driver — por isso o e-mail é o caso *default*. Errar a
+    mensagem num 409 é aceitável; devolver 500 não.
+
+    **O furo equivalente em `AuthService.register` deixou de existir com o endpoint**,
+    removido pelo S8: duas requisições simultâneas com o mesmo e-mail davam 500 por
+    aquele caminho, e hoje não há mais aquele caminho. `salvarComBackstop` no
+    `UserService` é a única criação de usuário que resta, e ela tem o backstop.
+24. **Criação e envio do convite NÃO são atômicos, e isso é escolha, não descuido.**
+    `UserService.createUser` cria o usuário, tenta enviar o convite e **nunca deixa a
+    falha de envio derrubar a criação**. A alternativa — atomicidade — é pior: enviar
+    e-mail é irreversível, então se a mensagem saísse e o commit falhasse, o convite
+    apontaria para um usuário que não existe, e quem clicasse receberia um erro sem
+    explicação.
+
+    O preço é que existe um estado intermediário: usuário criado, sem senha e sem
+    convite. Ele é **sinalizado** (`conviteEnviado: false`) e tem conserto
+    (`POST /api/users/{id}/reenviar-ativacao`). Os dois canais são complementares de
+    propósito: o campo avisa o gestor que está na tela naquele instante, e o `ERROR` no
+    log é o que permite descobrir depois se a falha é sistemática — um gestor sozinho não
+    distingue "o Resend caiu agora" de "a chave está errada há dois dias".
+
+    O envio acontece **dentro** da transação de `createUser`. Por isso o S2b1 também
+    definiu `spring.http.client.connect-timeout` e `read-timeout`: o default do Spring é
+    nenhum timeout, e uma chamada pendurada ao Resend prenderia junto a conexão do pool.
+25. **Reenviar convite exige a mesma autorização que criar, e só vale para conta sem
+    senha.** Reenviar dispara um link que define a senha da conta, então é a mesma
+    capacidade que criar — um gestor só reenvia para colaborador da própria regional.
+    Para quem já definiu a senha, o reenvio é recusado com 409 `SENHA_JA_DEFINIDA`:
+    entregar esse link a quem pediu o reenvio permitiria trocar a senha de outra pessoa.
+    Quem esqueceu a senha usa a recuperação (S4), que exige acesso à caixa de e-mail.
+
+    Gerar o token novo invalida o anterior — garantia que já vinha do M2. Lembre que a
+    invalidação **expira** o token anterior em vez de marcá-lo como usado, então a linha
+    antiga fica com `usado_em` nulo e `expira_em` no passado.
+26. **`tokens_acesso.ip_solicitante` guarda o IP de quem pediu o convite**, extraído em
+    `UserController.extrairIp`. Hoje é `getRemoteAddr()`, que **devolve o IP do proxy**
+    quando a aplicação roda atrás de load balancer — em produção a auditoria registraria
+    sempre o mesmo endereço. O parsing de `X-Forwarded-For` **não** foi implementado de
+    propósito: confiar nesse header sem saber se há um proxy confiável na frente é pior
+    que não ter auditoria, porque qualquer cliente pode forjá-lo. A correção é num lugar
+    só, quando o deploy definir a topologia.
+27. **Na ativação, a senha é validada ANTES de o token ser consumido.** É a razão da ordem
+    em `AuthService.ativarConta`: `emailDeTokenValido` (leitura, não destrutiva) → busca o
+    usuário → `UserValidator.validarSenha` → só então `validarEConsumir`.
+
+    O caminho ingênuo — consumir e depois validar — **queima o link a cada senha fraca**:
+    a pessoa erra a política, o token vira usado, e ela precisa pedir um reenvio só para
+    tentar outra senha.
+
+    A leitura otimista **não** é a autoridade sobre a validade: quem decide continua sendo
+    o `UPDATE` condicional de `validarEConsumir`, que fecha a janela de corrida do M2. Se
+    algo mudar entre as duas, o consumo rejeita e o resultado é a mesma exceção. Os dois
+    predicados de validade — o do `consumir` e o do `findEmailDeTokenValido` — vivem lado
+    a lado no `TokenAcessoRepository` e **precisam continuar idênticos**: divergir faria a
+    sonda dizer válido para um token que o consumo rejeita.
+28. **Política de senha: 10 caracteres, ao menos uma letra e um dígito, e não conter nome
+    nem e-mail.** `UserValidator.validarSenha`, validada no backend porque o frontend é
+    sugestão e não garantia — a mesma requisição chega de `curl`.
+
+    A checagem de dados pessoais compara em caixa baixa contra o e-mail inteiro, a parte
+    antes do arroba, e cada palavra do nome — **a parte local e as palavras só a partir de
+    4 caracteres**. Sem esse corte, alguém chamado "Ana", ou com e-mail `ana@…`, não
+    poderia usar `banana123456`. Em 4 ainda sobra falso positivo ("Lima" reprova
+    `climatempo1`), e isso é aceito: a pessoa lê a mensagem e escolhe outra senha. O
+    e-mail inteiro é a única exceção ao limiar — é longo o bastante para nunca casar por
+    acidente.
+
+    **A mensagem diz o motivo sem revelar o critério** — não lista a palavra detectada nem
+    o limiar —, senão vira manual de como contorná-la. E **a senha recebida nunca entra em
+    mensagem, exceção ou log**, inclusive no caminho de rejeição: mesmo cuidado do A3 com
+    o hash e do M3 com a chave de API.
+
+29. **A escrita é mais restrita que a leitura, e a exclusão mais que as duas.**
+    `UserService.autorizarEdicao` delega para o mesmo `autorizarSobreUsuario` da criação,
+    com as mensagens do fluxo de edição. Não é economia de linha: um gestor que só pode
+    **criar** `COLABORADOR` mas poderia **editar** qualquer um da regional teria a escrita
+    mais permissiva que a criação, e dois gestores da mesma regional poderiam editar um ao
+    outro — escalação lateral por um caminho que a criação já fecha.
+
+    `autorizarLeitura` é separada justamente por ser mais larga: consultar não é alterar.
+
+    As mensagens de 403 do P0.4c são **novas constantes**, não as do S2a. As do S2a falam
+    em "criar" e "cadastrar"; reusá-las diria ao gestor que ele não pode criar alguém
+    quando o que ele tentou foi ler. O campo `error` continua o mesmo, porque a ação
+    corretiva é a mesma.
+30. **O `PATCH` só aceita senha do próprio autor, e a valida.**
+    `UserService.updatePasswordIfProvided` recebe autor e alvo, e lança
+    `SenhaDeTerceiroException` quando são pessoas diferentes — **inclusive para
+    `ADMINISTRADOR`**. Em nenhum outro ponto do sistema alguém escolhe a senha de terceiro:
+    `CreateUserRequest` não tem o campo, a ativação é a própria pessoa definindo, e a
+    recuperação (S4) também será. O `PATCH` era a única exceção, e era por ela que qualquer
+    autenticado assumia a conta de um administrador.
+
+    A senha passa agora por `UserValidator.validarSenha`, que **não rodava aqui**: o
+    `PATCH` era um segundo caminho para senha fraca depois de o S3 ter fechado o da
+    ativação. A validação usa o e-mail e o nome **já atualizados na mesma requisição**,
+    porque as três alterações acontecem em ordem.
+
+    O que **não** mudou: `UpdateUserRequest` continua sendo `(name, email, password)`.
+    Alterar `perfil` ou `regionalId` segue sem caminho HTTP — ver item 6. Não há guarda
+    contra autopromoção no service porque não há campo por onde ela aconteça; quem guarda
+    a premissa é um teste sobre os componentes do record, que quebra se alguém acrescentar
+    os campos.
+31. **Ninguém exclui a própria conta, nem o administrador.** A exclusão é lógica e, desde
+    o S3, usuário inativo deixa de autenticar (§9, item 14) — o administrador perderia o
+    próprio acesso na hora, e como não há endpoint que reative ninguém, só um `UPDATE`
+    manual no banco o traria de volta. Sendo o único administrador, o sistema ficaria sem
+    caminho administrativo.
+
+    Em `autorizarExclusao` o **perfil é conferido antes** da autoexclusão, de propósito:
+    um colaborador tentando se excluir leva `PERFIL_NAO_PERMITIDO`, e não
+    `AUTO_EXCLUSAO_NAO_PERMITIDA`, porque a segunda mensagem daria a entender que ele
+    poderia excluir outra pessoa.
+32. **Autorizar vem antes de dizer que o usuário está excluído.** Os três fluxos do P0.4c
+    buscam o alvo por `buscarUsuarioPorId` — que **não** confere `is_active` —, autorizam,
+    e só então chamam `validateUserIsActive`. Responder `USER_ALREADY_DELETED` a quem não
+    podia sequer ver o registro confirmaria a existência da conta e o seu estado. É o
+    mesmo raciocínio do item 22, aplicado à leitura.
+
+    `findUserByIdOrThrow` continua existindo, com o comportamento antigo, para
+    `reenviarAtivacao`.
+33. **A listagem é escopada, e por isso a correção não é contornável.** `getAllUsers`
+    escolhe entre três consultas do `UserRepository` conforme o perfil do autor. Sem isso,
+    restringir `GET /api/users/{id}` não valeria nada: o mesmo dado sairia por
+    `GET /api/users`, que devolvia todo mundo para qualquer autenticado.
+
+    Gestor **sem** regional cai no mesmo caso do colaborador — vê só a si mesmo. Não há
+    "própria regional" com que filtrar, e o caminho permissivo seria mostrar-lhe o sistema
+    inteiro. Mesma postura de `autorizarSobreUsuario`.
+
+    **`GET /api/users/dashboard` continua sem escopo** e devolve o total de ativos do
+    sistema a qualquer autenticado. É agregado, não dado de pessoa, e ficou fora do P0.4c
+    de propósito — mas é inconsistência conhecida, não esquecimento.
+34. **O e-mail atual do próprio usuário não conta como duplicado no `PATCH`.** Sem a
+    comparação em `updateEmailIfProvided`, reenviar o formulário inteiro sem mexer no
+    e-mail resultaria em 409, porque `existsByEmail` encontra o registro do próprio alvo.
+    Passou a importar quando o autosserviço virou o uso principal do endpoint.
+
+    **`validarDominioEmail` continua NÃO rodando no `PATCH`** — trocar o e-mail para um
+    domínio fora da lista ainda é aceito, ao contrário do que acontece na criação. É furo
+    conhecido e deliberadamente fora do escopo do P0.4c, que trata de autorização; fechá-lo
+    faz requisições hoje válidas passarem a responder 400 e é decisão de contrato.
+35. **Quem pede recuperação sem nunca ter definido senha recebe o convite de ATIVAÇÃO, não
+    o de recuperação.** `RecuperacaoSenhaService.finalidadeDe` decide por
+    `senha_definida`. Não há senha a recuperar: a pessoa perdeu o convite de primeiro
+    acesso, e do ponto de vista dela o desfecho esperado é o mesmo — um link que a leva a
+    escolher uma senha. Mandar um link de recuperação a levaria para a tela errada, e
+    recusar o pedido a deixaria sem saída, porque o reenvio de convite (item 25) exige um
+    gestor autenticado.
+
+    O e-mail enviado é o de ativação, com a validade longa da ativação (48h contra 1h) — e
+    o texto anuncia o prazo real, seja qual for, pela regra do item 16.
+
+    **Verificável no log com `provedor: log`:** a linha do `EnviadorEmailLog` traz
+    `finalidade=ATIVACAO` e o link `/definir-senha?token=`.
+36. **Definir senha invalida todos os tokens pendentes do e-mail, de QUALQUER finalidade** —
+    `TokenAcessoRepository.invalidarTodosPendentes`, chamado ao final de
+    `AuthService.definirSenhaComToken`. É o irmão mais largo de `invalidarPendentes`, que
+    filtra por finalidade: depois de a senha ser definida, qualquer link pendente daquele
+    e-mail é a capacidade de defini-la outra vez, e um convite de ativação esquecido na
+    caixa de entrada serve para isso tão bem quanto um link de recuperação.
+
+    **Vale para os dois fluxos**, ativação inclusive — o helper é compartilhado e não
+    ramifica por finalidade. É mudança de comportamento do S3, deliberada: quem ativa a
+    conta também não deve deixar um pedido de recuperação antigo valendo.
+
+    Invalida **expirando**, nunca marcando `usado_em`, como manda o item 14 — na tabela, a
+    linha invalidada fica com `expira_em` no passado e `usado_em` nulo. O token recém
+    consumido não precisa ser excluído do `UPDATE`: ele já tem `usado_em` preenchido.
+39. **A autorização do cadastro operacional é um componente só, e é chamada do serviço.**
+    `AutorizacaoOperacional` (`autorizarEscrita` / `autorizarConsulta`) é o ponto único da
+    regra do P0.4 para postos, veículos e ocorrências, e os três serviços a chamam como
+    **primeira instrução** do método protegido. O perfil sai do
+    `UsuarioAutenticadoProvider`, isto é, **do banco** — verificado na prática: rebaixar o
+    usuário de `ADMINISTRADOR` para `COLABORADOR` por `UPDATE` fez o **mesmo token**, sem
+    novo login, passar de 201 para 403 na requisição seguinte. É o §6, item 20 valendo
+    para perfil como já valia para regional, e importa mais aqui: o token do COLABORADOR
+    vive 30 dias.
+
+    Por que um componente em vez de um método por serviço: a regra é idêntica nos três, e
+    três cópias divergem na primeira vez que alguém mexer em uma. Por que não
+    `@PreAuthorize`: ver §5.
+
+37. **O limite de solicitações é em memória, com `Clock` injetado, e o estado é por
+    instância.** `RateLimitService`: um `ConcurrentHashMap` de deques de instantes, janela
+    deslizante, sem Redis, sem Caffeine e sem dependência nova — o projeto não tem cache
+    nenhum, e uma solução via `@Cacheable` ficaria **sem cobertura de teste**, porque
+    nenhum teste do projeto sobe contexto Spring.
+
+    O `Clock` é dependência de construtor pelo mesmo motivo: com `Instant.now()` embutido,
+    provar que a janela de 15 minutos desliza exigiria um teste que dorme 15 minutos.
+
+    Consequências que precisam ser ditas: com **mais de um nó** atrás de um balanceador,
+    cada um conta o seu próprio e o limite efetivo é multiplicado pelo número de nós; e
+    **reiniciar a aplicação zera os contadores**. Aceitável para o alvo deste sistema, que
+    roda num container só — e é o ponto que exigiria contador compartilhado se isso mudar.
+
+    A limpeza periódica das chaves abandonadas é um `@Scheduled` **dentro do próprio
+    serviço**, ao lado do dado que ele limpa, como `TokenAcessoService.limparTokensExpirados`.
+    O `SchedulingConfig` continua só habilitando.
+38. **A emissão do token e o envio do e-mail são um serviço só, para os dois fluxos.**
+    `EnvioAcessoService.enviar(usuario, finalidade, ip)` é a extração do que o convite
+    (S2b1) e a recuperação (S4) fazem igual: gerar token, montar o link sobre
+    `frontend-url`, montar a mensagem, enviar, traduzir falha em `false`. Até o S4 isso
+    eram dois métodos privados do `UserService`.
+
+    Dois efeitos colaterais bons: `montarLinkAtivacao` deixou de existir em duplicata, e o
+    prazo exibido no e-mail passou a vir de `TokenAcessoService.validadeHoras` — o mesmo
+    `switch` que calculou `expira_em`. Antes o `UserService` lia
+    `abastecefacil.token.ativacao-horas` num `@Value` paralelo, que divergiria no dia em
+    que alguém mudasse só um dos dois.
+
+    **`EnvioEmailException` continua sem chegar ao cliente por rota nenhuma.** Os dois
+    chamadores a capturam: o cadastro sinaliza no `conviteEnviado` (item 24) e a
+    recuperação já respondeu antes de o envio começar. O handler 502 segue registrado como
+    rede de segurança, porque não há fallback `Exception.class`.
+
+---
+
+## 7. Frontend — estrutura
+
+```
+src/
+├── layouts/     AdminLayout.vue, DefaultLayout.vue
+├── views/       admin/ (7)  user/ (4)  public/Login.vue
+├── components/  admin/ (10)  user/ (8)  app/ (7 compartilhados)
+├── services/    apiClient.js + auth/occurrence/station/user/vehicle
+├── stores/      auth.js (Pinia)
+├── router/      index.js
+└── assets/      main.css, base.css, logos
+```
+
+### Rotas
+
+| Grupo | Layout | Rotas |
+|---|---|---|
+| público | nenhum | `/login` |
+| usuário | `DefaultLayout` | `/user/dashboardUser`, `/user/postos`, `/user/mapUser`, `/user/occurrencesUser`, `/user/HelpCenter` |
+| admin | `AdminLayout` | `/admin/dashboard`, `/admin/station`, `/admin/map`, `/admin/vehicle`, `/admin/occurrences`, `/admin/user` |
+
+A raiz `/` redireciona para `/user/dashboardUser`.
+
+O guard em `router/index.js` protege apenas `/admin/*`, e a checagem é
+`!!store.token` — ou seja, **qualquer string em `localStorage.token` passa pelo
+guard**. A proteção real vem do backend, que rejeita o token inválido com 403.
+
+`MapUser` e `MapAdmin` apontam para **a mesma view**, `views/admin/StationMap.vue`.
+
+### Camada HTTP
+
+`services/apiClient.js` exporta duas instâncias Axios:
+
+- `apiPublic` — sem token
+- `apiPrivate` — injeta `Authorization: Bearer` a partir de `localStorage.token`
+
+Ambas usam `baseURL = import.meta.env.VITE_API_BASE_URL`.
+
+### Variáveis de ambiente
+
+Este ponto é fonte recorrente de erro. O `.env.example` e o `README` documentam
+apenas `VITE_API_PROXY_TARGET`, mas o código lê **`VITE_API_BASE_URL`**.
+
+```env
+VITE_API_PROXY_TARGET="http://localhost:8081"
+VITE_API_BASE_URL=
+```
+
+`VITE_API_BASE_URL` deve ficar **vazia** em desenvolvimento. Como todos os serviços
+chamam caminhos iniciados por `/api/...`, as requisições saem relativas e são
+capturadas pelo proxy do Vite (`vite.config.js`), que as encaminha ao backend.
+Preenchê-la com `http://localhost:8081` faz as chamadas contornarem o proxy e
+resultarem em erro de CORS.
+
+### Mapa
+
+`components/app/Map.vue` inicializa o Leaflet, busca os postos com
+`apiPublic.get('/api/public/gas-stations/filter?page=0&size=100&active=true')` e
+monta cada popup criando **uma aplicação Vue por marcador**
+(`createApp(PopupStation)`).
+
+`views/admin/StationMap.vue` envolve o mapa e cuida da geolocalização do navegador.
+O componente `Map` só é montado quando a geolocalização retorna com sucesso
+(`v-if="loadedMarker"`) — **negar a permissão de localização impede o mapa de
+renderizar**, exibindo um aviso no lugar.
+
+---
+
+## 8. Design system do frontend
+
+Definido em `src/assets/main.css` (tokens CSS) e `src/plugins/vuetify.js`
+(tema e defaults de componentes).
+
+| Token | Valor | Uso |
+|---|---|---|
+| `--color-primary` | `#16496E` | marca e ações principais |
+| `--color-primary-soft` | `#E8EFF5` | fundo de ícones |
+| `--color-background` | `#F7F8FA` | fundo de página |
+| `--color-surface` | `#FFFFFF` | cards |
+| `--color-border` | `#E3E7EC` | bordas de card |
+| `--color-border-strong` | `#CFD6DE` | bordas de campo |
+| `--color-text` | `#1F2933` | texto principal |
+| `--color-text-muted` | `#6B7785` | texto secundário |
+| `--color-warning` | `#ED6C02` | alerta |
+| `--radius-sm/md/lg` | `6 / 10 / 14px` | raios |
+| `--shadow-sm/md` | sombras discretas | elevação |
+| `--transition` | `180ms ease` | microinterações |
+
+`success` e `error` vêm do tema do Vuetify, não têm token CSS próprio.
+
+Diretrizes visuais em vigor: identidade azul, fundo claro, cards brancos com borda
+sutil, vermelho reservado a erro e alerta, sem gradiente/neon/glassmorphism,
+estética de sistema corporativo. Hover destaca por borda, não por deslocamento.
+
+Detalhe da barra lateral: item ativo recebe fundo levemente mais claro **e uma
+barra branca de 3px à esquerda**.
+
+---
+
+## 9. Armadilhas conhecidas
+
+Problemas reais já encontrados. Consultar antes de investigar comportamento estranho.
+
+### CSS e Vuetify
+
+1. **Ordem de injeção de CSS no dev server.** O CSS do Vuetify é injetado *depois*
+   do `main.css`. Regras globais de mesma especificidade perdem a cascata. Por isso
+   as regras globais do projeto são prefixadas com `.v-application`.
+2. **Nunca definir `elevation` nos defaults do `VCard`** em `vuetify.js`. A classe
+   `.elevation-N` do Vuetify usa `!important` e anula o `box-shadow` do CSS.
+3. **Classes utilitárias de cor do Vuetify** (`.bg-blue`, `.bg-red`…) são
+   `!important` e vencem estilos escopados de mesmo nome.
+4. **Ao estilizar bordas de campo, preservar o estado de erro** com
+   `:not(.v-field--error)`, senão o vermelho de validação é sobrescrito.
+5. Vuetify 3 usa `.v-pagination__item--is-active`, não `--active`.
+
+### Estrutura
+
+6. **`src/assets/base.css` nunca é importado.** Resíduo do scaffold do Vue; editá-lo
+   não tem efeito. O arquivo carregado é `main.css`.
+7. **`AdminLayout.vue` e `DefaultLayout.vue` são ~95% duplicados**, divergindo apenas
+   no array `menuItems` e no botão superior direito. Alterações no shell precisam ser
+   aplicadas nos dois.
+8. O botão "Admin" do `DefaultLayout` chama `handleLogout` — o rótulo não descreve a
+   ação. Comportamento existente, preservado deliberadamente.
+
+### Ambiente
+
+9. **Docker Desktop no Windows** pode falhar ao iniciar por sockets Unix órfãos em
+   `%LOCALAPPDATA%\Docker\run\` e `%LOCALAPPDATA%\docker-secrets-engine\`. O Windows
+   não consegue apagá-los (`Não é possível o acesso ao arquivo pelo sistema`);
+   remover via WSL: `wsl -d Ubuntu -e rm -f /mnt/c/Users/<user>/AppData/Local/...`.
+10. Os containers usam `restart: unless-stopped` e voltam sozinhos após reinício.
+    O servidor Vite **não** — precisa ser reiniciado manualmente.
+11. Erro 500 no proxy do Vite com `ECONNREFUSED` significa backend fora do ar ou
+    ainda inicializando (Spring Boot leva ~25s).
+
+### Autenticação e autorização
+
+12. **A authority é `ROLE_<PERFIL>`, e o consumo é por `hasRole`.** Origem única:
+    `Perfil.authority()`, montada em `CustomUserDetailsService.toUserDetails` — o
+    único ponto do projeto que constrói `GrantedAuthority`. Como o prefixo `ROLE_`
+    já vem embutido, use `hasRole("ADMINISTRADOR")`, que o adiciona sozinho.
+    `hasAuthority("ADMINISTRADOR")` **falha**, porque exige o nome exato; o
+    equivalente literal seria `hasAuthority("ROLE_ADMINISTRADOR")`.
+
+    Isso substituiu a authority fixa `"USER"`, que era gerada em **dois lugares
+    independentes** (`CustomUserDetailsService` e um `createUserDetails` privado do
+    `AuthService`) e não tinha relação nenhuma com o registro no banco. A
+    duplicação foi eliminada de propósito: dois pontos produzindo authority são a
+    origem provável de divergência futura.
+
+13. **Não existe `@ExceptionHandler` genérico, e senha nula quebra o `UserDetails`.**
+    O `GlobalExceptionHandler` registra doze exceções nominalmente e **nenhum
+    fallback** (`Exception.class` / `RuntimeException.class`), então qualquer exceção
+    não registrada escapa para o `BasicErrorController` e vira um 500 cru, sem
+    `ErrorResponse`. Isso importa desde que `password` virou nullable: o construtor
+    de `org.springframework.security.core.userdetails.User` faz
+    `Assert.isTrue(... password != null ...)` e lançaria `IllegalArgumentException`
+    a cada requisição autenticada de um usuário sem senha, pelo
+    `JwtAuthenticationFilter`. Daí a guarda em
+    `CustomUserDetailsService.toUserDetails`, que passa `""` no lugar do nulo — o
+    BCrypt não casa com senha nenhuma contra `""`, então o pior caso é 401, nunca
+    500 e nunca acesso. Ao criar exceção nova, **registre o handler junto**.
+
+14. **`loadUserByUsername` filtra `is_active` — corrigido no S3.** Até então, usuário
+    excluído logicamente continuava autenticando com um token já emitido: a checagem de
+    inativo existia **apenas** em `AuthService.login`. Era falha de segurança real e
+    conhecida, prevista para prompt próprio; o S3 a trouxe para junto porque foi ele que
+    elevou a sessão do COLABORADOR de 24 horas para 30 dias, multiplicando a janela por
+    30.
+
+    A correção tem **duas metades**, e a segunda não é opcional:
+
+    - `CustomUserDetailsService.loadUserByUsername` recusa o inativo, com a **mesma**
+      `UsernameNotFoundException` e mensagem de usuário inexistente — distinguir
+      confirmaria a existência da conta a quem só tem um e-mail.
+    - `JwtAuthenticationFilter` **captura** essa exceção e segue sem autenticar. Sem isso,
+      a exceção escaparia da cadeia de filtros e viraria **500 em toda requisição** de
+      quem foi desativado, que é pior que o bug original.
+
+    Resultado: requisição autenticada de usuário desativado responde **403**, igual a
+    qualquer requisição sem token (ver §5 sobre 403 x 401). O login não mudou — continua
+    respondendo 401 com `USER_INACTIVE_MESSAGE`, porque `AuthService.login` barra antes.
+
+    Como o JWT não é revogável, **desativar o usuário é hoje o único corte imediato de
+    sessão que existe**.
+
+15. **Verificação manual de `tokens_acesso` no `psql` exige alinhar o fuso.** As colunas
+    `expira_em`, `usado_em` e `created_at` são `timestamp` **sem fuso**, e os dois lados
+    que as comparam usam relógios diferentes: o Java grava `LocalDateTime.now()` (hora
+    local da JVM) e as queries nativas comparam com o `now()` do Postgres, que depende do
+    **fuso da sessão**. O driver JDBC alinha a sessão da aplicação ao fuso da JVM, então
+    dentro do sistema tudo é coerente — mas o **`psql` do container roda em UTC**.
+
+    Consequência concreta, já vivida: `update ... set expira_em = now() - interval '1 hour'`
+    pelo `psql` grava um instante que, para a aplicação, ainda está **no futuro** (3 horas
+    à frente, no horário de Brasília). O `psql` mostra o token expirado, a aplicação o
+    aceita, e parece bug de validação onde não há. Antes de mexer em prazo pelo `psql`,
+    rode `SET TIME ZONE 'America/Sao_Paulo';` na mesma sessão.
+
+    A solução definitiva seria `timestamptz` nas três colunas, o que é migration e está
+    fora do escopo até aqui.
+
+16. **Enum em query nativa é bindado por ordinal, não pelo nome.** Passar um
+    `FinalidadeToken` direto para o `@Query(nativeQuery = true)` do
+    `TokenAcessoRepository` mandaria um inteiro contra uma coluna
+    `character varying`: o `UPDATE` afetaria zero linhas sempre, e a validação
+    rejeitaria **todo** token válido, em silêncio e sem erro. Por isso as assinaturas
+    recebem `String` e o service passa `finalidade.name()`. Vale para qualquer query
+    nativa futura que filtre por enum.
+
+17. **`admin@abastecefacil.com` do dump colide com a configuração óbvia do A3.** O
+    e-mail já existe (id 3, `perfil = COLABORADOR`, hash de origem desconhecida), então
+    configurá-lo em `ABASTECEFACIL_ADMIN_EMAIL` faz o inicializador encontrar o registro
+    e **não criar nada** — deixando um "administrador" que não é administrador e não
+    loga. O `AdministradorInicialInitializer` loga **WARN** exatamente nesse caso,
+    dizendo que o e-mail está tomado por outro perfil e que nada foi alterado. Use outro
+    endereço.
+
+### Primeiras ocorrências introduzidas pelo M2
+
+Três coisas que não existiam no projeto e agora têm um único ponto de uso — ao mexer
+nelas, note que não há segundo exemplo para comparar:
+
+- **`@Modifying`** — os três `@Query` anteriores eram todos leitura paginada. Os do
+  `TokenAcessoRepository` usam `flushAutomatically`/`clearAutomatically` porque o
+  service lê logo depois do `UPDATE`, e o cache de primeiro nível não enxerga escrita
+  nativa.
+- **`@Scheduled` / `@EnableScheduling`** — habilitado em `config/SchedulingConfig`.
+  Sem essa classe a anotação é ignorada **em silêncio**: a aplicação sobe normalmente
+  e a tarefa simplesmente nunca roda.
+- **`SecureRandom` / `MessageDigest`** — o único hashing anterior era o
+  `BCryptPasswordEncoder` do Spring Security.
+
+O A3 acrescentou mais duas, ambas em `config/AdministradorInicialInitializer`:
+
+- **`CommandLineRunner` e `@EventListener(ApplicationReadyEvent.class)`** — não havia
+  nenhum hook de subida no projeto. **Ordem real dos logs**, conferida na prática e
+  contraintuitiva: `Started Application in Xs` sai **antes** dos `CommandLineRunner`; o
+  `ApplicationReadyEvent` vem **depois** deles; e o
+  `System.out.println("Application Started Successfully!")` do `Application.main` é a
+  última linha de todas. É por isso que o resumo de erro fica no evento, e não no runner.
+- **Log em nível WARN e ERROR** — antes do A3 o projeto só tinha um `log.info`, no
+  `TokenAcessoService`.
+
+### Primeiras ocorrências introduzidas pelo M3
+
+- **`RestClient`** — as duas integrações anteriores (ViaCEP e Nominatim) usam OpenFeign,
+  com a requisição declarada numa interface em `client/`. `ResendEnviadorEmail` é
+  imperativo porque a autenticação é um header montado a partir de configuração e porque
+  o tratamento de erro precisa ser específico: o `handleFeignException` genérico devolve
+  ao cliente a mensagem da exceção do Feign, que carrega trechos da resposta do provedor.
+  Não há dependência nova — `RestClient` vem do `spring-boot-starter-web`, já presente.
+  Note que **o projeto agora tem dois estilos de cliente HTTP**; não é inconsistência
+  acidental.
+- **Interface de serviço com mais de uma implementação** — `EnviadorEmail`. Até o M3
+  todo service era classe concreta única.
+- **`@Bean` selecionado por propriedade** — `EnviadorEmailConfig`, com `switch` em vez de
+  `@ConditionalOnProperty`. O motivo está na §6, item 18.
+- **Exceção com `cause`** — `EnvioEmailException` é a primeira das quinze a aceitar
+  `Throwable`. As outras catorze só recebem mensagem.
+- **`MockRestServiceServer` nos testes** — primeiro mock de HTTP do projeto. Os testes de
+  ViaCEP e Nominatim mockam a interface Feign, não o transporte. Vem do `spring-test`, já
+  no classpath. É o que permite ao `ResendEnviadorEmailTest` exercitar o adaptador sem
+  rede e sem subir contexto, mantendo o estilo Mockito puro — para isso
+  `ResendEnviadorEmail` **recebe o `RestClient.Builder` no construtor** em vez de criar o
+  seu próprio. Não mude isso sem quebrar os testes.
+
+### Primeiras ocorrências introduzidas pelo S2a
+
+- **Leitura do `SecurityContextHolder`** — `UsuarioAutenticadoProvider` é o primeiro ponto
+  do projeto a *ler* o contexto de segurança. Até o S2a ele era escrito pelo
+  `JwtAuthenticationFilter` e nunca consultado: todos os serviços recebiam ids por
+  parâmetro e nenhuma regra dependia de quem chamava.
+- **Autorização por perfil** — ver §6, item 19.
+- **Status 403** — os dois primeiros do `GlobalExceptionHandler`.
+- **Sobrecarga de método no mapper** — `UserMapper.toEntity` passou a ter duas versões,
+  uma por fluxo de criação. Era o compartilhamento de `RegisterRequest` entre os dois
+  fluxos que impedia o cadastro administrativo de existir. **Durou até o S8**, que removeu
+  o registro público: o mapper voltou a ter um `toEntity` só, e perdeu junto o
+  `PasswordEncoder` do construtor — ele existia unicamente para codificar a senha do
+  autocadastro. Não há mais sobrecarga no projeto.
+- **Validação que recebe configuração por parâmetro** — `validarDominioEmail(email,
+  dominiosPermitidos)`. `UserValidator` continua utilitária e pura; quem lê
+  `abastecefacil.auth.dominios-permitidos` é o `UserService`.
+
+### Primeiras ocorrências introduzidas pelo S2b1
+
+- **Efeito colateral externo dentro de um fluxo de escrita** — `createUser` passou a fazer
+  uma chamada HTTP. Daí os timeouts em `spring.http.client.*`: sem eles a chamada não tem
+  teto e prende a conexão do banco junto. Ver §6, item 24.
+- **`HttpServletRequest` num controller** — só para extrair o IP de auditoria. Nenhum
+  outro controller do projeto conhece a requisição HTTP.
+- **Resposta que carrega resultado de operação, não estado** — `conviteEnviado`. É por
+  isso que ele vem `null` em GET.
+
+### Primeiras ocorrências introduzidas pelo S3
+
+- **Leitura não destrutiva de token** — `TokenAcessoRepository.findEmailDeTokenValido`,
+  o primeiro `@Query` de leitura por hash. Até o S3 a única validação era o consumo, que
+  é destrutivo por construção. Os dois predicados precisam continuar idênticos — ver §6,
+  item 27.
+- **Expiração de JWT variável** — antes havia um único `jwt.expiration` para todos.
+- **Endpoint público que responde 200 para entrada inválida** — a sonda de ativação. Ver
+  §5 e não "corrija" para 410.
+- **Rota nova pendurada sob `/api/auth/`** — `SecurityConfig` **não mudou**: o matcher
+  `/api/auth/**` já é `permitAll()`, então os dois endpoints nasceram públicos. Acrescentar
+  matchers explícitos seria redundante e sugeriria que a regra mudou.
+
+### Primeiras ocorrências introduzidas pelo S4
+
+- **`@EnableAsync` / `@Async`** — em `config/SchedulingConfig`, ao lado do
+  `@EnableScheduling`, e no `RecuperacaoSenhaService`. Não havia execução assíncrona no
+  projeto. **A armadilha é idêntica à do `@Scheduled` no M2 e igualmente silenciosa:** sem
+  a anotação de habilitação o método roda síncrono, a aplicação sobe, nada falha, e a
+  garantia de tempo constante da recuperação some sem aviso. Executor: o
+  `applicationTaskExecutor` padrão, sem fila nem pool customizado.
+- **`Clock` como bean** — mesma classe de configuração. Existe para o `RateLimitService`
+  ser testável sem dormir 15 minutos. `systemDefaultZone` para acompanhar o resto do
+  projeto, que grava `LocalDateTime.now()` no fuso da JVM.
+- **Estado em memória entre requisições** — `RateLimitService`. Tudo mais no projeto é
+  stateless: até o S4 nenhum bean guardava nada entre requisições. Ver §6, item 37, para as
+  consequências (multi-nó e reinício).
+- **Status 429** — o primeiro do `GlobalExceptionHandler`.
+- **Serviço que existe só para ser compartilhado por dois fluxos** — `EnvioAcessoService`,
+  extraído do `UserService`. Ver §6, item 38.
+- **Classe utilitária no pacote `util`** — `IpSolicitante.extrair`. O pacote não existia. O
+  método era privado do `UserController`; quando o `AuthController` passou a precisar do
+  mesmo IP, copiá-lo criaria o segundo lugar a corrigir, contra a promessa de "ponto único"
+  registrada no §6, item 26.
+- **Renomeação de DTO com JSON preservado** — `AtivacaoRequest` → `DefinicaoSenhaRequest` e
+  `AtivacaoValidacaoResponse` → `TokenValidacaoResponse`. Ver a tabela na §5.
+
+### O formulário de usuário do frontend está quebrado desde o S2a
+
+`components/admin/UserDialog.vue` monta `{ name, email, password }` e chama
+`POST /api/users`. Depois do S2a esse payload recebe **400**: `password` deixou de existir
+no contrato e `perfil`, `matricula` e `regionalId` passaram a ser exigidos.
+
+É consequência prevista da mudança de payload — o frontend é atualizado no S5/S6 —, e
+está registrada aqui para não ser diagnosticada como regressão nova. Enquanto isso, criar
+usuário só funciona por HTTP direto.
+
+O `init-scripts/dump.sql` popula a tabela `users` com três registros:
+`pedro@email.com`, `rafaela.mendes@email.com` e `admin@abastecefacil.com`. Todos
+com **hashes BCrypt cuja origem não está documentada**, então não é possível logar
+com nenhum deles. O `admin@abastecefacil.com` aparenta ter sido a conta
+administrativa da equipe anterior, mas a senha se perdeu. Não confundir com o
+login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relação.
+
+---
+
+## 10. Estado do projeto e convenções
+
+### Qualidade
+
+- **338 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+  `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
+  `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
+  `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
+  `AdministradorInicialInitializer`, o `EnviadorEmailConfig`, o `EnviadorEmailLog`, o
+  `ResendEnviadorEmail`, o `ConteudoEmail`, o `UserMapper`, o `UserValidator`, o
+  `RateLimitService`, o `RecuperacaoSenhaService`, o `EnvioAcessoService`, o
+  `AutorizacaoOperacional` e o handler global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
+  (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
+  `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
+  backend: a contagem tem que continuar 338, ou subir junto com os testes novos. O
+  frontend não tem testes.
+
+  **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa
+  referência a tipo removido — o que aconteceu ao renomear os DTOs de ativação no S4:
+  `./mvnw test-compile` passou e `./mvnw clean test-compile` falhou.
+
+  Os testes de composição de e-mail (mensagem, link, prazo, segredo do log) migraram do
+  `UserServiceTest` para o `EnvioAcessoServiceTest` no S4, junto com o código que testam;
+  o que sobrou no `UserServiceTest` é a delegação. Nenhum teste foi removido.
+
+  **Não existe teste de controller** — zero `MockMvc`, `@WebMvcTest` ou `@SpringBootTest`
+  no repositório. Foi exatamente por isso que o `@Valid` mal posicionado do `updateUser`
+  (no `@PathVariable` em vez do `@RequestBody`, corrigido no S2a) sobreviveu desde o
+  início: o `@Email` do `UpdateUserRequest` nunca rodava e nada acusou. Mudança de
+  contrato HTTP neste projeto **só é verificada à mão**.
+
+  Ruído esperado na saída: `ResendEnviadorEmailTest` exercita falha de rede e rejeição do
+  provedor, então **um stack trace de `IOException: conexão recusada` aparece no log da
+  suíte mesmo com tudo verde**. É o `log.error` do adaptador fazendo o que deve. Confira
+  a linha `Tests run:` antes de investigar.
+
+  Uma consequência de nenhum teste subir contexto: **um `@Value` mal escrito não é pego
+  pela suíte**, só na subida real. Por isso as propriedades `abastecefacil.*` são
+  declaradas no `application.yml` **e** têm default no `@Value`.
+
+  `tools/GerarHashBCryptTest` é a exceção de propósito na pasta de testes: existe para
+  ser executado sob demanda e gerar o hash do administrador inicial (ver README). Sem a
+  variável `BCRYPT_SENHA` ele roda só uma verificação de sanidade e passa em silêncio,
+  então `./mvnw clean test` continua verde e a contagem não oscila.
+
+  Limite conhecido dessa suíte: por ser Mockito puro, **ela não valida nada de
+  schema**. Constraint de banco, migration e o `validate` do Hibernate só são
+  exercidos subindo a aplicação — por isso a unicidade de `regionais.sigla`, a FK
+  `fk_users_regional` e o backfill de `users.perfil` não têm teste automatizado, e
+  sim verificação manual via `psql`. O mesmo vale para o índice parcial
+  `uk_users_matricula` e para o backfill de `senha_definida`.
+
+  **Limite específico do `TokenAcessoService`: a atomicidade do consumo não é
+  verificável por esta suíte.** O teste prova que o `UPDATE` foi chamado com o hash e
+  a finalidade certos, e que o service só aceita contagem 1 — **não** prova que duas
+  requisições concorrentes com o mesmo token falham. Essa garantia vem do Postgres
+  serializar a escrita na linha, e verificá-la de verdade exigiria Testcontainers.
+  Enquanto isso, a verificação é manual: rodar as próprias instruções do repository no
+  `psql` e conferir `UPDATE 1` no primeiro consumo e `UPDATE 0` no repetido, no
+  expirado, no de finalidade divergente e no invalidado por substituição.
+- `npx eslint src` reporta **15 erros pré-existentes**: nomes de componente de
+  palavra única (`Map`, `Login`, `Reports`, `Occurrences`) e variáveis não usadas
+  (`unwatchMobile`, `response`, `error`, `deletarPosto`, `apiPublic`). Não são
+  regressões; usar essa contagem como linha de base.
+- CI do frontend: build em PR e deploy no Render em push na `main`.
+
+### Ao trabalhar neste projeto
+
+- **Não alterar contratos da API** sem necessidade explícita: endpoints, métodos,
+  payloads e formatos de resposta são consumidos pelo frontend.
+- Preferir alterações de CSS e template a mudanças de lógica quando o objetivo for
+  visual.
+- Preservar as convenções existentes: nomes em português no domínio, `<script setup>`,
+  organização de pastas atual.
+- Não adicionar dependências sem justificativa — a stack é intencionalmente enxuta.
+- O idioma do código e das mensagens de interface é **português do Brasil**.
+
+### Git
+
+Não execute `git commit`, `git push`, `git add` nem qualquer comando que altere
+o histórico ou o índice. Os commits são feitos manualmente pelo desenvolvedor.
+Ao terminar uma tarefa, liste os arquivos alterados e pare por aí.
+
+### Credenciais de teste
+
+O `init-scripts/dump.sql` popula a tabela `users` na primeira subida. Pelo menos
+dois desses registros (`pedro@email.com`, `rafaela.mendes@email.com`) têm **hashes
+BCrypt cuja origem não está documentada**, então não é possível logar com eles.
+
+**Usuário de verificação (desenvolvimento):** `verifica.p02@abastecefacil.com`, id 4,
+criado durante o P0.2 para testar endpoints autenticados. Existe apenas no volume de
+desenvolvimento, não está em nenhum `dump.sql`, e some se o volume for recriado.
+
+**Esta entrada divergia do volume, e a correção é do P0.5b:** a conta é hoje
+`GESTOR_FROTA` na regional 1 (Joinville), não `COLABORADOR`, e a senha `Senha@12345`
+que estava documentada aqui **não é mais aceita** — o login responde 401. Alguém a
+promoveu e trocou a senha em algum momento, provavelmente durante o S5, sem atualizar
+esta seção. A senha atual não está documentada e não será: quem precisar da conta
+redefine pela recuperação (S4).
+
+**Usuários de verificação do P0.5b (desenvolvimento):**
+`verifica.p05b.gestor@fiesc.org.br` (id 26, `GESTOR_FROTA`, regional 1, matrícula
+`P05B1`) e `verifica.p05b.colab@fiesc.org.br` (id 27, `COLABORADOR`, sem regional),
+criados para exercitar `GET /api/users/me` nos dois perfis. Nasceram pelo
+`POST /api/auth/register`, na época ainda público e criando `COLABORADOR`; o primeiro foi
+promovido por `UPDATE` manual, que continua sendo o único caminho (§6, item 6). A senha
+dos dois **não está aqui**, pela regra de sempre. Existem só no volume de
+desenvolvimento. Nota do S8: aquele caminho de criação **não existe mais** — hoje seria
+`POST /api/users` autenticado ou `INSERT` manual.
+
+**Usuário de verificação do S8 (desenvolvimento):** `verifica.s8@fiesc.org.br`, id 28,
+`COLABORADOR` ativo na regional 1, matrícula `80001`. Criado por `POST /api/users` com o
+gestor do P0.5b autenticado — já pelo caminho que sobrou — e ativado pelo link do convite,
+para provar que ativação e recuperação continuavam inteiras depois da remoção do
+autocadastro. Senha não documentada, pela regra de sempre. Existe só no volume de
+desenvolvimento.
+
+**Usuário de verificação do S4 (desenvolvimento):** `verifica.s4@fiesc.org.br`, id 25,
+`COLABORADOR` ativo, criado por `INSERT` direto durante a verificação da recuperação de
+senha — o cadastro pela API exigiria um gestor autenticado, e nenhuma senha administrativa
+está documentada. **A senha não está aqui**, pela mesma regra do administrador abaixo: ela
+foi redefinida pelo próprio fluxo do S4, que é o que o teste provava. Existe só no volume
+de desenvolvimento. Foi criado em vez de reaproveitar uma conta existente de propósito —
+verificar recuperação de senha sobrescreve a senha do alvo, e fazer isso numa conta que o
+desenvolvedor usa quebraria o acesso dele.
+
+**Administrador (desenvolvimento):** `admin.a3@abastecefacil.com`, id 7, criado durante a
+verificação do A3 pelo `AdministradorInicialInitializer`. Perfil `ADMINISTRADOR`, regional
+e matrícula nulas, e hoje **inativo** (`is_active = false`) — foi criado ativo, e alguém o
+desativou depois; conferido no volume durante o S4. Consequência prática: ele não
+autentica (§9, item 14) e pedir recuperação de senha para ele **não envia nada**, que é o
+comportamento correto para conta inativa, não falha do fluxo.
+
+**A senha não está documentada aqui de propósito** — nenhuma
+senha em texto claro entra neste repositório. Quem precisar de acesso administrativo gera
+o próprio hash pelo README e sobe com `ABASTECEFACIL_ADMIN_EMAIL` e
+`ABASTECEFACIL_ADMIN_SENHA_HASH`, usando um e-mail novo. Como tudo isso, existe só no
+volume de desenvolvimento e some se o volume for recriado.
+
+Para acessar a área administrativa hoje, o caminho é o administrador inicial acima, ou
+gerar um hash e atualizar o banco diretamente. **O atalho do `POST /api/auth/register` não
+existe mais** — o S8 o removeu. Criar conta de teste passou a exigir um gestor ou
+administrador autenticado chamando `POST /api/users`, ou `INSERT` manual: é o preço
+consciente de fechar o autocadastro.
+
+Note que existem **dois arquivos `dump.sql` divergentes**: o de `init-scripts/`,
+que o Docker consome, e um na raiz do repositório, que ninguém consome e tem
+conteúdo diferente (2 usuários em vez de 3, hashes distintos). Não confundir os
+dois. O da raiz é candidato a remoção, depois de confirmar que nada o referencia.
+
+---
+
+## 11. Documentos relacionados no repositório
+
+| Arquivo | Conteúdo |
+|---|---|
+| `front-.../REFATORACAO-VISUAL.md` | Detalhamento da refatoração visual do frontend |
+| `abastece-facil-api/README.md` | Comandos de Docker e configuração do banco |
+| `front-.../README.md` | Instalação e scripts do frontend |
+
+---
+
+## 12. Manutenção deste documento
+
+Ao alterar modelo de dados, contrato de API ou configuração, atualize as seções
+correspondentes **no mesmo commit**. Um contexto desatualizado é pior que nenhum: o
+assistente tenta reconciliar código novo com documentação velha.

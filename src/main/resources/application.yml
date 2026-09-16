@@ -1,0 +1,126 @@
+# Configuração base + defaults de DESENVOLVIMENTO LOCAL (nenhum perfil ativo).
+# Vale para ./mvnw spring-boot:run rodando na máquina, contra o Postgres do compose.
+#
+# Dentro do container o perfil "docker" está ativo e o application-docker.yml
+# sobrescreve apenas o datasource. Tudo que está aqui e não aparece lá vale nos dois.
+#
+# Precedência: variável de ambiente > application-docker.yml > este arquivo.
+# Qualquer propriedade abaixo aceita override por env var na forma maiúscula com
+# underscore (spring.datasource.url -> SPRING_DATASOURCE_URL). Ver §3 do CLAUDE.md.
+
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/abastecefacil
+    username: abastecefacil_user
+    password: abastecefacil_password
+    driver-class-name: org.postgresql.Driver
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+
+  # Timeouts do RestClient auto-configurado, usado pelo ResendEnviadorEmail. O default do
+  # Spring é NENHUM timeout: uma chamada ao Resend poderia ficar pendurada para sempre.
+  # Isso passou a importar no S2b1, quando o envio entrou dentro da transação de
+  # UserService.createUser — sem teto, uma conexão do pool ficaria presa junto. Ver §6.
+  http:
+    client:
+      connect-timeout: 5s
+      read-timeout: 10s
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+
+server:
+  port: 8081
+
+jwt:
+  # Segredo de desenvolvimento, versionado desde o início do projeto. Em produção,
+  # sobrescrever com a variável de ambiente JWT_SECRET — nunca editar este valor aqui.
+  secret: YWJhc3RlY2VmYWNpbC1zZWNyZXQta2V5LTIwMjQtdmVyeS1sb25nLWFuZC1zZWN1cmUta2V5LWZvci1qd3Qtc2lnbmluZw==
+  # Sessão curta, 24h: vale para GESTOR_FROTA e ADMINISTRADOR, que usam o sistema com
+  # frequência e têm poderes destrutivos.
+  expiration: 86400000
+  # Sessão longa, 30 dias, só para COLABORADOR (S3). Ele usa o sistema poucas vezes por
+  # ano: com 24h encontrava a sessão sempre vencida e era obrigado a recuperar a senha em
+  # toda visita — a dor que o cliente relatou.
+  #
+  # ATENÇÃO: JWT stateless não é revogável. Trocar a senha NÃO invalida um token já
+  # emitido, então aumentar este prazo aumenta na mesma medida a janela em que uma sessão
+  # vazada continua valendo. Ver §5 do CLAUDE.md.
+  expiration-colaborador: 2592000000
+
+abastecefacil:
+  auth:
+    # Domínios de e-mail aceitos no cadastro administrativo (POST /api/users).
+    # A comparação é sobre a parte depois do ÚLTIMO arroba, com igualdade exata ou
+    # subdomínio — ver UserValidator.validarDominioEmail.
+    #
+    # PROVISÓRIO: lista pendente de confirmação do cliente (FIESC/UNISENAI). Um domínio
+    # que falte aqui significa colaborador que NÃO consegue ser cadastrado — o gestor
+    # recebe 400 e não tem como contornar pela interface. Revisar antes de produção.
+    #
+    # Lista separada por vírgula, e não sequência YAML, para o @Value converter sozinho
+    # e para o override por ambiente ser direto:
+    # ABASTECEFACIL_AUTH_DOMINIOS_PERMITIDOS=fiesc.org.br,sesisenai.org.br
+    dominios-permitidos: "fiesc.org.br,sesisenai.org.br"
+  token:
+    # Prazo de vida dos tokens de acesso enviados por e-mail, em horas.
+    # Ativação é mais longa porque o usuário pode demorar a abrir o convite;
+    # recuperação é curta porque a ação é imediata e o risco é maior.
+    ativacao-horas: 48
+    recuperacao-horas: 1
+  admin:
+    # Administrador inicial, criado na subida por AdministradorInicialInitializer.
+    # Vazio aqui de propósito: sem e-mail e hash a criação é pulada e a aplicação sobe
+    # normalmente, que é o comportamento desejado em desenvolvimento.
+    #
+    # NUNCA preencher senha-hash neste arquivo — ele é versionado. O valor vem da
+    # variável de ambiente ABASTECEFACIL_ADMIN_SENHA_HASH, e o hash se gera pelo
+    # caminho documentado no README, seção "Gerar o hash BCrypt".
+    #
+    # Atenção: admin@abastecefacil.com já existe no init-scripts/dump.sql com perfil
+    # COLABORADOR. Configurar esse e-mail faz o inicializador encontrar o registro e
+    # não criar nada. Use outro endereço.
+    nome: "Administrador"
+    email: ""
+    senha-hash: ""
+  email:
+    # Canal de envio dos e-mails de acesso (M3). O default é "log" para que rodar o
+    # projeto localmente não dependa de rede, não exija chave e não consuma cota:
+    # EnviadorEmailLog escreve o link no console e não envia nada.
+    #
+    # ATENÇÃO: "log" em produção equivale a publicar tokens de acesso no log da
+    # aplicação — quem lê o log define a senha de qualquer convidado. Em produção,
+    # ABASTECEFACIL_EMAIL_PROVEDOR=resend.
+    provedor: log
+    # Precisa ser um endereço verificado no Resend. O default abaixo é o domínio de
+    # teste que o Resend oferece, que só entrega para a conta dona da chave.
+    remetente: "Abastece Fácil <onboarding@resend.dev>"
+    # NUNCA preencher aqui — este arquivo é versionado, pelo mesmo motivo de
+    # admin.senha-hash. O valor vem de ABASTECEFACIL_EMAIL_API_KEY no ambiente.
+    # Com provedor "resend" e esta chave vazia, a aplicação NÃO sobe, de propósito.
+    api-key: ""
+    api-url: "https://api.resend.com"
+    # URL base do frontend, usada para montar o link que vai no e-mail.
+    #
+    # NÃO é lida pelo M3: o enviador recebe a URL já montada e não conhece rota de
+    # frontend. Quem consome esta propriedade são o S2 (convite de primeiro acesso) e
+    # o S4 (recuperação de senha), que geram o token e montam o endereço. As rotas em
+    # si são contrato do S6.
+    frontend-url: "http://localhost:5173"
+
+viacep-api:
+  url: "https://viacep.com.br/ws/"
+
+openstreetmap-api:
+  url: "https://nominatim.openstreetmap.org"
+  # A política de uso do Nominatim exige um User-Agent com contato válido. O default
+  # abaixo é genérico de propósito; em produção, apontar OPENSTREETMAP_USER_AGENT para
+  # um endereço realmente monitorado, senão o serviço pode bloquear as requisições.
+  user-agent: "${OPENSTREETMAP_USER_AGENT:AbasteceFacil/1.0 (contato@abastecefacil.com.br)}"
