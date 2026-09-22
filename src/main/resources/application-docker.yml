@@ -20,3 +20,5 @@ spring:
     url: jdbc:postgresql://postgres:5432/abastecefacil
     username: abastecefacil_user
     password: abastecefacil_password
+  flyway:
+    locations: classpath:db/migration

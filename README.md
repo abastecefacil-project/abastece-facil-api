@@ -111,6 +111,19 @@ Sem e-mail e hash, a criação é pulada e a aplicação sobe normalmente — é
 desenvolvimento. Subir várias vezes cria no máximo um usuário: se o e-mail já existe,
 nada é alterado.
 
+### Usuários de desenvolvimento
+
+Ao executar a API localmente, a migration de desenvolvimento recria os usuários abaixo:
+
+| Perfil | E-mail | Senha |
+|---|---|---|
+| Administrador | `admin@abastecefacil.com` | `Admin@12345` |
+| Gestor de frota | `gestor@abastecefacil.com` | `Gestor@12345` |
+| Colaborador | `colaborador@abastecefacil.com` | `Colab@12345` |
+
+Essas credenciais são exclusivas para desenvolvimento. A migration não é executada pelo
+perfil Docker de produção.
+
 > **Não use `admin@abastecefacil.com`.** Esse endereço já vem no `init-scripts/dump.sql`
 > com perfil `COLABORADOR` e senha de origem desconhecida. Configurá-lo faz o
 > inicializador encontrar o registro e não criar nada — você fica com um "administrador"
