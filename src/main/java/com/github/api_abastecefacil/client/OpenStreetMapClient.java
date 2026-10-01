@@ -17,6 +17,7 @@ public interface OpenStreetMapClient {
             @RequestParam("format") String format,
             @RequestParam("addressdetails") int addressDetails,
             @RequestParam("limit") int limit,
+            @RequestParam("countrycodes") String countryCodes,
             @RequestHeader("User-Agent") String userAgent
     );
 }

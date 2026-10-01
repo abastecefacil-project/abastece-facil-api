@@ -202,6 +202,16 @@ que a forma canônica, não porque fosse necessário.
 | `viacep-api.url` | `https://viacep.com.br/ws/` | — | `VIACEP_API_URL` | não |
 | `openstreetmap-api.url` | `https://nominatim.openstreetmap.org` | — | `OPENSTREETMAP_API_URL` | não |
 | `openstreetmap-api.user-agent` | `AbasteceFacil/1.0 (contato@abastecefacil.com.br)` | — | `OPENSTREETMAP_USER_AGENT` | **sim** |
+| `openstreetmap-api.intervalo-minimo-ms` | `1100` | — | `OPENSTREETMAP_API_INTERVALO_MINIMO_MS` | não |
+| `spring.cloud.openfeign.client.config.openstreetmap-client.connect-timeout` | `5000` (ms) | — | `OPENSTREETMAP_CONNECT_TIMEOUT` | não |
+| `spring.cloud.openfeign.client.config.openstreetmap-client.read-timeout` | `10000` (ms) | — | `OPENSTREETMAP_READ_TIMEOUT` | não |
+
+Os dois timeouts do Feign são a **segunda** exceção ao "`${...}` só por nome curto", e aqui
+o placeholder é necessário, não estético: o nome do cliente (`openstreetmap-client`) tem
+hífen e é **chave de `Map`** no binding, e a forma canônica da env var não reconstrói essa
+chave de forma confiável. Por isso o YAML declara `${OPENSTREETMAP_CONNECT_TIMEOUT:5000}` e
+`${OPENSTREETMAP_READ_TIMEOUT:10000}`. Vale para qualquer propriedade futura sob
+`spring.cloud.openfeign.client.config.<nome-com-hífen>`.
 
 Os "precisa em produção" que não são o banco:
 
@@ -965,6 +975,38 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
    consulta o Nominatim para obter latitude/longitude. Se não encontrar, lança
    `CoordinatesNotFoundException`. Isso significa que **cadastrar posto depende de
    internet** e está sujeito ao rate limit do Nominatim.
+
+   Desde a preparação da importação em lote, o `OpenStreetMapService` tem:
+
+   - **Throttle global**: no mínimo `openstreetmap-api.intervalo-minimo-ms` (1100) entre
+     duas consultas, valendo para **toda** chamada, cadastro e edição manuais inclusive.
+     Assim a importação e o cadastro simultâneos não passam de 1 req/s. Cada chamada
+     reserva o próximo horário livre sob a trava e espera fora dela. `Clock` e `Espera` são
+     injetados, no precedente do `RateLimitService`. Consequência para o fluxo manual:
+     `create` e `update` podem esperar ~1,1 s, ou um pouco mais se a importação estiver
+     rodando, e essa espera acontece **dentro do `@Transactional`**, segurando a conexão
+     do pool.
+   - **O throttle é por instância e zera no reinício**, como o `RateLimitService` (item 37).
+     Com mais de uma instância do backend, cada uma espaça só as próprias chamadas, e
+     **o limite de 1 req/s ao Nominatim deixa de ser garantido**.
+   - **`countrycodes=br`** em toda consulta. Um endereço que antes caía num ponto fora do
+     Brasil agora não é encontrado, e o cadastro manual responde 400 `COORDINATES_NOT_FOUND`.
+   - **Timeouts do Feign**: connect 5 s e read 10 s. O default do OpenFeign era 10 s e
+     60 s. Estourar o prazo gera `RetryableException`, que o `handleFeignException` já
+     responde como 502.
+   - **`geocodificarComFallback(address, district, city, state, cep, uf)`**, para a
+     importação. Tenta o endereço completo (`GasStationConstants.ADDRESS_FORMAT`) e, se
+     ele vier vazio ou for rejeitado, tenta `"<via>, <cidade>, <UF>, Brasil"`, sendo a via
+     o trecho de `address` antes da vírgula. Rejeitado quer dizer que
+     `address.ISO3166-2-lvl4` veio e é diferente de `"BR-" + UF`. Se o campo não vier, ou
+     vier com tipo inesperado (`address` que não é objeto, código que não é string), o
+     resultado é **aceito**. A leitura é defensiva e nunca lança `ClassCastException`.
+     Com a via vazia, o fallback não é feito, porque devolveria o centro da cidade.
+     **Contrato de erro:** `Optional` vazio significa só "não encontrado ou rejeitado pela
+     UF". Uma `FeignException` (timeout, 429, 5xx) é **propagada**, venha da primeira
+     consulta ou do fallback, e erro na primeira **não** dispara o fallback.
+   - A validação de UF e o fallback **não** se aplicam ao cadastro manual: o
+     `getCoordinates` só ganhou o throttle, o `countrycodes` e a correção do §9, item 18.
 3. **CNPJ é único** e verificado tanto na criação quanto na atualização.
 4. **Login rejeita usuário inativo** com mensagem específica, distinta de
    credencial inválida.
@@ -1552,6 +1594,16 @@ Problemas reais já encontrados. Consultar antes de investigar comportamento est
     dizendo que o e-mail está tomado por outro perfil e que nada foi alterado. Use outro
     endereço.
 
+### Integrações externas
+
+18. **`limit` e `addressdetails` estavam trocados na chamada ao Nominatim.** A assinatura
+    de `OpenStreetMapClient.search` é `(q, format, addressdetails, limit, countrycodes,
+    User-Agent)`, e o `OpenStreetMapService` passava `DEFAULT_LIMIT` no lugar de
+    `addressdetails` e vice-versa. A troca não tinha efeito porque as duas constantes valem
+    1, e foi corrigida junto com o `countrycodes=br`. Os dois parâmetros são `int`
+    adjacentes: o compilador não acusa a inversão, e um teste com os dois valendo 1 também
+    não. O que segura é o teste que verifica a chamada pelos **nomes** das constantes.
+
 ### Primeiras ocorrências introduzidas pelo M2
 
 Três coisas que não existiam no projeto e agora têm um único ponto de uso — ao mexer
@@ -1689,7 +1741,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **445 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **469 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -1701,7 +1753,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   handler global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 445, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 469, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa
