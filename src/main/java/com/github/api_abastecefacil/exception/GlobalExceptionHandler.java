@@ -529,6 +529,51 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(error);
     }
 
+    /**
+     * 409: ja existe uma importacao de postos em andamento, e so roda uma por vez. Conflito
+     * com o estado atual do recurso, nao erro no envio -- repetir mais tarde funciona.
+     *
+     * <p>O "error" e proprio para o frontend poder trocar o botao de importar pelo
+     * acompanhamento da importacao em curso, em vez de exibir um CONFLICT generico. A
+     * mensagem traz o id da importacao em andamento, que e o que ele precisa para consultar
+     * o progresso.
+     */
+    @ExceptionHandler(ImportacaoEmAndamentoException.class)
+    public ResponseEntity<ErrorResponse> handleImportacaoEmAndamentoException(
+            ImportacaoEmAndamentoException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.CONFLICT.value(),
+                "IMPORTACAO_EM_ANDAMENTO",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
+    }
+
+    /**
+     * 404: o id nao corresponde a nenhuma importacao conhecida. Alem do id que nunca existiu,
+     * cobre dois casos normais de operacao: registro finalizado ha mais de 24 horas, que e
+     * descartado, e reinicio da aplicacao, porque o registro e em memoria.
+     *
+     * <p>Nao reusa NOT_FOUND para o frontend distinguir "esta importacao sumiu" -- parar de
+     * consultar e mostrar a ultima situacao conhecida -- de um posto inexistente.
+     */
+    @ExceptionHandler(ImportacaoNaoEncontradaException.class)
+    public ResponseEntity<ErrorResponse> handleImportacaoNaoEncontradaException(
+            ImportacaoNaoEncontradaException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.NOT_FOUND.value(),
+                "IMPORTACAO_NAO_ENCONTRADA",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(error);
+    }
+
     @ExceptionHandler(FeignException.class)
     public ResponseEntity<ErrorResponse> handleFeignException(
             FeignException ex, WebRequest request) {

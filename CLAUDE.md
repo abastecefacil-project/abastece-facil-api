@@ -199,6 +199,7 @@ que a forma canônica, não porque fosse necessário.
 | `abastecefacil.email.frontend-url` | `http://localhost:5173` | — | `ABASTECEFACIL_EMAIL_FRONTEND_URL` | **sim** |
 | `importacao-postos.ufs` | `SC` | — | `IMPORTACAO_POSTOS_UFS` | não |
 | `importacao-postos.tipos` | `POSTO` | — | `IMPORTACAO_POSTOS_TIPOS` | não |
+| `importacao-postos.max-falhas-consecutivas` | `5` | — | `IMPORTACAO_POSTOS_MAX_FALHAS_CONSECUTIVAS` | não |
 | `viacep-api.url` | `https://viacep.com.br/ws/` | — | `VIACEP_API_URL` | não |
 | `openstreetmap-api.url` | `https://nominatim.openstreetmap.org` | — | `OPENSTREETMAP_API_URL` | não |
 | `openstreetmap-api.user-agent` | `AbasteceFacil/1.0 (contato@abastecefacil.com.br)` | — | `OPENSTREETMAP_USER_AGENT` | **sim** |
@@ -1371,6 +1372,46 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
     chamadores a capturam: o cadastro sinaliza no `conviteEnviado` (item 24) e a
     recuperação já respondeu antes de o envio começar. O handler 502 segue registrado como
     rede de segurança, porque não há fallback `Exception.class`.
+40. **A importação de postos roda em segundo plano, numa thread dedicada, e o estado é
+    em memória.** A primeira carga tem ~1.200 inserções e o Nominatim aceita 1 req/s:
+    uns vinte minutos, que não cabem numa requisição HTTP nem numa transação.
+    `ExecutorImportacaoPostos.iniciar(plano)` registra, submete e devolve um `UUID` na
+    hora; `consultar(id)` mostra `status`, `total`, `processados` e, ao final, o resumo.
+
+    - **Uma por vez, de forma atômica.** `RegistroImportacoesPostos.iniciar` faz
+      `compareAndSet` num `AtomicReference`, e uma segunda importação recebe 409
+      `IMPORTACAO_EM_ANDAMENTO`. Id desconhecido é 404 `IMPORTACAO_NAO_ENCONTRADA`. As duas
+      exceções ainda **não são alcançáveis por endpoint nenhum**: o controller vem depois.
+    - **O estado é por instância e se perde no reinício**, como o `RateLimitService` (item
+      37). Com mais de um nó, cada um teria a própria vaga e duas importações poderiam rodar
+      juntas. Num reinício, a importação em curso morre com a aplicação: o que já foi
+      gravado fica, e a próxima importação recalcula o plano sobre o banco. Os registros
+      finalizados são descartados 24 h depois, com limpeza oportunista em `iniciar` e
+      `consultar`, sem `@Scheduled`.
+    - **Ordem:** ATUALIZAR e REATIVAR sem geocodificação; depois INSERIR, ATUALIZAR e
+      REATIVAR com geocodificação; DESATIVAR por último, e só se a importação não foi
+      interrompida.
+    - **Cada posto é gravado em transação curta** pelo `GravadorImportacaoPostos`, bean
+      separado para o `@Transactional` valer pelo proxy. A geocodificação acontece antes e
+      fora de transação, então a espera do throttle nunca prende conexão do pool.
+    - **Falha de geocodificação de endereço alterado** (ATUALIZAR/REATIVAR), resultado vazio
+      ou `FeignException`: grava só nome, fantasia, telefone, horário, CNPJ e o
+      `isActive = true` do REATIVAR, e **mantém** endereço, bairro, cidade, UF, CEP e
+      coordenadas. Endereço novo com coordenada antiga deixaria o marcador no lugar errado
+      em silêncio; mantendo o antigo, a diferença reaparece e a próxima importação tenta de
+      novo. Vazio vira aviso; `FeignException` vira erro. INSERIR sem coordenada não grava.
+    - **`importacao-postos.max-falhas-consecutivas` (5) interrompe.** Toda `FeignException`
+      soma 1; qualquer resposta válida, com ou sem resultado, zera. Ao atingir o limite:
+      `FALHOU`, log WARN, o gravado permanece e DESATIVAR não roda. Erro ao **gravar** um
+      item (`DataIntegrityViolationException`, por exemplo um CNPJ cadastrado à mão durante
+      a importação) não conta: vira erro do item e a importação segue.
+    - **Itens de DESATIVAR saem com `linha = 0`** nas ocorrências
+      (`LINHA_FORA_DA_PLANILHA`), porque não vêm da planilha. O Excel numera a partir de 1,
+      então 0 nunca colide com uma linha real, e o `OcorrenciaPlanilha` continua com `int`.
+    - **Sem autorização no executor.** Ela é do chamador, na thread da requisição: a thread
+      da importação não tem `SecurityContext`. Pelo mesmo motivo a importação **não** usa
+      `GasStationService.create/update`, que autorizam pelo `UsuarioAutenticadoProvider` e
+      sempre regeocodificam, nem `deleteGasStation`, que é físico.
 
 ---
 
@@ -1604,6 +1645,24 @@ Problemas reais já encontrados. Consultar antes de investigar comportamento est
     adjacentes: o compilador não acusa a inversão, e um teste com os dois valendo 1 também
     não. O que segura é o teste que verifica a chamada pelos **nomes** das constantes.
 
+19. **Um bean do tipo `java.util.concurrent.Executor` desliga o `applicationTaskExecutor`
+    do Spring Boot.** No Boot 3.5.4 (conferido no bytecode da autoconfiguração), o executor
+    padrão só é criado se não houver **nenhum** bean `Executor`, ou com
+    `spring.task.execution.mode=force`. Publicar o executor da importação como bean faria a
+    autoconfiguração recuar em silêncio, e o `@Async` do `RecuperacaoSenhaService` passaria
+    a rodar na thread única da importação: os e-mails de recuperação ficariam na fila atrás
+    de uma importação de vinte minutos. Nada falharia nem avisaria.
+
+    Por isso a thread da importação é dona de um `ThreadPoolTaskExecutor` **privado** dentro
+    do `@Component` `ExecucaoImportacaoPostos`, que não é `Executor` (há teste conferindo) e
+    só expõe `submeter`. Como o executor não é bean, o Spring não gerencia o ciclo de vida
+    dele, e o `@PreDestroy encerrar()` é obrigatório.
+
+    Verificação na prática: com `provedor: log`, a linha `[E-MAIL SIMULADO]` de uma
+    recuperação de senha sai numa thread `task-*` do executor padrão, nunca em
+    `importacao-postos-*`. **Qualquer executor futuro segue o mesmo desenho**, ou é
+    declarado como bean junto com a decisão consciente sobre o `@Async`.
+
 ### Primeiras ocorrências introduzidas pelo M2
 
 Três coisas que não existiam no projeto e agora têm um único ponto de uso — ao mexer
@@ -1741,7 +1800,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **469 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **513 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -1749,11 +1808,12 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   `ResendEnviadorEmail`, o `ConteudoEmail`, o `UserMapper`, o `UserValidator`, o
   `RateLimitService`, o `RecuperacaoSenhaService`, o `EnvioAcessoService`, o
   `AutorizacaoOperacional`, o `NormalizadorPlanilhaPostos`, o `LeitorPlanilhaPostos`, o
-  `PlanejadorImportacaoPostos` e o
+  `PlanejadorImportacaoPostos`, o `RegistroImportacoesPostos`, o `ExecucaoImportacaoPostos`,
+  o `GravadorImportacaoPostos`, o `ExecutorImportacaoPostos` e o
   handler global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 469, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 513, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa
@@ -1773,7 +1833,8 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   Ruído esperado na saída: `ResendEnviadorEmailTest` exercita falha de rede e rejeição do
   provedor, então **um stack trace de `IOException: conexão recusada` aparece no log da
   suíte mesmo com tudo verde**. É o `log.error` do adaptador fazendo o que deve. Confira
-  a linha `Tests run:` antes de investigar.
+  a linha `Tests run:` antes de investigar. O mesmo vale para o `ExecutorImportacaoPostosTest`,
+  que exercita falha de gravação: sai o stack trace do `log.error` do executor.
 
   Uma consequência de nenhum teste subir contexto: **um `@Value` mal escrito não é pego
   pela suíte**, só na subida real. Por isso as propriedades `abastecefacil.*` são

@@ -145,4 +145,43 @@ public final class PlanilhaPostosConstants {
 
     public static final String CNPJ_DUPLICADO_BANCO_MESSAGE =
             "CNPJ cadastrado em %d postos; mantido o id %d, os demais ativos serão desativados";
+
+    // ------------------------------------------------------------------ execução
+
+    /**
+     * Linha usada nas ocorrências de itens de desativar, que não vêm da planilha: são postos
+     * do banco ausentes dela. O Excel numera a partir de 1, então 0 nunca colide com uma
+     * linha real, e o campo continua {@code int} no record e número no JSON.
+     */
+    public static final int LINHA_FORA_DA_PLANILHA = 0;
+
+    public static final String THREAD_IMPORTACAO_PREFIXO = "importacao-postos-";
+    public static final int SEGUNDOS_ESPERA_DESLIGAMENTO = 10;
+
+    public static final String IMPORTACAO_EM_ANDAMENTO_MESSAGE =
+            "Já existe uma importação de postos em andamento (id %s). Aguarde a conclusão para iniciar outra.";
+    public static final String IMPORTACAO_NAO_ENCONTRADA_MESSAGE =
+            "Importação de postos não encontrada. Registros finalizados são descartados após 24 horas.";
+
+    public static final String COORDENADAS_NAO_ENCONTRADAS_INSERIR_MESSAGE =
+            "Endereço não localizado pelo serviço de geocodificação; posto não inserido";
+    public static final String COORDENADAS_NAO_ENCONTRADAS_ATUALIZAR_MESSAGE =
+            "Endereço alterado na planilha não foi localizado; endereço e coordenadas mantidos";
+    public static final String FALHA_GEOCODIFICACAO_INSERIR_MESSAGE =
+            "Falha de comunicação com o serviço de geocodificação; posto não inserido";
+    public static final String FALHA_GEOCODIFICACAO_ATUALIZAR_MESSAGE =
+            "Falha de comunicação com o serviço de geocodificação; endereço e coordenadas mantidos";
+    public static final String CONFLITO_GRAVACAO_MESSAGE =
+            "Não foi possível gravar o posto: conflito com outro posto cadastrado (por exemplo, o mesmo CNPJ)";
+    public static final String ERRO_GRAVACAO_MESSAGE =
+            "Não foi possível gravar o posto por um erro inesperado";
+
+    public static final String IMPORTACAO_CONCLUIDA_MESSAGE = "Importação concluída.";
+    public static final String IMPORTACAO_INTERROMPIDA_FALHAS_MESSAGE =
+            "Importação interrompida: o serviço de geocodificação está indisponível ou bloqueando as "
+                    + "requisições (%d falhas consecutivas). %d de %d itens processados; o que já foi gravado "
+                    + "permanece e nenhum posto foi desativado.";
+    public static final String IMPORTACAO_INTERROMPIDA_ERRO_MESSAGE =
+            "Importação interrompida por erro inesperado. %d de %d itens processados; o que já foi gravado "
+                    + "permanece e nenhum posto foi desativado.";
 }

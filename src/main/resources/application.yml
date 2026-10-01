@@ -140,6 +140,11 @@ importacao-postos:
   # o @Value converter sozinho: IMPORTACAO_POSTOS_UFS=SC,PR
   ufs: "SC"
   tipos: "POSTO"
+  # Falhas de comunicação SEGUIDAS com o Nominatim (timeout, 429, 5xx) que interrompem a
+  # execução da importação como FALHOU. Qualquer resposta válida, com ou sem resultado,
+  # zera a contagem. Com o serviço fora ou bloqueando, continuar só acumularia erro item a
+  # item por vinte minutos. O que já foi gravado permanece, e nenhum posto é desativado.
+  max-falhas-consecutivas: 5
 
 viacep-api:
   url: "https://viacep.com.br/ws/"

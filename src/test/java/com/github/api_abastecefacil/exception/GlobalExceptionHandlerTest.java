@@ -328,4 +328,31 @@ class GlobalExceptionHandlerTest {
         assertThat(response.getBody().error()).isEqualTo("PLANILHA_SEM_POSTOS_NO_ESCOPO");
         assertThat(response.getBody().message()).contains("Nenhum posto foi alterado");
     }
+
+    @Test
+    void handleImportacaoEmAndamentoException_ShouldReturn409WithOwnError() {
+        ImportacaoEmAndamentoException ex = new ImportacaoEmAndamentoException("Já existe uma importação em andamento");
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleImportacaoEmAndamentoException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().status()).isEqualTo(409);
+        assertThat(response.getBody().error()).isEqualTo("IMPORTACAO_EM_ANDAMENTO");
+        assertThat(response.getBody().message()).isEqualTo("Já existe uma importação em andamento");
+        assertThat(response.getBody().path()).isEqualTo("uri=/test");
+    }
+
+    @Test
+    void handleImportacaoNaoEncontradaException_ShouldReturn404WithOwnError() {
+        ImportacaoNaoEncontradaException ex = new ImportacaoNaoEncontradaException("Importação não encontrada");
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleImportacaoNaoEncontradaException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().status()).isEqualTo(404);
+        assertThat(response.getBody().error()).isEqualTo("IMPORTACAO_NAO_ENCONTRADA");
+        assertThat(response.getBody().message()).isEqualTo("Importação não encontrada");
+    }
 }
