@@ -115,6 +115,14 @@ abastecefacil:
     # si são contrato do S6.
     frontend-url: "http://localhost:5173"
 
+importacao-postos:
+  # Escopo da importação da planilha de postos credenciados: só entram linhas cuja UF e
+  # cujo Tipo estejam nestas listas. A comparação ignora caixa, acento e espaço nas
+  # pontas. Lista separada por vírgula, como abastecefacil.auth.dominios-permitidos, para
+  # o @Value converter sozinho: IMPORTACAO_POSTOS_UFS=SC,PR
+  ufs: "SC"
+  tipos: "POSTO"
+
 viacep-api:
   url: "https://viacep.com.br/ws/"
 

@@ -477,6 +477,58 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(error);
     }
 
+    /**
+     * 400: o arquivo enviado nao serve como planilha de postos -- nao e .xlsx legivel, nao
+     * tem cabecalho reconhecivel ou falta coluna obrigatoria. E o arquivo inteiro que esta
+     * errado; problema de uma linha isolada nao chega aqui, vira erro da linha no resultado
+     * da leitura.
+     *
+     * <p>O "error" e proprio pelo motivo de sempre: o ErrorResponse so carrega status,
+     * error, message e path, e o frontend precisa distinguir "troque o arquivo" de um
+     * BAD_REQUEST de validacao de campo. A mensagem ja diz o que corrigir -- as colunas
+     * faltantes e a linha do cabecalho, ou como converter um .xls. A mensagem do POI, que
+     * descreve a estrutura interna do zip, fica so na causa encadeada.
+     */
+    @ExceptionHandler(PlanilhaInvalidaException.class)
+    public ResponseEntity<ErrorResponse> handlePlanilhaInvalidaException(
+            PlanilhaInvalidaException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "PLANILHA_INVALIDA",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+    }
+
+    /**
+     * 422 Unprocessable Entity: o primeiro do projeto. O arquivo e uma planilha valida, com
+     * o cabecalho certo -- o que falha e o conteudo, que nao tem nenhuma linha valida no
+     * escopo da importacao. Nao e 400 porque nada no formato do envio esta errado, e esse
+     * status ja e o de PLANILHA_INVALIDA.
+     *
+     * <p>A recusa existe para impedir desativacao em massa: sem linha valida, todo posto
+     * ativo seria "ausente da planilha". O "error" e proprio para o frontend poder dizer
+     * "este arquivo parece ser de outro estado ou de outra exportacao" em vez de um erro
+     * generico. A mensagem traz os totais lidos, no escopo e com erro, que distinguem os
+     * dois casos, e afirma que nenhum posto foi alterado.
+     */
+    @ExceptionHandler(PlanilhaSemPostosNoEscopoException.class)
+    public ResponseEntity<ErrorResponse> handlePlanilhaSemPostosNoEscopoException(
+            PlanilhaSemPostosNoEscopoException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.UNPROCESSABLE_ENTITY.value(),
+                "PLANILHA_SEM_POSTOS_NO_ESCOPO",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(error);
+    }
+
     @ExceptionHandler(FeignException.class)
     public ResponseEntity<ErrorResponse> handleFeignException(
             FeignException ex, WebRequest request) {
