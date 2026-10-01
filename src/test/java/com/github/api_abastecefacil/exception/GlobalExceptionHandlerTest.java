@@ -291,4 +291,41 @@ class GlobalExceptionHandlerTest {
                 .doesNotContainIgnoringCase("e-mail")
                 .doesNotContainIgnoringCase("ip");
     }
+
+    // ------------------------------------------------- importação de postos
+
+    @Test
+    void handlePlanilhaInvalidaException_ShouldReturn400WithOwnErrorCode() {
+        PlanilhaInvalidaException ex = new PlanilhaInvalidaException(
+                "Colunas obrigatórias ausentes no cabeçalho da linha 5: Bairro.",
+                new IllegalStateException("detalhe interno do POI"));
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handlePlanilhaInvalidaException(ex, webRequest);
+
+        // Codigo proprio, e nao BAD_REQUEST: o frontend precisa distinguir "troque o
+        // arquivo" de erro de validacao de campo. A causa nunca chega ao corpo.
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("PLANILHA_INVALIDA");
+        assertThat(response.getBody().message())
+                .isEqualTo("Colunas obrigatórias ausentes no cabeçalho da linha 5: Bairro.")
+                .doesNotContain("POI");
+    }
+
+    @Test
+    void handlePlanilhaSemPostosNoEscopoException_ShouldReturn422WithOwnErrorCode() {
+        PlanilhaSemPostosNoEscopoException ex = new PlanilhaSemPostosNoEscopoException(
+                "Nenhuma linha válida no escopo da importação (17319 lidas, 0 no escopo, 0 com erro). "
+                        + "Nenhum posto foi alterado.");
+
+        ResponseEntity<ErrorResponse> response =
+                exceptionHandler.handlePlanilhaSemPostosNoEscopoException(ex, webRequest);
+
+        // 422 e nao 400: o arquivo e valido, o conteudo e que nao serve -- e o 400 ja e
+        // o de PLANILHA_INVALIDA.
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("PLANILHA_SEM_POSTOS_NO_ESCOPO");
+        assertThat(response.getBody().message()).contains("Nenhum posto foi alterado");
+    }
 }

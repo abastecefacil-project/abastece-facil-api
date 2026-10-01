@@ -197,6 +197,8 @@ que a forma canônica, não porque fosse necessário.
 | `abastecefacil.email.api-key` | vazio | — | `ABASTECEFACIL_EMAIL_API_KEY` | **sim** |
 | `abastecefacil.email.api-url` | `https://api.resend.com` | — | `ABASTECEFACIL_EMAIL_API_URL` | não |
 | `abastecefacil.email.frontend-url` | `http://localhost:5173` | — | `ABASTECEFACIL_EMAIL_FRONTEND_URL` | **sim** |
+| `importacao-postos.ufs` | `SC` | — | `IMPORTACAO_POSTOS_UFS` | não |
+| `importacao-postos.tipos` | `POSTO` | — | `IMPORTACAO_POSTOS_TIPOS` | não |
 | `viacep-api.url` | `https://viacep.com.br/ws/` | — | `VIACEP_API_URL` | não |
 | `openstreetmap-api.url` | `https://nominatim.openstreetmap.org` | — | `OPENSTREETMAP_API_URL` | não |
 | `openstreetmap-api.user-agent` | `AbasteceFacil/1.0 (contato@abastecefacil.com.br)` | — | `OPENSTREETMAP_USER_AGENT` | **sim** |
@@ -1687,17 +1689,19 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **338 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **445 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
   `AdministradorInicialInitializer`, o `EnviadorEmailConfig`, o `EnviadorEmailLog`, o
   `ResendEnviadorEmail`, o `ConteudoEmail`, o `UserMapper`, o `UserValidator`, o
   `RateLimitService`, o `RecuperacaoSenhaService`, o `EnvioAcessoService`, o
-  `AutorizacaoOperacional` e o handler global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
+  `AutorizacaoOperacional`, o `NormalizadorPlanilhaPostos`, o `LeitorPlanilhaPostos`, o
+  `PlanejadorImportacaoPostos` e o
+  handler global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 338, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 445, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa

@@ -107,6 +107,16 @@
             <version>4.3.0</version>
         </dependency>
 
+        <!-- Leitura da planilha .xlsx de postos credenciados. Única forma de ler .xlsx:
+             o projeto não tinha biblioteca de planilha. A versão é explícita porque o
+             Spring Boot não gerencia o POI. O log do POI (log4j-api) cai no logback pelo
+             log4j-to-slf4j que o spring-boot-starter-logging já traz. -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.5.1</version>
+        </dependency>
+
         <dependency>
             <groupId>com.querydsl</groupId>
             <artifactId>querydsl-apt</artifactId>
