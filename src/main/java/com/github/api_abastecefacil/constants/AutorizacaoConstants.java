@@ -23,4 +23,12 @@ public final class AutorizacaoConstants {
 
     public static final String PERFIL_NAO_PERMITIDO_CONSULTA_MESSAGE =
             "Seu perfil não permite consultar este registro";
+
+    /**
+     * Hoje o único recurso exclusivo de administrador é a importação de postos, e a mensagem
+     * diz o que foi recusado. O próximo recurso que usar {@code autorizarAdministracao}
+     * precisa da sua própria mensagem.
+     */
+    public static final String PERFIL_NAO_PERMITIDO_ADMINISTRACAO_MESSAGE =
+            "Somente um administrador pode importar a planilha de postos ou acompanhar a importação";
 }

@@ -1,5 +1,6 @@
 package com.github.api_abastecefacil.service;
 
+import com.github.api_abastecefacil.constants.AutorizacaoConstants;
 import com.github.api_abastecefacil.exception.PerfilNaoPermitidoException;
 import com.github.api_abastecefacil.model.Perfil;
 import com.github.api_abastecefacil.model.Regional;
@@ -118,5 +119,27 @@ class AutorizacaoOperacionalTest {
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(autor);
 
         assertThrows(PerfilNaoPermitidoException.class, () -> autorizacao.autorizarEscrita());
+    }
+
+    // ------------------------------------------------------------- administração
+
+    @Test
+    void autorizarAdministracao_ShouldAllowAdministrador() {
+        autenticadoComo(Perfil.ADMINISTRADOR);
+        assertThatCode(() -> autorizacao.autorizarAdministracao()).doesNotThrowAnyException();
+    }
+
+    @Test
+    void autorizarAdministracao_ShouldRejectGestorFrota() {
+        autenticadoComo(Perfil.GESTOR_FROTA);
+        PerfilNaoPermitidoException ex =
+                assertThrows(PerfilNaoPermitidoException.class, () -> autorizacao.autorizarAdministracao());
+        assertThat(ex.getMessage()).isEqualTo(AutorizacaoConstants.PERFIL_NAO_PERMITIDO_ADMINISTRACAO_MESSAGE);
+    }
+
+    @Test
+    void autorizarAdministracao_ShouldRejectColaborador() {
+        autenticadoComo(Perfil.COLABORADOR);
+        assertThrows(PerfilNaoPermitidoException.class, () -> autorizacao.autorizarAdministracao());
     }
 }

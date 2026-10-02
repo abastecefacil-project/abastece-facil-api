@@ -184,4 +184,19 @@ public final class PlanilhaPostosConstants {
     public static final String IMPORTACAO_INTERROMPIDA_ERRO_MESSAGE =
             "Importação interrompida por erro inesperado. %d de %d itens processados; o que já foi gravado "
                     + "permanece e nenhum posto foi desativado.";
+
+    // ------------------------------------------------------------------ upload
+
+    public static final String EXTENSAO_XLSX = ".xlsx";
+    public static final String ARQUIVO_VAZIO_MESSAGE = "O arquivo enviado está vazio.";
+    public static final String ARQUIVO_ILEGIVEL_MESSAGE =
+            "Não foi possível ler o arquivo enviado. Tente enviá-lo novamente.";
+    public static final String ARQUIVO_OBRIGATORIO_MESSAGE =
+            "Envie a planilha na parte 'arquivo' da requisição.";
+    public static final String MULTIPART_OBRIGATORIO_MESSAGE =
+            "Envie a planilha como multipart/form-data, na parte 'arquivo'";
+    public static final String ARQUIVO_MUITO_GRANDE_MESSAGE =
+            "O arquivo excede o tamanho máximo permitido de %s.";
+    public static final String ARQUIVO_MUITO_GRANDE_SEM_LIMITE_MESSAGE =
+            "O arquivo excede o tamanho máximo permitido.";
 }

@@ -45,6 +45,14 @@ spring:
             connect-timeout: ${OPENSTREETMAP_CONNECT_TIMEOUT:5000}
             read-timeout: ${OPENSTREETMAP_READ_TIMEOUT:10000}
 
+  # Limite de upload, usado pela importação da planilha de postos (o arquivo real tem ~3,2 MB).
+  # O default do Spring Boot é 1 MB, que recusaria a planilha. Estourar responde 413
+  # ARQUIVO_MUITO_GRANDE. Atenção ao max-swallow-size do Tomcat: ver §9 do CLAUDE.md.
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
   jpa:
     hibernate:
       ddl-auto: validate

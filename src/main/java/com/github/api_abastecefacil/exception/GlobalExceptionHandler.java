@@ -9,6 +9,15 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.util.unit.DataSize;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
+
+import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.ARQUIVO_MUITO_GRANDE_MESSAGE;
+import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.ARQUIVO_MUITO_GRANDE_SEM_LIMITE_MESSAGE;
+import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.ARQUIVO_OBRIGATORIO_MESSAGE;
+import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.MULTIPART_OBRIGATORIO_MESSAGE;
 
 import java.util.stream.Collectors;
 
@@ -572,6 +581,86 @@ public class GlobalExceptionHandler {
         );
 
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(error);
+    }
+
+    /**
+     * 400: a requisicao multipart chegou sem a parte "arquivo" -- o formulario mandou o campo
+     * com outro nome, ou nao mandou nenhum. O "error" e proprio para o frontend distinguir
+     * "faltou o arquivo" de PLANILHA_INVALIDA, que e "o arquivo veio, mas nao serve".
+     */
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public ResponseEntity<ErrorResponse> handleMissingServletRequestPartException(
+            MissingServletRequestPartException ex, WebRequest request) {
+
+        return arquivoObrigatorio(ARQUIVO_OBRIGATORIO_MESSAGE, request);
+    }
+
+    /**
+     * 400: a requisicao nem e multipart -- por exemplo, JSON em /api/gas-stations/import. Sem
+     * este handler a MultipartException nao teria tratamento e sairia como o 403 de corpo
+     * vazio do /error (ver §5 do CLAUDE.md), indistinguivel de "nao autenticado".
+     *
+     * <p>Mesmo "error" do caso acima, porque a acao corretiva e a mesma: enviar o arquivo na
+     * parte "arquivo". O estouro de tamanho tambem e MultipartException, mas tem handler
+     * proprio e mais especifico logo abaixo, que o Spring escolhe primeiro.
+     */
+    @ExceptionHandler(MultipartException.class)
+    public ResponseEntity<ErrorResponse> handleMultipartException(
+            MultipartException ex, WebRequest request) {
+
+        return arquivoObrigatorio(MULTIPART_OBRIGATORIO_MESSAGE, request);
+    }
+
+    private ResponseEntity<ErrorResponse> arquivoObrigatorio(String mensagem, WebRequest request) {
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.BAD_REQUEST.value(),
+                "ARQUIVO_OBRIGATORIO",
+                mensagem,
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(error);
+    }
+
+    /**
+     * 413 Payload Too Large: o upload passou de spring.servlet.multipart.max-file-size ou
+     * max-request-size. A excecao e lancada pelo DispatcherServlet ao resolver o multipart,
+     * dentro do dispatch, entao chega a este advice.
+     *
+     * <p><b>O limite so aparece na mensagem quando a excecao o conhece.</b> Quando o estouro
+     * vem do parser multipart do Tomcat, o Spring cria a excecao com -1
+     * (StandardMultipartHttpServletRequest.handleParseFailure). Injetar max-file-size aqui
+     * tambem nao serviria: o limite estourado pode ter sido o max-request-size, e a mensagem
+     * citaria o numero errado. Sem valor confiavel, a mensagem sai sem numero.
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ErrorResponse> handleMaxUploadSizeExceededException(
+            MaxUploadSizeExceededException ex, WebRequest request) {
+
+        String mensagem = ex.getMaxUploadSize() > 0
+                ? String.format(ARQUIVO_MUITO_GRANDE_MESSAGE, tamanhoLegivel(ex.getMaxUploadSize()))
+                : ARQUIVO_MUITO_GRANDE_SEM_LIMITE_MESSAGE;
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.PAYLOAD_TOO_LARGE.value(),
+                "ARQUIVO_MUITO_GRANDE",
+                mensagem,
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(error);
+    }
+
+    /** "10 MB" ou "512 KB" quando o valor é exato nessa unidade; senão, em bytes. */
+    private static String tamanhoLegivel(long bytes) {
+        DataSize tamanho = DataSize.ofBytes(bytes);
+        if (bytes % DataSize.ofMegabytes(1).toBytes() == 0) {
+            return tamanho.toMegabytes() + " MB";
+        }
+        if (bytes % DataSize.ofKilobytes(1).toBytes() == 0) {
+            return tamanho.toKilobytes() + " KB";
+        }
+        return bytes + " bytes";
     }
 
     @ExceptionHandler(FeignException.class)

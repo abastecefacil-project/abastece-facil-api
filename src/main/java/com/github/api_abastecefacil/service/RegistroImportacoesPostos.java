@@ -11,6 +11,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
@@ -92,6 +93,22 @@ public class RegistroImportacoesPostos {
             throw new ImportacaoNaoEncontradaException(IMPORTACAO_NAO_ENCONTRADA_MESSAGE);
         }
         return status;
+    }
+
+    /**
+     * A importação em andamento, se houver. Só leitura: não toma nem libera a vaga.
+     *
+     * <p>O filtro por {@code EM_ANDAMENTO} cobre o instante entre {@link #finalizar} gravar o
+     * desfecho e liberar a vaga: nesse intervalo o id ainda está em {@code emAndamento}, mas
+     * a importação já terminou e não deve ser devolvida como atual.
+     */
+    public Optional<ImportacaoPostosStatus> atual() {
+        UUID id = emAndamento.get();
+        if (id == null) {
+            return Optional.empty();
+        }
+        return Optional.ofNullable(registros.get(id))
+                .filter(status -> status.status() == StatusImportacao.EM_ANDAMENTO);
     }
 
     private void descartarExpirados() {

@@ -182,6 +182,8 @@ que a forma canônica, não porque fosse necessário.
 | `spring.flyway.baseline-on-migrate` | `true` | — | `SPRING_FLYWAY_BASELINE_ON_MIGRATE` | não |
 | `spring.http.client.connect-timeout` | `5s` | — | `SPRING_HTTP_CLIENT_CONNECT_TIMEOUT` | não |
 | `spring.http.client.read-timeout` | `10s` | — | `SPRING_HTTP_CLIENT_READ_TIMEOUT` | não |
+| `spring.servlet.multipart.max-file-size` | `10MB` | — | `SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE` | não |
+| `spring.servlet.multipart.max-request-size` | `10MB` | — | `SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE` | não |
 | `server.port` | `8081` | — | `SERVER_PORT` | não |
 | `jwt.secret` | segredo de dev, versionado | — | `JWT_SECRET` | **sim** |
 | `jwt.expiration` | `86400000` (24h) — GESTOR_FROTA e ADMINISTRADOR | — | `JWT_EXPIRATION` | não |
@@ -501,9 +503,15 @@ resultado por outro caminho.
 | GET | `/api/regionais` | autenticado |
 | GET | `/api/regionais/{id}` | autenticado |
 | GET | `/api/cep/info?cep=` | autenticado |
+| POST | `/api/gas-stations/import/preview` | **só `ADMINISTRADOR`** |
+| POST | `/api/gas-stations/import` | **só `ADMINISTRADOR`** |
+| GET | `/api/gas-stations/import/atual` | **só `ADMINISTRADOR`** |
+| GET | `/api/gas-stations/import/{id}` | **só `ADMINISTRADOR`** |
 
 **"gestão"** é a marca do P0.4 e significa `ADMINISTRADOR` **ou** `GESTOR_FROTA` —
 COLABORADOR recebe 403. Detalhe na subseção "Autorização do cadastro operacional".
+A importação de postos é a exceção sob `/api/gas-stations/**`: **só `ADMINISTRADOR`**,
+porque reescreve e desativa o cadastro inteiro de uma vez. Ver "Importação de postos".
 
 **Note a assimetria:** consultar postos e criar ocorrência são públicos; todo o
 resto exige token. É proposital — o usuário final não faz login.
@@ -719,6 +727,51 @@ quais são deixaria o gestor sem saída — a lista é configuração operaciona
 As duas primeiras compartilham status **e mensagem** de propósito: responder algo
 diferente para "usuário desativado" confirmaria a quem segura o link que aquele token era
 bom e que a conta existe.
+
+### Importação de postos
+
+Quatro rotas sob `/api/gas-stations/import`, todas **só `ADMINISTRADOR`**
+(`AutorizacaoOperacional.autorizarAdministracao`, primeira instrução de cada método da
+`ImportacaoPostosService`). Ficam sob `/api/gas-stations/**`, que o `SecurityConfig` já exige
+autenticado: o `SecurityConfig` **não mudou**, e não há rota pública de importação.
+
+| Rota | Resposta |
+|---|---|
+| `POST /preview`, multipart, parte `arquivo` | 200 `PreviaImportacaoResponse`. Não grava nada |
+| `POST /`, multipart, parte `arquivo` | **202** `{ "id": "<uuid>" }`, com `Location: /api/gas-stations/import/{id}` |
+| `GET /atual` | 200 `ImportacaoPostosStatus` da importação `EM_ANDAMENTO`, ou **204** sem corpo |
+| `GET /{id}` | 200 `ImportacaoPostosStatus` |
+
+- **`/atual` vence `/{id}`** porque o `PathPattern` ordena segmento literal acima de variável,
+  o mesmo mecanismo de `/api/users/me`.
+- **O `{id}` é recebido como `String`.** Valor que não é UUID responde 404
+  `IMPORTACAO_NAO_ENCONTRADA`, como um id inexistente, em vez de virar erro de conversão sem
+  handler — que sairia como o 403 vazio do `/error`.
+- **`PreviaImportacaoResponse` não expõe o `PlanoImportacao`.** Os itens não trazem `dados`
+  (a linha da planilha): só `id`, `cnpj`, `nome`, `cidade`, `camposAlterados` e
+  `requerGeocodificacao`. Na primeira carga são ~1.200 itens, e a execução não usa a prévia.
+- **As rotas não declaram `consumes`, de propósito.** Com `consumes = multipart/form-data`,
+  JSON seria recusado com `HttpMediaTypeNotSupportedException`, sem handler, e cairia no 403
+  vazio. Sem ele, o `@RequestPart` lança `MultipartException`, que tem handler.
+- `ImportacaoPostosStatus`: `id`, `status` (`EM_ANDAMENTO`/`CONCLUIDA`/`FALHOU`), `total`,
+  `processados`, `iniciadaEm`, `concluidaEm`, `mensagem` e `resumo` — os três últimos `null`
+  enquanto em andamento.
+
+| Situação | HTTP | `error` |
+|---|---|---|
+| perfil que não é `ADMINISTRADOR` | 403 | `PERFIL_NAO_PERMITIDO` |
+| parte `arquivo` ausente, ou requisição que não é multipart | 400 | `ARQUIVO_OBRIGATORIO` |
+| arquivo vazio, sem `.xlsx`, ilegível, sem cabeçalho ou com coluna faltando | 400 | `PLANILHA_INVALIDA` |
+| arquivo acima de `spring.servlet.multipart.*` | **413** | `ARQUIVO_MUITO_GRANDE` |
+| nenhuma linha válida no escopo | 422 | `PLANILHA_SEM_POSTOS_NO_ESCOPO` |
+| já há importação em andamento | 409 | `IMPORTACAO_EM_ANDAMENTO` |
+| id inexistente, descartado após 24 h, ou que não é UUID | 404 | `IMPORTACAO_NAO_ENCONTRADA` |
+
+O 413 é o primeiro do projeto. A mensagem cita o limite **só quando a exceção o conhece**:
+quando o estouro vem do parser multipart do Tomcat, o Spring cria a
+`MaxUploadSizeExceededException` com `-1`, e a mensagem sai sem número. O limite também não
+é injetado no handler: o que estourou pode ter sido `max-request-size`, e citar
+`max-file-size` daria o número errado.
 
 ### Recuperação de senha (S4)
 
@@ -1381,7 +1434,7 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
     - **Uma por vez, de forma atômica.** `RegistroImportacoesPostos.iniciar` faz
       `compareAndSet` num `AtomicReference`, e uma segunda importação recebe 409
       `IMPORTACAO_EM_ANDAMENTO`. Id desconhecido é 404 `IMPORTACAO_NAO_ENCONTRADA`. As duas
-      exceções ainda **não são alcançáveis por endpoint nenhum**: o controller vem depois.
+      chegam ao cliente pelos endpoints de `/api/gas-stations/import` (§5).
     - **O estado é por instância e se perde no reinício**, como o `RateLimitService` (item
       37). Com mais de um nó, cada um teria a própria vaga e duas importações poderiam rodar
       juntas. Num reinício, a importação em curso morre com a aplicação: o que já foi
@@ -1412,6 +1465,32 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
       da importação não tem `SecurityContext`. Pelo mesmo motivo a importação **não** usa
       `GasStationService.create/update`, que autorizam pelo `UsuarioAutenticadoProvider` e
       sempre regeocodificam, nem `deleteGasStation`, que é físico.
+41. **A regra completa de sincronização com a planilha de postos**, de ponta a ponta — o
+    que cada peça diz no seu javadoc, reunido num lugar só:
+
+    - **Só `ADMINISTRADOR` importa**, e só ele vê a prévia e o andamento
+      (`autorizarAdministracao`). Gestor de frota cadastra posto à mão, mas não sincroniza o
+      cadastro inteiro.
+    - **Prévia e importação recalculam o plano a partir do arquivo.** A importação não
+      reaproveita a prévia: o administrador reenvia o arquivo, que é lido e planejado de novo
+      na requisição — erros 400 e 422 saem ali, síncronos, antes de qualquer gravação. Uma
+      prévia pedida durante uma importação em curso descreve um banco que está mudando.
+    - **A chave é o CNPJ em dígitos**, dos dois lados. O banco tem CNPJ com e sem máscara, e
+      a importação grava sempre mascarado.
+    - **Inserir** quem não existe; **reativar** quem existe inativo; **atualizar** quem
+      existe ativo com diferença; **desativar** os ativos cujo CNPJ não está na planilha —
+      contando como presentes também as linhas com erro que têm CNPJ válido.
+    - **A desativação é lógica** (`is_active = false`), nunca `delete`, e é a última etapa:
+      não roda se a importação for interrompida.
+    - **Nulo na planilha nunca sobrescreve o banco**, em nenhum campo: vazio na exportação é
+      ausência de informação, não remoção.
+    - **Geocodificação só quando o lugar muda** — CEP nos dígitos, ou endereço, bairro,
+      cidade e UF ignorando caixa, acento e espaços.
+    - **Falha de geocodificação mantém endereço e coordenadas.** INSERIR sem coordenada não
+      grava; ATUALIZAR/REATIVAR grava só os campos que não são de endereço. A diferença de
+      endereço reaparece na próxima importação, que tenta de novo.
+    - **Falhas de comunicação consecutivas** (`importacao-postos.max-falhas-consecutivas`)
+      interrompem como `FALHOU`; o que foi gravado permanece.
 
 ---
 
@@ -1663,6 +1742,14 @@ Problemas reais já encontrados. Consultar antes de investigar comportamento est
     `importacao-postos-*`. **Qualquer executor futuro segue o mesmo desenho**, ou é
     declarado como bean junto com a decisão consciente sobre o `@Async`.
 
+20. **Upload acima do limite pode chegar como conexão resetada, e não como 413.** O Tomcat
+    descarta até `server.tomcat.max-swallow-size` (default **2 MB**) do corpo que não leu;
+    se o excesso passar disso, ele fecha a conexão antes de a resposta sair, e o cliente vê
+    erro de rede em vez do `ARQUIVO_MUITO_GRANDE`. Com limite de 10 MB, um arquivo de 11 MB
+    recebe o 413; um de 50 MB pode não receber. O default **não** foi aumentado: isso faria o
+    servidor ler corpos grandes que vai recusar de qualquer jeito. A defesa é o frontend
+    conferir o tamanho antes de enviar.
+
 ### Primeiras ocorrências introduzidas pelo M2
 
 Três coisas que não existiam no projeto e agora têm um único ponto de uso — ao mexer
@@ -1800,7 +1887,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **513 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **544 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -1809,11 +1896,12 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   `RateLimitService`, o `RecuperacaoSenhaService`, o `EnvioAcessoService`, o
   `AutorizacaoOperacional`, o `NormalizadorPlanilhaPostos`, o `LeitorPlanilhaPostos`, o
   `PlanejadorImportacaoPostos`, o `RegistroImportacoesPostos`, o `ExecucaoImportacaoPostos`,
-  o `GravadorImportacaoPostos`, o `ExecutorImportacaoPostos` e o
+  o `GravadorImportacaoPostos`, o `ExecutorImportacaoPostos`, o `ImportacaoPostosService`, o
+  `PreviaImportacaoResponse` e o
   handler global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 513, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 544, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa

@@ -9,8 +9,13 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 import static com.github.api_abastecefacil.constants.AuthConstants.LIMITE_SOLICITACOES_EXCEDIDO_MESSAGE;
+import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.ARQUIVO_MUITO_GRANDE_SEM_LIMITE_MESSAGE;
+import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.ARQUIVO_OBRIGATORIO_MESSAGE;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
@@ -354,5 +359,67 @@ class GlobalExceptionHandlerTest {
         assertThat(response.getBody().status()).isEqualTo(404);
         assertThat(response.getBody().error()).isEqualTo("IMPORTACAO_NAO_ENCONTRADA");
         assertThat(response.getBody().message()).isEqualTo("Importação não encontrada");
+    }
+
+    @Test
+    void handleMissingServletRequestPartException_ShouldReturn400ArquivoObrigatorio() {
+        MissingServletRequestPartException ex = new MissingServletRequestPartException("arquivo");
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleMissingServletRequestPartException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("ARQUIVO_OBRIGATORIO");
+        assertThat(response.getBody().message()).isEqualTo(ARQUIVO_OBRIGATORIO_MESSAGE);
+    }
+
+    @Test
+    void handleMultipartException_ShouldReturn400ArquivoObrigatorio_WithInstructions() {
+        MultipartException ex = new MultipartException("Current request is not a multipart request");
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleMultipartException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("ARQUIVO_OBRIGATORIO");
+        assertThat(response.getBody().message())
+                .isEqualTo("Envie a planilha como multipart/form-data, na parte 'arquivo'");
+    }
+
+    @Test
+    void handleMaxUploadSizeExceededException_ShouldReturn413WithTheLimit_WhenKnown() {
+        MaxUploadSizeExceededException ex = new MaxUploadSizeExceededException(10L * 1024 * 1024);
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleMaxUploadSizeExceededException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().status()).isEqualTo(413);
+        assertThat(response.getBody().error()).isEqualTo("ARQUIVO_MUITO_GRANDE");
+        assertThat(response.getBody().message()).isEqualTo("O arquivo excede o tamanho máximo permitido de 10 MB.");
+    }
+
+    /** O parser multipart do Tomcat chega aqui com -1 (StandardMultipartHttpServletRequest.handleParseFailure). */
+    @Test
+    void handleMaxUploadSizeExceededException_ShouldOmitTheNumber_WhenLimitIsUnknown() {
+        MaxUploadSizeExceededException ex = new MaxUploadSizeExceededException(-1);
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleMaxUploadSizeExceededException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.PAYLOAD_TOO_LARGE);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().message())
+                .isEqualTo(ARQUIVO_MUITO_GRANDE_SEM_LIMITE_MESSAGE)
+                .doesNotContain("-1");
+    }
+
+    @Test
+    void handleMaxUploadSizeExceededException_ShouldFallBackToBytes_WhenLimitIsNotAWholeUnit() {
+        MaxUploadSizeExceededException ex = new MaxUploadSizeExceededException(1500);
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleMaxUploadSizeExceededException(ex, webRequest);
+
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().message()).contains("1500 bytes");
     }
 }

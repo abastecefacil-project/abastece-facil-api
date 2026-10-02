@@ -5,12 +5,17 @@ import com.github.api_abastecefacil.model.Perfil;
 import com.github.api_abastecefacil.model.User;
 import org.springframework.stereotype.Component;
 
+import static com.github.api_abastecefacil.constants.AutorizacaoConstants.PERFIL_NAO_PERMITIDO_ADMINISTRACAO_MESSAGE;
 import static com.github.api_abastecefacil.constants.AutorizacaoConstants.PERFIL_NAO_PERMITIDO_CONSULTA_MESSAGE;
 import static com.github.api_abastecefacil.constants.AutorizacaoConstants.PERFIL_NAO_PERMITIDO_ESCRITA_MESSAGE;
 
 /**
  * Autorização por perfil do <b>cadastro operacional</b> — postos, veículos e ocorrências.
  * Ponto único da regra: ADMINISTRADOR e GESTOR_FROTA podem, COLABORADOR não.
+ *
+ * <p>A exceção é {@link #autorizarAdministracao}, que libera <b>só</b> ADMINISTRADOR. Hoje ela
+ * guarda a importação da planilha de postos, que reescreve e desativa o cadastro inteiro de
+ * uma vez.
  *
  * <p><b>Por que não é {@code @PreAuthorize}.</b> O P0.4 mediu a alternativa antes de
  * decidir, e o resultado corrige um detalhe do §6, item 19 do CLAUDE.md: com
@@ -57,6 +62,18 @@ public class AutorizacaoOperacional {
     /** Consultar veículo ou ocorrência pelas rotas autenticadas. */
     public void autorizarConsulta() {
         exigirGestao(PERFIL_NAO_PERMITIDO_CONSULTA_MESSAGE);
+    }
+
+    /**
+     * Só ADMINISTRADOR. Mesmo padrão de {@code UserService.autorizarExclusao}: o perfil vem
+     * do banco, e a recusa é {@code PerfilNaoPermitidoException}.
+     */
+    public void autorizarAdministracao() {
+        User autor = usuarioAutenticadoProvider.obterUsuarioAutenticado();
+
+        if (!Perfil.ADMINISTRADOR.equals(autor.getPerfil())) {
+            throw new PerfilNaoPermitidoException(PERFIL_NAO_PERMITIDO_ADMINISTRACAO_MESSAGE);
+        }
     }
 
     /**

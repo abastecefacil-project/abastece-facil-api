@@ -184,4 +184,27 @@ class RegistroImportacoesPostosTest {
 
         assertThat(registro.consultar(id).status()).isEqualTo(StatusImportacao.EM_ANDAMENTO);
     }
+
+    @Test
+    void atual_ShouldReturnEmpty_WhenNoImportWasStarted() {
+        assertThat(registro.atual()).isEmpty();
+    }
+
+    @Test
+    void atual_ShouldReturnTheImportInProgress() {
+        UUID id = registro.iniciar(3).id();
+
+        assertThat(registro.atual()).hasValueSatisfying(status -> {
+            assertThat(status.id()).isEqualTo(id);
+            assertThat(status.status()).isEqualTo(StatusImportacao.EM_ANDAMENTO);
+        });
+    }
+
+    @Test
+    void atual_ShouldReturnEmpty_AfterTheImportIsFinished() {
+        UUID id = registro.iniciar(3).id();
+        registro.finalizar(id, StatusImportacao.CONCLUIDA, "ok", RESUMO);
+
+        assertThat(registro.atual()).isEmpty();
+    }
 }
