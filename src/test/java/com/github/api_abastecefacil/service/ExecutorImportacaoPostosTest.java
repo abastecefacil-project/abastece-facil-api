@@ -110,17 +110,18 @@ class ExecutorImportacaoPostosTest {
     }
 
     private static ItemPlanoImportacao inserir(int numero) {
-        return new ItemPlanoImportacao(null, "cnpj-" + numero, "Posto " + numero, "Joinville",
+        return new ItemPlanoImportacao(null, "cnpj-" + numero, "Posto " + numero, null, "Joinville",
                 List.of(), true, linha(numero));
     }
 
     private static ItemPlanoImportacao atualizar(long id, int numero, boolean requerGeocodificacao) {
-        return new ItemPlanoImportacao(id, "cnpj-" + numero, "Posto " + numero, "Joinville",
+        return new ItemPlanoImportacao(id, "cnpj-" + numero, "Posto " + numero, null, "Joinville",
                 List.of(COLUNA_ENDERECO), requerGeocodificacao, linha(numero));
     }
 
     private static ItemPlanoImportacao desativar(long id) {
-        return new ItemPlanoImportacao(id, "cnpj-d" + id, "Posto fechado", "Joinville", List.of(), false, null);
+        return new ItemPlanoImportacao(id, "cnpj-d" + id, "Posto fechado", null, "Joinville", List.of(), false,
+                null);
     }
 
     private static PlanoImportacao plano(List<ItemPlanoImportacao> inserir, List<ItemPlanoImportacao> atualizar,

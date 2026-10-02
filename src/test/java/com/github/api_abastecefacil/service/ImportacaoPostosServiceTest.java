@@ -78,7 +78,7 @@ class ImportacaoPostosServiceTest {
     }
 
     private static PlanoImportacao plano() {
-        ItemPlanoImportacao item = new ItemPlanoImportacao(null, "12.345.678/0001-95", "Posto", "Joinville",
+        ItemPlanoImportacao item = new ItemPlanoImportacao(null, "12.345.678/0001-95", "Posto", "Posto", "Joinville",
                 List.of(), true, null);
         return new PlanoImportacao(List.of(item), List.of(), List.of(), List.of(), 2, 10, 8, 5, List.of(), List.of());
     }

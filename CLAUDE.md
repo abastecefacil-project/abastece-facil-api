@@ -748,8 +748,23 @@ autenticado: o `SecurityConfig` **não mudou**, e não há rota pública de impo
   `IMPORTACAO_NAO_ENCONTRADA`, como um id inexistente, em vez de virar erro de conversão sem
   handler — que sairia como o 403 vazio do `/error`.
 - **`PreviaImportacaoResponse` não expõe o `PlanoImportacao`.** Os itens não trazem `dados`
-  (a linha da planilha): só `id`, `cnpj`, `nome`, `cidade`, `camposAlterados` e
-  `requerGeocodificacao`. Na primeira carga são ~1.200 itens, e a execução não usa a prévia.
+  (a linha da planilha): só `id`, `cnpj`, `nome`, `nomeFantasia`, `cidade`, `camposAlterados`
+  e `requerGeocodificacao`. Na primeira carga são ~1.200 itens, e a execução não usa a prévia.
+- **`nome` é a razão social; `nomeFantasia` é como o administrador reconhece o posto**
+  ("POSTO ZANDONA 21", e não "POSTO Z21 LTDA"). Acrescentado depois, de forma aditiva. É o
+  nome fantasia que o posto **terá depois da importação**:
+
+  | Grupo | `nomeFantasia` |
+  |---|---|
+  | inserir | o da planilha |
+  | atualizar, reativar | o da planilha; se ela não traz, o do banco |
+  | desativar | o do banco (o item não tem linha da planilha) |
+
+  O caso do meio é a regra "nulo nunca sobrescreve" aplicada à prévia: planilha sem nome
+  fantasia não apaga o do banco, então a tela mostra o que vai continuar gravado. **Pode ser
+  `null`** — posto novo sem nome fantasia na planilha (quatro na planilha real), ou sem ele
+  nos dois lados — e não cai para a razão social: o frontend decide o que exibir. Quem
+  calcula é `PlanejadorImportacaoPostos.nomeFantasiaFinal`.
 - **As rotas não declaram `consumes`, de propósito.** Com `consumes = multipart/form-data`,
   JSON seria recusado com `HttpMediaTypeNotSupportedException`, sem handler, e cairia no 403
   vazio. Sem ele, o `@RequestPart` lança `MultipartException`, que tem handler.
@@ -1887,7 +1902,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **544 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **550 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -1901,7 +1916,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   handler global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 544, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 550, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa

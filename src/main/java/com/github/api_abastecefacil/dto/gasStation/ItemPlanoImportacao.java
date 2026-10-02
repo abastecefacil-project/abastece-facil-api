@@ -16,6 +16,10 @@ import java.util.List;
  * @param cnpj             sempre mascarado; o texto gravado só aparece se não tiver 14 dígitos
  * @param nome             Razão Social — o que vai para {@code GasStation.name}. Vem da
  *                         planilha, exceto em desativar, onde vem do banco
+ * @param nomeFantasia     como o administrador reconhece o posto: o que ele terá depois da
+ *                         importação. Em inserir, o da planilha; em atualizar e reativar, o
+ *                         da planilha, ou o do banco quando a planilha não traz (nulo nunca
+ *                         sobrescreve); em desativar, o do banco. Pode ser {@code null}
  * @param cidade           da planilha, exceto em desativar
  * @param camposAlterados  nomes das colunas da planilha, em pt-BR, na ordem fixa do plano
  * @param dados            a linha da planilha que a execução vai gravar
@@ -24,6 +28,7 @@ public record ItemPlanoImportacao(
         Long id,
         String cnpj,
         String nome,
+        String nomeFantasia,
         String cidade,
         List<String> camposAlterados,
         boolean requerGeocodificacao,
