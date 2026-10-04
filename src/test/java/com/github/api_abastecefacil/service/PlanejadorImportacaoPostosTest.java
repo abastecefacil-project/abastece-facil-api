@@ -46,7 +46,8 @@ class PlanejadorImportacaoPostosTest {
         PlanoImportacao plano = planejador.planejar(leitura(linha));
 
         assertThat(plano.inserir()).containsExactly(
-                new ItemPlanoImportacao(null, CNPJ, "POSTO CENTRAL LTDA", "JOINVILLE", List.of(), true, linha));
+                new ItemPlanoImportacao(null, CNPJ, "POSTO CENTRAL LTDA", "POSTO CENTRAL", "JOINVILLE",
+                        List.of(), true, linha));
         assertThat(plano.atualizar()).isEmpty();
         assertThat(plano.semAlteracao()).isZero();
     }
@@ -218,16 +219,66 @@ class PlanejadorImportacaoPostosTest {
                 .satisfies(item -> assertThat(item.camposAlterados()).containsExactly("Telefone"));
     }
 
+    // ---------- nome fantasia no item ----------
+
+    @Test
+    void planejar_ShouldTakeNomeFantasiaFromSpreadsheet_WhenReactivating() {
+        banco(posto(1L, CNPJ, false).setFantasyName("NOME ANTIGO"));
+
+        PlanoImportacao plano = planejador.planejar(leitura(linha().fantasyName("POSTO ZANDONA 21").build()));
+
+        assertThat(plano.reativar()).singleElement()
+                .extracting(ItemPlanoImportacao::nomeFantasia).isEqualTo("POSTO ZANDONA 21");
+    }
+
+    /**
+     * Planilha sem nome fantasia: o item mostra o do banco, que é o que o posto continuará
+     * tendo, porque nulo nunca sobrescreve.
+     */
+    @Test
+    void planejar_ShouldShowDatabaseNomeFantasia_WhenSpreadsheetHasNone() {
+        banco(posto(1L, CNPJ, true).setFantasyName("NOME DO BANCO"));
+
+        PlanoImportacao plano = planejador.planejar(leitura(linha().fantasyName(null).phone("(47) 3422-1234").build()));
+
+        assertThat(plano.atualizar()).singleElement().satisfies(item -> {
+            assertThat(item.nomeFantasia()).isEqualTo("NOME DO BANCO");
+            assertThat(item.camposAlterados()).containsExactly("Telefone");
+        });
+    }
+
+    @Test
+    void planejar_ShouldShowDatabaseNomeFantasia_WhenReactivatingWithoutOneInTheSpreadsheet() {
+        banco(posto(1L, CNPJ, false).setFantasyName("NOME DO BANCO"));
+
+        PlanoImportacao plano = planejador.planejar(leitura(linha().fantasyName(null).build()));
+
+        assertThat(plano.reativar()).singleElement()
+                .extracting(ItemPlanoImportacao::nomeFantasia).isEqualTo("NOME DO BANCO");
+    }
+
+    @Test
+    void planejar_ShouldCarryNullNomeFantasia_WhenInsertingWithoutOne() {
+        banco();
+
+        PlanoImportacao plano = planejador.planejar(leitura(linha().fantasyName(null).build()));
+
+        assertThat(plano.inserir()).singleElement()
+                .extracting(ItemPlanoImportacao::nomeFantasia).isNull();
+    }
+
     // ---------- desativação ----------
 
     @Test
     void planejar_ShouldDeactivate_WhenActiveStationIsAbsent() {
-        banco(posto(1L, CNPJ, true), posto(2L, "98.765.432/0001-98", true).setName("POSTO AUSENTE"));
+        banco(posto(1L, CNPJ, true), posto(2L, "98.765.432/0001-98", true)
+                .setName("POSTO AUSENTE").setFantasyName("AUSENTE DO BANCO"));
 
         PlanoImportacao plano = planejador.planejar(leitura(linha().build()));
 
         assertThat(plano.desativar()).containsExactly(
-                new ItemPlanoImportacao(2L, "98.765.432/0001-98", "POSTO AUSENTE", "JOINVILLE", List.of(), false, null));
+                new ItemPlanoImportacao(2L, "98.765.432/0001-98", "POSTO AUSENTE", "AUSENTE DO BANCO", "JOINVILLE",
+                        List.of(), false, null));
     }
 
     @Test

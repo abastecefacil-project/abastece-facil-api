@@ -182,6 +182,8 @@ que a forma canônica, não porque fosse necessário.
 | `spring.flyway.baseline-on-migrate` | `true` | — | `SPRING_FLYWAY_BASELINE_ON_MIGRATE` | não |
 | `spring.http.client.connect-timeout` | `5s` | — | `SPRING_HTTP_CLIENT_CONNECT_TIMEOUT` | não |
 | `spring.http.client.read-timeout` | `10s` | — | `SPRING_HTTP_CLIENT_READ_TIMEOUT` | não |
+| `spring.servlet.multipart.max-file-size` | `10MB` | — | `SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE` | não |
+| `spring.servlet.multipart.max-request-size` | `10MB` | — | `SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE` | não |
 | `server.port` | `8081` | — | `SERVER_PORT` | não |
 | `jwt.secret` | segredo de dev, versionado | — | `JWT_SECRET` | **sim** |
 | `jwt.expiration` | `86400000` (24h) — GESTOR_FROTA e ADMINISTRADOR | — | `JWT_EXPIRATION` | não |
@@ -199,9 +201,20 @@ que a forma canônica, não porque fosse necessário.
 | `abastecefacil.email.frontend-url` | `http://localhost:5173` | — | `ABASTECEFACIL_EMAIL_FRONTEND_URL` | **sim** |
 | `importacao-postos.ufs` | `SC` | — | `IMPORTACAO_POSTOS_UFS` | não |
 | `importacao-postos.tipos` | `POSTO` | — | `IMPORTACAO_POSTOS_TIPOS` | não |
+| `importacao-postos.max-falhas-consecutivas` | `5` | — | `IMPORTACAO_POSTOS_MAX_FALHAS_CONSECUTIVAS` | não |
 | `viacep-api.url` | `https://viacep.com.br/ws/` | — | `VIACEP_API_URL` | não |
 | `openstreetmap-api.url` | `https://nominatim.openstreetmap.org` | — | `OPENSTREETMAP_API_URL` | não |
 | `openstreetmap-api.user-agent` | `AbasteceFacil/1.0 (contato@abastecefacil.com.br)` | — | `OPENSTREETMAP_USER_AGENT` | **sim** |
+| `openstreetmap-api.intervalo-minimo-ms` | `1100` | — | `OPENSTREETMAP_API_INTERVALO_MINIMO_MS` | não |
+| `spring.cloud.openfeign.client.config.openstreetmap-client.connect-timeout` | `5000` (ms) | — | `OPENSTREETMAP_CONNECT_TIMEOUT` | não |
+| `spring.cloud.openfeign.client.config.openstreetmap-client.read-timeout` | `10000` (ms) | — | `OPENSTREETMAP_READ_TIMEOUT` | não |
+
+Os dois timeouts do Feign são a **segunda** exceção ao "`${...}` só por nome curto", e aqui
+o placeholder é necessário, não estético: o nome do cliente (`openstreetmap-client`) tem
+hífen e é **chave de `Map`** no binding, e a forma canônica da env var não reconstrói essa
+chave de forma confiável. Por isso o YAML declara `${OPENSTREETMAP_CONNECT_TIMEOUT:5000}` e
+`${OPENSTREETMAP_READ_TIMEOUT:10000}`. Vale para qualquer propriedade futura sob
+`spring.cloud.openfeign.client.config.<nome-com-hífen>`.
 
 Os "precisa em produção" que não são o banco:
 
@@ -490,9 +503,15 @@ resultado por outro caminho.
 | GET | `/api/regionais` | autenticado |
 | GET | `/api/regionais/{id}` | autenticado |
 | GET | `/api/cep/info?cep=` | autenticado |
+| POST | `/api/gas-stations/import/preview` | **só `ADMINISTRADOR`** |
+| POST | `/api/gas-stations/import` | **só `ADMINISTRADOR`** |
+| GET | `/api/gas-stations/import/atual` | **só `ADMINISTRADOR`** |
+| GET | `/api/gas-stations/import/{id}` | **só `ADMINISTRADOR`** |
 
 **"gestão"** é a marca do P0.4 e significa `ADMINISTRADOR` **ou** `GESTOR_FROTA` —
 COLABORADOR recebe 403. Detalhe na subseção "Autorização do cadastro operacional".
+A importação de postos é a exceção sob `/api/gas-stations/**`: **só `ADMINISTRADOR`**,
+porque reescreve e desativa o cadastro inteiro de uma vez. Ver "Importação de postos".
 
 **Note a assimetria:** consultar postos e criar ocorrência são públicos; todo o
 resto exige token. É proposital — o usuário final não faz login.
@@ -708,6 +727,66 @@ quais são deixaria o gestor sem saída — a lista é configuração operaciona
 As duas primeiras compartilham status **e mensagem** de propósito: responder algo
 diferente para "usuário desativado" confirmaria a quem segura o link que aquele token era
 bom e que a conta existe.
+
+### Importação de postos
+
+Quatro rotas sob `/api/gas-stations/import`, todas **só `ADMINISTRADOR`**
+(`AutorizacaoOperacional.autorizarAdministracao`, primeira instrução de cada método da
+`ImportacaoPostosService`). Ficam sob `/api/gas-stations/**`, que o `SecurityConfig` já exige
+autenticado: o `SecurityConfig` **não mudou**, e não há rota pública de importação.
+
+| Rota | Resposta |
+|---|---|
+| `POST /preview`, multipart, parte `arquivo` | 200 `PreviaImportacaoResponse`. Não grava nada |
+| `POST /`, multipart, parte `arquivo` | **202** `{ "id": "<uuid>" }`, com `Location: /api/gas-stations/import/{id}` |
+| `GET /atual` | 200 `ImportacaoPostosStatus` da importação `EM_ANDAMENTO`, ou **204** sem corpo |
+| `GET /{id}` | 200 `ImportacaoPostosStatus` |
+
+- **`/atual` vence `/{id}`** porque o `PathPattern` ordena segmento literal acima de variável,
+  o mesmo mecanismo de `/api/users/me`.
+- **O `{id}` é recebido como `String`.** Valor que não é UUID responde 404
+  `IMPORTACAO_NAO_ENCONTRADA`, como um id inexistente, em vez de virar erro de conversão sem
+  handler — que sairia como o 403 vazio do `/error`.
+- **`PreviaImportacaoResponse` não expõe o `PlanoImportacao`.** Os itens não trazem `dados`
+  (a linha da planilha): só `id`, `cnpj`, `nome`, `nomeFantasia`, `cidade`, `camposAlterados`
+  e `requerGeocodificacao`. Na primeira carga são ~1.200 itens, e a execução não usa a prévia.
+- **`nome` é a razão social; `nomeFantasia` é como o administrador reconhece o posto**
+  ("POSTO ZANDONA 21", e não "POSTO Z21 LTDA"). Acrescentado depois, de forma aditiva. É o
+  nome fantasia que o posto **terá depois da importação**:
+
+  | Grupo | `nomeFantasia` |
+  |---|---|
+  | inserir | o da planilha |
+  | atualizar, reativar | o da planilha; se ela não traz, o do banco |
+  | desativar | o do banco (o item não tem linha da planilha) |
+
+  O caso do meio é a regra "nulo nunca sobrescreve" aplicada à prévia: planilha sem nome
+  fantasia não apaga o do banco, então a tela mostra o que vai continuar gravado. **Pode ser
+  `null`** — posto novo sem nome fantasia na planilha (quatro na planilha real), ou sem ele
+  nos dois lados — e não cai para a razão social: o frontend decide o que exibir. Quem
+  calcula é `PlanejadorImportacaoPostos.nomeFantasiaFinal`.
+- **As rotas não declaram `consumes`, de propósito.** Com `consumes = multipart/form-data`,
+  JSON seria recusado com `HttpMediaTypeNotSupportedException`, sem handler, e cairia no 403
+  vazio. Sem ele, o `@RequestPart` lança `MultipartException`, que tem handler.
+- `ImportacaoPostosStatus`: `id`, `status` (`EM_ANDAMENTO`/`CONCLUIDA`/`FALHOU`), `total`,
+  `processados`, `iniciadaEm`, `concluidaEm`, `mensagem` e `resumo` — os três últimos `null`
+  enquanto em andamento.
+
+| Situação | HTTP | `error` |
+|---|---|---|
+| perfil que não é `ADMINISTRADOR` | 403 | `PERFIL_NAO_PERMITIDO` |
+| parte `arquivo` ausente, ou requisição que não é multipart | 400 | `ARQUIVO_OBRIGATORIO` |
+| arquivo vazio, sem `.xlsx`, ilegível, sem cabeçalho ou com coluna faltando | 400 | `PLANILHA_INVALIDA` |
+| arquivo acima de `spring.servlet.multipart.*` | **413** | `ARQUIVO_MUITO_GRANDE` |
+| nenhuma linha válida no escopo | 422 | `PLANILHA_SEM_POSTOS_NO_ESCOPO` |
+| já há importação em andamento | 409 | `IMPORTACAO_EM_ANDAMENTO` |
+| id inexistente, descartado após 24 h, ou que não é UUID | 404 | `IMPORTACAO_NAO_ENCONTRADA` |
+
+O 413 é o primeiro do projeto. A mensagem cita o limite **só quando a exceção o conhece**:
+quando o estouro vem do parser multipart do Tomcat, o Spring cria a
+`MaxUploadSizeExceededException` com `-1`, e a mensagem sai sem número. O limite também não
+é injetado no handler: o que estourou pode ter sido `max-request-size`, e citar
+`max-file-size` daria o número errado.
 
 ### Recuperação de senha (S4)
 
@@ -965,6 +1044,38 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
    consulta o Nominatim para obter latitude/longitude. Se não encontrar, lança
    `CoordinatesNotFoundException`. Isso significa que **cadastrar posto depende de
    internet** e está sujeito ao rate limit do Nominatim.
+
+   Desde a preparação da importação em lote, o `OpenStreetMapService` tem:
+
+   - **Throttle global**: no mínimo `openstreetmap-api.intervalo-minimo-ms` (1100) entre
+     duas consultas, valendo para **toda** chamada, cadastro e edição manuais inclusive.
+     Assim a importação e o cadastro simultâneos não passam de 1 req/s. Cada chamada
+     reserva o próximo horário livre sob a trava e espera fora dela. `Clock` e `Espera` são
+     injetados, no precedente do `RateLimitService`. Consequência para o fluxo manual:
+     `create` e `update` podem esperar ~1,1 s, ou um pouco mais se a importação estiver
+     rodando, e essa espera acontece **dentro do `@Transactional`**, segurando a conexão
+     do pool.
+   - **O throttle é por instância e zera no reinício**, como o `RateLimitService` (item 37).
+     Com mais de uma instância do backend, cada uma espaça só as próprias chamadas, e
+     **o limite de 1 req/s ao Nominatim deixa de ser garantido**.
+   - **`countrycodes=br`** em toda consulta. Um endereço que antes caía num ponto fora do
+     Brasil agora não é encontrado, e o cadastro manual responde 400 `COORDINATES_NOT_FOUND`.
+   - **Timeouts do Feign**: connect 5 s e read 10 s. O default do OpenFeign era 10 s e
+     60 s. Estourar o prazo gera `RetryableException`, que o `handleFeignException` já
+     responde como 502.
+   - **`geocodificarComFallback(address, district, city, state, cep, uf)`**, para a
+     importação. Tenta o endereço completo (`GasStationConstants.ADDRESS_FORMAT`) e, se
+     ele vier vazio ou for rejeitado, tenta `"<via>, <cidade>, <UF>, Brasil"`, sendo a via
+     o trecho de `address` antes da vírgula. Rejeitado quer dizer que
+     `address.ISO3166-2-lvl4` veio e é diferente de `"BR-" + UF`. Se o campo não vier, ou
+     vier com tipo inesperado (`address` que não é objeto, código que não é string), o
+     resultado é **aceito**. A leitura é defensiva e nunca lança `ClassCastException`.
+     Com a via vazia, o fallback não é feito, porque devolveria o centro da cidade.
+     **Contrato de erro:** `Optional` vazio significa só "não encontrado ou rejeitado pela
+     UF". Uma `FeignException` (timeout, 429, 5xx) é **propagada**, venha da primeira
+     consulta ou do fallback, e erro na primeira **não** dispara o fallback.
+   - A validação de UF e o fallback **não** se aplicam ao cadastro manual: o
+     `getCoordinates` só ganhou o throttle, o `countrycodes` e a correção do §9, item 18.
 3. **CNPJ é único** e verificado tanto na criação quanto na atualização.
 4. **Login rejeita usuário inativo** com mensagem específica, distinta de
    credencial inválida.
@@ -1329,6 +1440,72 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
     chamadores a capturam: o cadastro sinaliza no `conviteEnviado` (item 24) e a
     recuperação já respondeu antes de o envio começar. O handler 502 segue registrado como
     rede de segurança, porque não há fallback `Exception.class`.
+40. **A importação de postos roda em segundo plano, numa thread dedicada, e o estado é
+    em memória.** A primeira carga tem ~1.200 inserções e o Nominatim aceita 1 req/s:
+    uns vinte minutos, que não cabem numa requisição HTTP nem numa transação.
+    `ExecutorImportacaoPostos.iniciar(plano)` registra, submete e devolve um `UUID` na
+    hora; `consultar(id)` mostra `status`, `total`, `processados` e, ao final, o resumo.
+
+    - **Uma por vez, de forma atômica.** `RegistroImportacoesPostos.iniciar` faz
+      `compareAndSet` num `AtomicReference`, e uma segunda importação recebe 409
+      `IMPORTACAO_EM_ANDAMENTO`. Id desconhecido é 404 `IMPORTACAO_NAO_ENCONTRADA`. As duas
+      chegam ao cliente pelos endpoints de `/api/gas-stations/import` (§5).
+    - **O estado é por instância e se perde no reinício**, como o `RateLimitService` (item
+      37). Com mais de um nó, cada um teria a própria vaga e duas importações poderiam rodar
+      juntas. Num reinício, a importação em curso morre com a aplicação: o que já foi
+      gravado fica, e a próxima importação recalcula o plano sobre o banco. Os registros
+      finalizados são descartados 24 h depois, com limpeza oportunista em `iniciar` e
+      `consultar`, sem `@Scheduled`.
+    - **Ordem:** ATUALIZAR e REATIVAR sem geocodificação; depois INSERIR, ATUALIZAR e
+      REATIVAR com geocodificação; DESATIVAR por último, e só se a importação não foi
+      interrompida.
+    - **Cada posto é gravado em transação curta** pelo `GravadorImportacaoPostos`, bean
+      separado para o `@Transactional` valer pelo proxy. A geocodificação acontece antes e
+      fora de transação, então a espera do throttle nunca prende conexão do pool.
+    - **Falha de geocodificação de endereço alterado** (ATUALIZAR/REATIVAR), resultado vazio
+      ou `FeignException`: grava só nome, fantasia, telefone, horário, CNPJ e o
+      `isActive = true` do REATIVAR, e **mantém** endereço, bairro, cidade, UF, CEP e
+      coordenadas. Endereço novo com coordenada antiga deixaria o marcador no lugar errado
+      em silêncio; mantendo o antigo, a diferença reaparece e a próxima importação tenta de
+      novo. Vazio vira aviso; `FeignException` vira erro. INSERIR sem coordenada não grava.
+    - **`importacao-postos.max-falhas-consecutivas` (5) interrompe.** Toda `FeignException`
+      soma 1; qualquer resposta válida, com ou sem resultado, zera. Ao atingir o limite:
+      `FALHOU`, log WARN, o gravado permanece e DESATIVAR não roda. Erro ao **gravar** um
+      item (`DataIntegrityViolationException`, por exemplo um CNPJ cadastrado à mão durante
+      a importação) não conta: vira erro do item e a importação segue.
+    - **Itens de DESATIVAR saem com `linha = 0`** nas ocorrências
+      (`LINHA_FORA_DA_PLANILHA`), porque não vêm da planilha. O Excel numera a partir de 1,
+      então 0 nunca colide com uma linha real, e o `OcorrenciaPlanilha` continua com `int`.
+    - **Sem autorização no executor.** Ela é do chamador, na thread da requisição: a thread
+      da importação não tem `SecurityContext`. Pelo mesmo motivo a importação **não** usa
+      `GasStationService.create/update`, que autorizam pelo `UsuarioAutenticadoProvider` e
+      sempre regeocodificam, nem `deleteGasStation`, que é físico.
+41. **A regra completa de sincronização com a planilha de postos**, de ponta a ponta — o
+    que cada peça diz no seu javadoc, reunido num lugar só:
+
+    - **Só `ADMINISTRADOR` importa**, e só ele vê a prévia e o andamento
+      (`autorizarAdministracao`). Gestor de frota cadastra posto à mão, mas não sincroniza o
+      cadastro inteiro.
+    - **Prévia e importação recalculam o plano a partir do arquivo.** A importação não
+      reaproveita a prévia: o administrador reenvia o arquivo, que é lido e planejado de novo
+      na requisição — erros 400 e 422 saem ali, síncronos, antes de qualquer gravação. Uma
+      prévia pedida durante uma importação em curso descreve um banco que está mudando.
+    - **A chave é o CNPJ em dígitos**, dos dois lados. O banco tem CNPJ com e sem máscara, e
+      a importação grava sempre mascarado.
+    - **Inserir** quem não existe; **reativar** quem existe inativo; **atualizar** quem
+      existe ativo com diferença; **desativar** os ativos cujo CNPJ não está na planilha —
+      contando como presentes também as linhas com erro que têm CNPJ válido.
+    - **A desativação é lógica** (`is_active = false`), nunca `delete`, e é a última etapa:
+      não roda se a importação for interrompida.
+    - **Nulo na planilha nunca sobrescreve o banco**, em nenhum campo: vazio na exportação é
+      ausência de informação, não remoção.
+    - **Geocodificação só quando o lugar muda** — CEP nos dígitos, ou endereço, bairro,
+      cidade e UF ignorando caixa, acento e espaços.
+    - **Falha de geocodificação mantém endereço e coordenadas.** INSERIR sem coordenada não
+      grava; ATUALIZAR/REATIVAR grava só os campos que não são de endereço. A diferença de
+      endereço reaparece na próxima importação, que tenta de novo.
+    - **Falhas de comunicação consecutivas** (`importacao-postos.max-falhas-consecutivas`)
+      interrompem como `FALHOU`; o que foi gravado permanece.
 
 ---
 
@@ -1552,6 +1729,42 @@ Problemas reais já encontrados. Consultar antes de investigar comportamento est
     dizendo que o e-mail está tomado por outro perfil e que nada foi alterado. Use outro
     endereço.
 
+### Integrações externas
+
+18. **`limit` e `addressdetails` estavam trocados na chamada ao Nominatim.** A assinatura
+    de `OpenStreetMapClient.search` é `(q, format, addressdetails, limit, countrycodes,
+    User-Agent)`, e o `OpenStreetMapService` passava `DEFAULT_LIMIT` no lugar de
+    `addressdetails` e vice-versa. A troca não tinha efeito porque as duas constantes valem
+    1, e foi corrigida junto com o `countrycodes=br`. Os dois parâmetros são `int`
+    adjacentes: o compilador não acusa a inversão, e um teste com os dois valendo 1 também
+    não. O que segura é o teste que verifica a chamada pelos **nomes** das constantes.
+
+19. **Um bean do tipo `java.util.concurrent.Executor` desliga o `applicationTaskExecutor`
+    do Spring Boot.** No Boot 3.5.4 (conferido no bytecode da autoconfiguração), o executor
+    padrão só é criado se não houver **nenhum** bean `Executor`, ou com
+    `spring.task.execution.mode=force`. Publicar o executor da importação como bean faria a
+    autoconfiguração recuar em silêncio, e o `@Async` do `RecuperacaoSenhaService` passaria
+    a rodar na thread única da importação: os e-mails de recuperação ficariam na fila atrás
+    de uma importação de vinte minutos. Nada falharia nem avisaria.
+
+    Por isso a thread da importação é dona de um `ThreadPoolTaskExecutor` **privado** dentro
+    do `@Component` `ExecucaoImportacaoPostos`, que não é `Executor` (há teste conferindo) e
+    só expõe `submeter`. Como o executor não é bean, o Spring não gerencia o ciclo de vida
+    dele, e o `@PreDestroy encerrar()` é obrigatório.
+
+    Verificação na prática: com `provedor: log`, a linha `[E-MAIL SIMULADO]` de uma
+    recuperação de senha sai numa thread `task-*` do executor padrão, nunca em
+    `importacao-postos-*`. **Qualquer executor futuro segue o mesmo desenho**, ou é
+    declarado como bean junto com a decisão consciente sobre o `@Async`.
+
+20. **Upload acima do limite pode chegar como conexão resetada, e não como 413.** O Tomcat
+    descarta até `server.tomcat.max-swallow-size` (default **2 MB**) do corpo que não leu;
+    se o excesso passar disso, ele fecha a conexão antes de a resposta sair, e o cliente vê
+    erro de rede em vez do `ARQUIVO_MUITO_GRANDE`. Com limite de 10 MB, um arquivo de 11 MB
+    recebe o 413; um de 50 MB pode não receber. O default **não** foi aumentado: isso faria o
+    servidor ler corpos grandes que vai recusar de qualquer jeito. A defesa é o frontend
+    conferir o tamanho antes de enviar.
+
 ### Primeiras ocorrências introduzidas pelo M2
 
 Três coisas que não existiam no projeto e agora têm um único ponto de uso — ao mexer
@@ -1689,7 +1902,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **445 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **550 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -1697,11 +1910,13 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   `ResendEnviadorEmail`, o `ConteudoEmail`, o `UserMapper`, o `UserValidator`, o
   `RateLimitService`, o `RecuperacaoSenhaService`, o `EnvioAcessoService`, o
   `AutorizacaoOperacional`, o `NormalizadorPlanilhaPostos`, o `LeitorPlanilhaPostos`, o
-  `PlanejadorImportacaoPostos` e o
+  `PlanejadorImportacaoPostos`, o `RegistroImportacoesPostos`, o `ExecucaoImportacaoPostos`,
+  o `GravadorImportacaoPostos`, o `ExecutorImportacaoPostos`, o `ImportacaoPostosService`, o
+  `PreviaImportacaoResponse` e o
   handler global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 445, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 550, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa
@@ -1721,7 +1936,8 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   Ruído esperado na saída: `ResendEnviadorEmailTest` exercita falha de rede e rejeição do
   provedor, então **um stack trace de `IOException: conexão recusada` aparece no log da
   suíte mesmo com tudo verde**. É o `log.error` do adaptador fazendo o que deve. Confira
-  a linha `Tests run:` antes de investigar.
+  a linha `Tests run:` antes de investigar. O mesmo vale para o `ExecutorImportacaoPostosTest`,
+  que exercita falha de gravação: sai o stack trace do `log.error` do executor.
 
   Uma consequência de nenhum teste subir contexto: **um `@Value` mal escrito não é pego
   pela suíte**, só na subida real. Por isso as propriedades `abastecefacil.*` são

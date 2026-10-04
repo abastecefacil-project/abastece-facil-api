@@ -111,8 +111,8 @@ public class PlanejadorImportacaoPostos {
             List<GasStation> candidatos = porCnpj.getOrDefault(linha.cnpjDigitos(), List.of());
 
             if (candidatos.isEmpty()) {
-                inserir.add(new ItemPlanoImportacao(null, linha.cnpj(), linha.name(), linha.city(),
-                        List.of(), true, linha));
+                inserir.add(new ItemPlanoImportacao(null, linha.cnpj(), linha.name(), linha.fantasyName(),
+                        linha.city(), List.of(), true, linha));
                 continue;
             }
 
@@ -125,7 +125,7 @@ public class PlanejadorImportacaoPostos {
 
             List<String> campos = camposAlterados(posto, linha);
             ItemPlanoImportacao item = new ItemPlanoImportacao(posto.getId(), linha.cnpj(), linha.name(),
-                    linha.city(), campos, requerGeocodificacao(posto, linha), linha);
+                    nomeFantasiaFinal(posto, linha), linha.city(), campos, requerGeocodificacao(posto, linha), linha);
 
             if (!ativo(posto)) {
                 reativar.add(item);
@@ -153,8 +153,8 @@ public class PlanejadorImportacaoPostos {
                     && !mantidos.contains(posto.getId());
             if (ausente || duplicadoPreterido) {
                 String cnpj = digitos == null ? posto.getCnpj() : cnpjFormatado(digitos);
-                desativar.add(new ItemPlanoImportacao(posto.getId(), cnpj, posto.getName(), posto.getCity(),
-                        List.of(), false, null));
+                desativar.add(new ItemPlanoImportacao(posto.getId(), cnpj, posto.getName(), posto.getFantasyName(),
+                        posto.getCity(), List.of(), false, null));
             }
         }
 
@@ -185,6 +185,15 @@ public class PlanejadorImportacaoPostos {
                         .thenComparing(posto -> !ativo(posto))
                         .thenComparing(GasStation::getId, Comparator.nullsLast(Comparator.naturalOrder())))
                 .orElseThrow();
+    }
+
+    /**
+     * O nome fantasia que o posto terá depois da importação: o da planilha, ou o do banco
+     * quando a planilha não traz — a mesma regra de "nulo nunca sobrescreve" que a gravação
+     * aplica. Só para atualizar e reativar; inserir não tem banco, e desativar não tem planilha.
+     */
+    private static String nomeFantasiaFinal(GasStation posto, LinhaPlanilhaPosto linha) {
+        return linha.fantasyName() != null ? linha.fantasyName() : posto.getFantasyName();
     }
 
     /** Na ordem fixa em que o frontend exibe. */

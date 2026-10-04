@@ -28,6 +28,31 @@ spring:
       connect-timeout: 5s
       read-timeout: 10s
 
+  # Timeouts do cliente Feign do Nominatim. Sem isto vale o default do OpenFeign (connect
+  # 10s, read 60s), e um Nominatim lento seguraria a requisição de cadastro de posto por
+  # um minuto. Estourar o prazo vira RetryableException, que o handleFeignException já
+  # responde como 502.
+  #
+  # Por que ${...} aqui, contrariando a regra de só usar placeholder por nome curto: o nome
+  # do cliente tem hífen e é CHAVE DE MAP no binding. A forma canônica da env var
+  # (SPRING_CLOUD_OPENFEIGN_CLIENT_CONFIG_OPENSTREETMAP_CLIENT_CONNECT_TIMEOUT) não
+  # reconstrói "openstreetmap-client" de forma confiável. Ver §3 do CLAUDE.md.
+  cloud:
+    openfeign:
+      client:
+        config:
+          openstreetmap-client:
+            connect-timeout: ${OPENSTREETMAP_CONNECT_TIMEOUT:5000}
+            read-timeout: ${OPENSTREETMAP_READ_TIMEOUT:10000}
+
+  # Limite de upload, usado pela importação da planilha de postos (o arquivo real tem ~3,2 MB).
+  # O default do Spring Boot é 1 MB, que recusaria a planilha. Estourar responde 413
+  # ARQUIVO_MUITO_GRANDE. Atenção ao max-swallow-size do Tomcat: ver §9 do CLAUDE.md.
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
   jpa:
     hibernate:
       ddl-auto: validate
@@ -123,6 +148,11 @@ importacao-postos:
   # o @Value converter sozinho: IMPORTACAO_POSTOS_UFS=SC,PR
   ufs: "SC"
   tipos: "POSTO"
+  # Falhas de comunicação SEGUIDAS com o Nominatim (timeout, 429, 5xx) que interrompem a
+  # execução da importação como FALHOU. Qualquer resposta válida, com ou sem resultado,
+  # zera a contagem. Com o serviço fora ou bloqueando, continuar só acumularia erro item a
+  # item por vinte minutos. O que já foi gravado permanece, e nenhum posto é desativado.
+  max-falhas-consecutivas: 5
 
 viacep-api:
   url: "https://viacep.com.br/ws/"
@@ -133,3 +163,8 @@ openstreetmap-api:
   # abaixo é genérico de propósito; em produção, apontar OPENSTREETMAP_USER_AGENT para
   # um endereço realmente monitorado, senão o serviço pode bloquear as requisições.
   user-agent: "${OPENSTREETMAP_USER_AGENT:AbasteceFacil/1.0 (contato@abastecefacil.com.br)}"
+  # Intervalo mínimo entre duas consultas, em ms, aplicado por OpenStreetMapService a TODA
+  # chamada (cadastro manual e importação). A política do Nominatim é 1 req/s; 1100 deixa
+  # folga para a imprecisão do relógio. O throttle é por instância: com mais de um nó do
+  # backend, o limite deixa de ser garantido.
+  intervalo-minimo-ms: 1100
