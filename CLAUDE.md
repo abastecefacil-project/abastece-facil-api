@@ -1048,10 +1048,11 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
 1. **Criar ocorrência exige que o veículo exista.** `IncidentService` busca o carro
    por placa e lança `NotFoundException` se não achar. Uma placa não cadastrada
    resulta em erro, mesmo o endpoint sendo público.
-2. **Criar posto dispara geocodificação.** `GasStationService` monta o endereço e
-   consulta o Nominatim para obter latitude/longitude. Se não encontrar, lança
-   `CoordinatesNotFoundException`. Isso significa que **cadastrar posto depende de
-   internet** e está sujeito ao rate limit do Nominatim.
+2. **Criar e editar posto dispara geocodificação.** `GasStationService` chama
+   `OpenStreetMapService.geocodificarComFallback(address, city, state)` — a **mesma** estratégia
+   da importação, descrita abaixo — e, sem coordenadas, lança `CoordinatesNotFoundException`
+   (400 `COORDINATES_NOT_FOUND`). Isso significa que **cadastrar posto depende de internet** e
+   está sujeito ao rate limit do Nominatim.
 
    Desde a preparação da importação em lote, o `OpenStreetMapService` tem:
 
@@ -1071,19 +1072,72 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
    - **Timeouts do Feign**: connect 5 s e read 10 s. O default do OpenFeign era 10 s e
      60 s. Estourar o prazo gera `RetryableException`, que o `handleFeignException` já
      responde como 502.
-   - **`geocodificarComFallback(address, district, city, state, cep, uf)`**, para a
-     importação. Tenta o endereço completo (`GasStationConstants.ADDRESS_FORMAT`) e, se
-     ele vier vazio ou for rejeitado, tenta `"<via>, <cidade>, <UF>, Brasil"`, sendo a via
-     o trecho de `address` antes da vírgula. Rejeitado quer dizer que
-     `address.ISO3166-2-lvl4` veio e é diferente de `"BR-" + UF`. Se o campo não vier, ou
-     vier com tipo inesperado (`address` que não é objeto, código que não é string), o
-     resultado é **aceito**. A leitura é defensiva e nunca lança `ClassCastException`.
-     Com a via vazia, o fallback não é feito, porque devolveria o centro da cidade.
-     **Contrato de erro:** `Optional` vazio significa só "não encontrado ou rejeitado pela
-     UF". Uma `FeignException` (timeout, 429, 5xx) é **propagada**, venha da primeira
-     consulta ou do fallback, e erro na primeira **não** dispara o fallback.
-   - A validação de UF e o fallback **não** se aplicam ao cadastro manual: o
-     `getCoordinates` só ganhou o throttle, o `countrycodes` e a correção do §9, item 18.
+   - **Estratégia de geocodificação — `geocodificarComFallback(address, city, uf)`**, única,
+     usada pela importação e pelo cadastro e edição manuais. **No máximo duas consultas por
+     posto** (~1,1 s cada, pelo throttle), e **nenhuma com CEP**:
+
+     1. **Busca estruturada** (`OpenStreetMapClient.searchEstruturada`, sem `q` — o Nominatim
+        recusa `q` combinado com os campos): `street` = `"<número> <via>"`, ou só a via;
+        `city`; `state` com o **nome** do estado (`OpenStreetMapConstants.NOME_POR_UF`, as 27
+        UFs: `"SC"` → `"Santa Catarina"`); `country` = `Brasil`.
+     2. Se ela vier **vazia ou rejeitada pela UF**, **texto livre**
+        `"<via>, <cidade>, <UF>, Brasil"`.
+
+     Via e número saem do `address` no formato `"<via>, <número>"` usado em todo o sistema
+     (planilha e formulário): via antes da primeira vírgula, número depois. O número só entra
+     no `street` se for predial — dígitos com ou sem uma letra (`622`, `1285 E`, `1285E`,
+     `OpenStreetMapConstants.NUMERO_PREDIAL`). `S/N`, vazio e **`KM 206`** ficam de fora.
+     `address` sem vírgula é todo via.
+
+     **Por que sem CEP:** na carga real, 215 de 1.128 postos novos (19%) não foram localizados
+     com o CEP no texto livre. O Nominatim tem cobertura fraca de CEP no Brasil, e cidade
+     pequena usa CEP genérico (`89887000` em Palmitos), então o CEP mais atrapalhava. O bairro
+     também saiu: a busca estruturada não tem campo para ele.
+
+     **Regra de UF**, nas duas consultas: rejeitado quer dizer que `address.ISO3166-2-lvl4`
+     veio e é diferente de `"BR-" + UF`. Se o campo não vier, ou vier com tipo inesperado
+     (`address` que não é objeto, código que não é string), o resultado é **aceito**. A
+     leitura é defensiva e nunca lança `ClassCastException`. A UF pode chegar como sigla ou
+     nome por extenso, sem diferença de caixa e acento (`"santa catarina"` → `SC`), e é
+     resolvida antes, porque o campo de estado do formulário é editável. Valor desconhecido
+     segue como veio e simplesmente não confere.
+
+     **Via vazia não gera consulta nenhuma**: sobrariam cidade e UF, e o resultado seria o
+     centro da cidade.
+
+     **Contrato de erro:** `Geocodificacao.coordenadas()` vazio significa só "não encontrado
+     ou rejeitado pela UF". Uma `FeignException` (timeout, 429, 5xx) é **propagada**, venha da
+     estruturada ou do fallback, e erro na estruturada **não** dispara o fallback.
+
+     **O retorno é `Geocodificacao(origem, ponto, rejeitadosPelaUf)`**, com `origem` em
+     `ESTRUTURADA`, `TEXTO_LIVRE` ou `NAO_LOCALIZADO`. É por chamada, e não contador no
+     serviço, porque o bean é singleton e compartilhado com o cadastro manual. Quem soma é o
+     executor da importação, e os quatro números saem só no **log** de desfecho (INFO de
+     `CONCLUIDA` e `CANCELADA`, WARN e ERROR de `FALHOU`), nunca no `ResumoImportacaoPostos`,
+     que é contrato da API:
+     `geocodificação: X na consulta estruturada, Y só no fallback, Z não localizados, W
+     resultados rejeitados pela UF`. Para ler direito:
+     - X + Y + Z = postos geocodificados **sem** erro de comunicação. `FeignException` é erro
+       do item e não entra.
+     - W conta **resultados** (0 a 2 por posto), não postos, e se sobrepõe: um posto recusado
+       na estruturada e resolvido no fallback está em Y e em W.
+     - Imprecisão conhecida: se a estruturada for recusada pela UF e o fallback lançar
+       `FeignException`, essa recusa não é contada, porque não há retorno.
+   - **Mudança de comportamento do fluxo manual**, que até aqui fazia uma consulta em texto
+     livre com endereço, bairro, cidade, estado e CEP, sem fallback e sem regra de UF:
+
+     | | Antes | Agora |
+     |---|---|---|
+     | Consultas por gravação | 1 (~1,1 s) | até 2 (**~2,2 s**, dentro do `@Transactional`) |
+     | CEP e bairro | no texto | fora |
+     | Resultado em outro estado | aceito — marcador no lugar errado, sem aviso | **recusado**: sem fallback válido, 400 `COORDINATES_NOT_FOUND` |
+     | Estado por extenso | ia no texto | resolvido para a sigla |
+     | Número `KM 206` | no texto | fora do `street` |
+     | Via vazia (`", 123"`) | consultava | 400 sem consultar |
+
+     A terceira linha é a única que pode transformar em 400 um cadastro que antes passava, e
+     é deliberada. O `getCoordinates(String)` foi removido junto com o
+     `GasStationConstants.ADDRESS_FORMAT`.
 3. **CNPJ é único** e verificado tanto na criação quanto na atualização.
 4. **Login rejeita usuário inativo** com mensagem específica, distinta de
    credencial inválida.
@@ -1777,6 +1831,12 @@ Problemas reais já encontrados. Consultar antes de investigar comportamento est
     adjacentes: o compilador não acusa a inversão, e um teste com os dois valendo 1 também
     não. O que segura é o teste que verifica a chamada pelos **nomes** das constantes.
 
+    **Vale também para `searchEstruturada`**, cuja assinatura é `(street, city, state,
+    country, format, addressdetails, limit, countrycodes, User-Agent)`: são dois métodos com
+    o mesmo par adjacente, e cada um tem o próprio teste por nome de constante no
+    `OpenStreetMapServiceTest`. Os nomes dos parâmetros HTTP também são constantes
+    (`OpenStreetMapConstants.PARAM_*`).
+
 19. **Um bean do tipo `java.util.concurrent.Executor` desliga o `applicationTaskExecutor`
     do Spring Boot.** No Boot 3.5.4 (conferido no bytecode da autoconfiguração), o executor
     padrão só é criado se não houver **nenhum** bean `Executor`, ou com
@@ -1940,7 +2000,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **570 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **584 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -1954,7 +2014,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   handler global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 570, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 584, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa

@@ -183,6 +183,10 @@ public final class PlanilhaPostosConstants {
             "Importação interrompida: o serviço de geocodificação está indisponível ou bloqueando as "
                     + "requisições (%d falhas consecutivas). %d de %d itens processados; o que já foi gravado "
                     + "permanece e nenhum posto foi desativado.";
+    /** Só para log: estruturada, só no fallback, não localizados, resultados rejeitados pela UF. */
+    public static final String METRICAS_GEOCODIFICACAO_FORMAT =
+            "geocodificação: %d na consulta estruturada, %d só no fallback, %d não localizados, "
+                    + "%d resultados rejeitados pela UF";
     public static final String IMPORTACAO_CANCELADA_MESSAGE =
             "Importação cancelada após %d de %d itens; o que já foi gravado permanece e nenhum posto foi "
                     + "desativado.";

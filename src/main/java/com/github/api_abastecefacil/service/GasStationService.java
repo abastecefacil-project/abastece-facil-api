@@ -42,13 +42,7 @@ public class GasStationService {
     public GasStationResponse create(CreateGasStationRequest request) {
         autorizacaoOperacional.autorizarEscrita();
         validateCnpjDoesNotExist(request.cnpj());
-        Coordinates coordinates = fetchCoordinatesFromAddress(
-                request.address(),
-                request.district(),
-                request.city(),
-                request.state(),
-                request.cep()
-        );
+        Coordinates coordinates = fetchCoordinatesFromAddress(request.address(), request.city(), request.state());
         GasStation gasStation = createGasStationEntity(request, coordinates);
         GasStation savedGasStation = gasStationRepository.save(gasStation);
         return gasStationMapper.toResponse(savedGasStation);
@@ -106,10 +100,14 @@ public class GasStationService {
         }
     }
 
-    private Coordinates fetchCoordinatesFromAddress(String address, String district, String city, String state, String cep) {
-        String addressQuery = buildAddressQuery(address, district, city, state, cep);
-
-        return openStreetMapService.getCoordinates(addressQuery)
+    /**
+     * A mesma estratégia da importação — busca estruturada, depois texto livre, sem CEP e com
+     * a regra de UF —, para que um endereço não localizado lá tenha a mesma chance aqui. Ver
+     * {@link OpenStreetMapService#geocodificarComFallback}.
+     */
+    private Coordinates fetchCoordinatesFromAddress(String address, String city, String state) {
+        return openStreetMapService.geocodificarComFallback(address, city, state)
+                .coordenadas()
                 .orElseThrow(() -> new CoordinatesNotFoundException(COORDINATES_NOT_FOUND_MESSAGE));
     }
 
@@ -136,19 +134,9 @@ public class GasStationService {
     }
 
     private void updateGasStationCoordinates(GasStation gasStation, UpdateGasStationRequest request) {
-        Coordinates coordinates = fetchCoordinatesFromAddress(
-                request.address(),
-                request.district(),
-                request.city(),
-                request.state(),
-                request.cep()
-        );
+        Coordinates coordinates = fetchCoordinatesFromAddress(request.address(), request.city(), request.state());
 
         gasStation.setLatitude(coordinates.latitude());
         gasStation.setLongitude(coordinates.longitude());
-    }
-
-    private String buildAddressQuery(String address, String district, String city, String state, String cep) {
-        return String.format(ADDRESS_FORMAT, address, district, city, state, cep);
     }
 }

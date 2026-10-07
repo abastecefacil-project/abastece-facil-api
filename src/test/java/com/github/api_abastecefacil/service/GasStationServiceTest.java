@@ -11,6 +11,8 @@ import com.github.api_abastecefacil.mapper.GasStationMapper;
 import com.github.api_abastecefacil.model.GasStation;
 import com.github.api_abastecefacil.repository.GasStationRepository;
 import com.github.api_abastecefacil.service.OpenStreetMapService.Coordinates;
+import com.github.api_abastecefacil.service.OpenStreetMapService.Geocodificacao;
+import com.github.api_abastecefacil.service.OpenStreetMapService.Origem;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -90,7 +92,8 @@ class GasStationServiceTest {
         );
 
         when(gasStationRepository.existsByCnpj(request.cnpj())).thenReturn(false);
-        when(openStreetMapService.getCoordinates(anyString())).thenReturn(Optional.of(coordinates));
+        when(openStreetMapService.geocodificarComFallback(anyString(), anyString(), anyString()))
+                .thenReturn(localizado());
         when(gasStationMapper.toEntity(request, coordinates.latitude(), coordinates.longitude())).thenReturn(gasStation);
         when(gasStationRepository.save(gasStation)).thenReturn(gasStation);
         when(gasStationMapper.toResponse(gasStation)).thenReturn(gasStationResponse);
@@ -100,6 +103,65 @@ class GasStationServiceTest {
         assertThat(response).isNotNull();
         assertThat(response.cnpj()).isEqualTo("12345678000199");
         verify(gasStationRepository).save(gasStation);
+    }
+
+    private Geocodificacao localizado() {
+        return new Geocodificacao(Origem.ESTRUTURADA, coordinates, 0);
+    }
+
+    /** A mesma estratégia da importação: endereço, cidade e estado — sem bairro e sem CEP. */
+    @Test
+    void create_ShouldGeocodeWithTheImportStrategy_FromAddressCityAndState() {
+        CreateGasStationRequest request = new CreateGasStationRequest(
+                "Posto Central", "Central", "12345678000199",
+                "01000-000", "Centro", "Rua A, 100", "SP", "São Paulo",
+                "11999999999", "08:00 - 22:00"
+        );
+        when(gasStationRepository.existsByCnpj(request.cnpj())).thenReturn(false);
+        when(openStreetMapService.geocodificarComFallback("Rua A, 100", "São Paulo", "SP")).thenReturn(localizado());
+        when(gasStationMapper.toEntity(request, coordinates.latitude(), coordinates.longitude())).thenReturn(gasStation);
+        when(gasStationRepository.save(gasStation)).thenReturn(gasStation);
+
+        gasStationService.create(request);
+
+        verify(openStreetMapService).geocodificarComFallback("Rua A, 100", "São Paulo", "SP");
+        verifyNoMoreInteractions(openStreetMapService);
+    }
+
+    @Test
+    void update_ShouldGeocodeWithTheImportStrategy_AndSaveTheNewCoordinates() {
+        UpdateGasStationRequest request = new UpdateGasStationRequest(
+                "Posto Central", "Central", "12345678000199", "01000-000", "Centro",
+                "Rua B, S/N", "SP", "São Paulo", true, "11999999999", "08:00 - 22:00"
+        );
+        Coordinates novas = new Coordinates(new BigDecimal("-23.6"), new BigDecimal("-46.7"));
+        when(gasStationRepository.findById(1L)).thenReturn(Optional.of(gasStation));
+        when(gasStationRepository.existsByCnpj(request.cnpj())).thenReturn(true);
+        when(openStreetMapService.geocodificarComFallback("Rua B, S/N", "São Paulo", "SP"))
+                .thenReturn(new Geocodificacao(Origem.TEXTO_LIVRE, novas, 1));
+        when(gasStationRepository.save(gasStation)).thenReturn(gasStation);
+
+        gasStationService.update(1L, request);
+
+        verify(openStreetMapService).geocodificarComFallback("Rua B, S/N", "São Paulo", "SP");
+        verifyNoMoreInteractions(openStreetMapService);
+        assertThat(gasStation.getLatitude()).isEqualTo(novas.latitude());
+        assertThat(gasStation.getLongitude()).isEqualTo(novas.longitude());
+    }
+
+    @Test
+    void update_ShouldThrowCoordinatesNotFoundException_WithoutSaving_WhenNotFound() {
+        UpdateGasStationRequest request = new UpdateGasStationRequest(
+                "Posto Central", "Central", "12345678000199", "01000-000", "Centro",
+                "Rua B, 10", "SP", "São Paulo", true, "11999999999", "08:00 - 22:00"
+        );
+        when(gasStationRepository.findById(1L)).thenReturn(Optional.of(gasStation));
+        when(gasStationRepository.existsByCnpj(request.cnpj())).thenReturn(true);
+        when(openStreetMapService.geocodificarComFallback("Rua B, 10", "São Paulo", "SP"))
+                .thenReturn(new Geocodificacao(Origem.NAO_LOCALIZADO, null, 2));
+
+        assertThrows(CoordinatesNotFoundException.class, () -> gasStationService.update(1L, request));
+        verify(gasStationRepository, never()).save(any());
     }
 
     @Test
@@ -125,7 +187,8 @@ class GasStationServiceTest {
         );
 
         when(gasStationRepository.existsByCnpj(request.cnpj())).thenReturn(false);
-        when(openStreetMapService.getCoordinates(anyString())).thenReturn(Optional.empty());
+        when(openStreetMapService.geocodificarComFallback(anyString(), anyString(), anyString()))
+                .thenReturn(new Geocodificacao(Origem.NAO_LOCALIZADO, null, 0));
 
         assertThrows(CoordinatesNotFoundException.class, () -> gasStationService.create(request));
     }

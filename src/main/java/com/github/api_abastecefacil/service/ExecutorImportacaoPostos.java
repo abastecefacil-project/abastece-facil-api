@@ -8,6 +8,7 @@ import com.github.api_abastecefacil.dto.gasStation.PlanoImportacao;
 import com.github.api_abastecefacil.dto.gasStation.ResumoImportacaoPostos;
 import com.github.api_abastecefacil.model.StatusImportacao;
 import com.github.api_abastecefacil.service.OpenStreetMapService.Coordinates;
+import com.github.api_abastecefacil.service.OpenStreetMapService.Geocodificacao;
 import feign.FeignException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -133,8 +134,8 @@ public class ExecutorImportacaoPostos {
         try {
             execucaoAtual.processar(plano);
         } catch (RuntimeException e) {
-            log.error("Importação de postos {} interrompida por erro inesperado após {} de {} itens",
-                    id, execucaoAtual.processados, total, e);
+            log.error("Importação de postos {} interrompida por erro inesperado após {} de {} itens; {}",
+                    id, execucaoAtual.processados, total, execucaoAtual.metricasGeocodificacao(), e);
             registro.finalizar(id, StatusImportacao.FALHOU,
                     String.format(IMPORTACAO_INTERROMPIDA_ERRO_MESSAGE, execucaoAtual.processados, total),
                     execucaoAtual.resumo(plano));
@@ -150,25 +151,26 @@ public class ExecutorImportacaoPostos {
         if (execucaoAtual.interrompida) {
             String mensagem = String.format(IMPORTACAO_INTERROMPIDA_FALHAS_MESSAGE,
                     execucaoAtual.falhasConsecutivas, execucaoAtual.processados, total);
-            log.warn("Importação de postos {}: {}", id, mensagem);
+            log.warn("Importação de postos {}: {} {}", id, mensagem, execucaoAtual.metricasGeocodificacao());
             registro.finalizar(id, StatusImportacao.FALHOU, mensagem, resumo);
             return;
         }
 
         if (execucaoAtual.canceladaPor != null) {
             log.info("Importação de postos {} cancelada a pedido de {} após {} de {} itens: {} inseridos, "
-                            + "{} atualizados, {} reativados",
+                            + "{} atualizados, {} reativados; {}",
                     id, execucaoAtual.canceladaPor, execucaoAtual.processados, total, resumo.inseridos(),
-                    resumo.atualizados(), resumo.reativados());
+                    resumo.atualizados(), resumo.reativados(), execucaoAtual.metricasGeocodificacao());
             registro.finalizar(id, StatusImportacao.CANCELADA,
                     String.format(IMPORTACAO_CANCELADA_MESSAGE, execucaoAtual.processados, total), resumo);
             return;
         }
 
         log.info("Importação de postos {} concluída: {} inseridos, {} atualizados, {} reativados, {} desativados, "
-                        + "{} sem alteração, {} erros, {} avisos",
+                        + "{} sem alteração, {} erros, {} avisos; {}",
                 id, resumo.inseridos(), resumo.atualizados(), resumo.reativados(), resumo.desativados(),
-                resumo.semAlteracao(), resumo.erros().size(), resumo.avisos().size());
+                resumo.semAlteracao(), resumo.erros().size(), resumo.avisos().size(),
+                execucaoAtual.metricasGeocodificacao());
         registro.finalizar(id, StatusImportacao.CONCLUIDA, IMPORTACAO_CONCLUIDA_MESSAGE, resumo);
     }
 
@@ -187,6 +189,14 @@ public class ExecutorImportacaoPostos {
         private boolean interrompida;
         /** E-mail de quem cancelou, lido na thread da requisição e guardado no registro. */
         private String canceladaPor;
+
+        // Métricas de geocodificação, só para o log. Contam postos geocodificados sem erro de
+        // comunicação: uma FeignException é erro do item e não entra aqui. As três primeiras
+        // somam esses postos; rejeitadosPelaUf conta resultados e se sobrepõe a elas.
+        private int resolvidosEstruturada;
+        private int resolvidosTextoLivre;
+        private int naoLocalizados;
+        private int rejeitadosPelaUf;
 
         private Execucao(UUID id) {
             this.id = id;
@@ -312,10 +322,25 @@ public class ExecutorImportacaoPostos {
          * {@code IllegalStateException} da espera interrompida também, e encerra a importação.
          */
         private Optional<Coordinates> geocodificar(LinhaPlanilhaPosto linha) {
-            Optional<Coordinates> coordenadas = openStreetMapService.geocodificarComFallback(
-                    linha.address(), linha.district(), linha.city(), linha.state(), linha.cep(), linha.state());
+            Geocodificacao geocodificacao =
+                    openStreetMapService.geocodificarComFallback(linha.address(), linha.city(), linha.state());
             falhasConsecutivas = 0;
-            return coordenadas;
+            contabilizar(geocodificacao);
+            return geocodificacao.coordenadas();
+        }
+
+        private void contabilizar(Geocodificacao geocodificacao) {
+            switch (geocodificacao.origem()) {
+                case ESTRUTURADA -> resolvidosEstruturada++;
+                case TEXTO_LIVRE -> resolvidosTextoLivre++;
+                case NAO_LOCALIZADO -> naoLocalizados++;
+            }
+            rejeitadosPelaUf += geocodificacao.rejeitadosPelaUf();
+        }
+
+        private String metricasGeocodificacao() {
+            return String.format(METRICAS_GEOCODIFICACAO_FORMAT, resolvidosEstruturada, resolvidosTextoLivre,
+                    naoLocalizados, rejeitadosPelaUf);
         }
 
         /** Só o status HTTP vai para o log: o corpo da resposta do provedor fica de fora. */
