@@ -562,6 +562,27 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 409: pedido de cancelamento para uma importacao que ja terminou -- concluida, falha ou
+     * cancelada. Conflito com o estado do recurso, como IMPORTACAO_EM_ANDAMENTO.
+     *
+     * <p>O "error" e proprio para o frontend tratar o caso mais comum -- a importacao terminou
+     * entre a ultima consulta e o clique -- recarregando o status em vez de exibir erro.
+     */
+    @ExceptionHandler(ImportacaoNaoEmAndamentoException.class)
+    public ResponseEntity<ErrorResponse> handleImportacaoNaoEmAndamentoException(
+            ImportacaoNaoEmAndamentoException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.CONFLICT.value(),
+                "IMPORTACAO_NAO_EM_ANDAMENTO",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
+    }
+
+    /**
      * 404: o id nao corresponde a nenhuma importacao conhecida. Alem do id que nunca existiu,
      * cobre dois casos normais de operacao: registro finalizado ha mais de 24 horas, que e
      * descartado, e reinicio da aplicacao, porque o registro e em memoria.

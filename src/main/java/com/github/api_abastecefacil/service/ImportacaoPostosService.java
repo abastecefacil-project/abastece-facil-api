@@ -5,6 +5,9 @@ import com.github.api_abastecefacil.dto.gasStation.PlanoImportacao;
 import com.github.api_abastecefacil.dto.gasStation.PreviaImportacaoResponse;
 import com.github.api_abastecefacil.exception.ImportacaoNaoEncontradaException;
 import com.github.api_abastecefacil.exception.PlanilhaInvalidaException;
+import com.github.api_abastecefacil.model.User;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -37,6 +40,8 @@ import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.*;
  */
 @Service
 public class ImportacaoPostosService {
+
+    private static final Logger log = LoggerFactory.getLogger(ImportacaoPostosService.class);
 
     private final AutorizacaoOperacional autorizacaoOperacional;
     private final LeitorPlanilhaPostos leitor;
@@ -72,24 +77,49 @@ public class ImportacaoPostosService {
     }
 
     /**
-     * Recebe o id como texto: um valor que não é UUID responde 404, como um id que não existe,
-     * em vez de virar erro de conversão sem handler.
+     * @see #paraUuid
      */
     public ImportacaoPostosStatus consultar(String id) {
         autorizacaoOperacional.autorizarAdministracao();
-
-        UUID uuid;
-        try {
-            uuid = UUID.fromString(id);
-        } catch (IllegalArgumentException e) {
-            throw new ImportacaoNaoEncontradaException(IMPORTACAO_NAO_ENCONTRADA_MESSAGE);
-        }
-        return executor.consultar(uuid);
+        return executor.consultar(paraUuid(id));
     }
 
     public Optional<ImportacaoPostosStatus> atual() {
         autorizacaoOperacional.autorizarAdministracao();
         return registro.atual();
+    }
+
+    /**
+     * Registra o pedido de cancelamento e devolve o status atual, ainda {@code EM_ANDAMENTO}:
+     * a parada é cooperativa e acontece no próximo ponto de verificação do executor.
+     *
+     * <p>O e-mail de quem cancelou é lido <b>aqui</b>, na thread da requisição, e guardado no
+     * registro — a thread da importação não tem {@code SecurityContext}.
+     *
+     * @throws com.github.api_abastecefacil.exception.ImportacaoNaoEmAndamentoException se a
+     *                                                                                  importação
+     *                                                                                  já terminou
+     */
+    public ImportacaoPostosStatus cancelar(String id) {
+        User autor = autorizacaoOperacional.autorizarAdministracao();
+
+        UUID uuid = paraUuid(id);
+        ImportacaoPostosStatus status = registro.solicitarCancelamento(uuid, autor.getEmail());
+        log.info("Cancelamento da importação de postos {} solicitado por {} após {} de {} itens",
+                uuid, autor.getEmail(), status.processados(), status.total());
+        return status;
+    }
+
+    /**
+     * Recebe o id como texto: um valor que não é UUID responde 404, como um id que não existe,
+     * em vez de virar erro de conversão sem handler.
+     */
+    private static UUID paraUuid(String id) {
+        try {
+            return UUID.fromString(id);
+        } catch (IllegalArgumentException e) {
+            throw new ImportacaoNaoEncontradaException(IMPORTACAO_NAO_ENCONTRADA_MESSAGE);
+        }
     }
 
     private PlanoImportacao planejar(MultipartFile arquivo) {

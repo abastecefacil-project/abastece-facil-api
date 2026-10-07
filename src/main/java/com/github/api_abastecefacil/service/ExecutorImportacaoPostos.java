@@ -43,8 +43,9 @@ import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.*;
  *   <li>INSERIR, depois ATUALIZAR e REATIVAR que requerem geocodificação. A chamada ao
  *       Nominatim acontece fora de transação, e o throttle é do {@code OpenStreetMapService}:
  *       aqui não há espera própria;</li>
- *   <li>DESATIVAR, por último, e só se a importação não foi interrompida. Desativar com a
- *       sincronização pela metade tiraria postos do mapa sem que os novos tivessem entrado.</li>
+ *   <li>DESATIVAR, por último, e só se a importação não foi interrompida nem cancelada.
+ *       Desativar com a sincronização pela metade tiraria postos do mapa sem que os novos
+ *       tivessem entrado.</li>
  * </ol>
  *
  * <p><b>Falha de geocodificação de endereço alterado</b> (ATUALIZAR e REATIVAR), seja
@@ -59,6 +60,16 @@ import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.*;
  * o serviço fora ou bloqueando, continuar só acumularia erro item a item por vinte minutos.
  * Erro ao <b>gravar</b> um item não conta: é do item — um CNPJ cadastrado à mão durante a
  * importação, por exemplo — e os demais seguem.
+ *
+ * <p><b>Cancelamento cooperativo.</b> O pedido fica no {@link RegistroImportacoesPostos}, e a
+ * execução o consulta antes de cada item das duas primeiras etapas e uma última vez antes de
+ * DESATIVAR. Não há {@code Thread.interrupt}: o item em andamento termina normalmente, com a
+ * gravação dele inteira. Cancelada, a importação para como {@code CANCELADA}, com o resumo do
+ * que chegou a fazer, e DESATIVAR não roda. <b>Dentro de DESATIVAR o pedido não é mais
+ * consultado</b>: a etapa só grava no banco e termina em segundos, e pará-la no meio deixaria
+ * postos desativados com a sincronização incompleta — o oposto do que a mensagem de
+ * cancelamento promete. Um pedido que chega depois do último ponto de verificação foi aceito,
+ * mas a importação termina {@code CONCLUIDA}.
  */
 @Service
 public class ExecutorImportacaoPostos {
@@ -144,6 +155,16 @@ public class ExecutorImportacaoPostos {
             return;
         }
 
+        if (execucaoAtual.canceladaPor != null) {
+            log.info("Importação de postos {} cancelada a pedido de {} após {} de {} itens: {} inseridos, "
+                            + "{} atualizados, {} reativados",
+                    id, execucaoAtual.canceladaPor, execucaoAtual.processados, total, resumo.inseridos(),
+                    resumo.atualizados(), resumo.reativados());
+            registro.finalizar(id, StatusImportacao.CANCELADA,
+                    String.format(IMPORTACAO_CANCELADA_MESSAGE, execucaoAtual.processados, total), resumo);
+            return;
+        }
+
         log.info("Importação de postos {} concluída: {} inseridos, {} atualizados, {} reativados, {} desativados, "
                         + "{} sem alteração, {} erros, {} avisos",
                 id, resumo.inseridos(), resumo.atualizados(), resumo.reativados(), resumo.desativados(),
@@ -164,6 +185,8 @@ public class ExecutorImportacaoPostos {
         private int processados;
         private int falhasConsecutivas;
         private boolean interrompida;
+        /** E-mail de quem cancelou, lido na thread da requisição e guardado no registro. */
+        private String canceladaPor;
 
         private Execucao(UUID id) {
             this.id = id;
@@ -172,44 +195,64 @@ public class ExecutorImportacaoPostos {
         private void processar(PlanoImportacao plano) {
             for (ItemPlanoImportacao item : plano.atualizar()) {
                 if (!item.requerGeocodificacao()) {
+                    if (deveParar()) {
+                        return;
+                    }
                     processarItem(() -> atualizarSemGeocodificar(item, false));
                 }
             }
             for (ItemPlanoImportacao item : plano.reativar()) {
                 if (!item.requerGeocodificacao()) {
+                    if (deveParar()) {
+                        return;
+                    }
                     processarItem(() -> atualizarSemGeocodificar(item, true));
                 }
             }
 
             for (ItemPlanoImportacao item : plano.inserir()) {
-                if (interrompida) {
+                if (deveParar()) {
                     return;
                 }
                 processarItem(() -> inserir(item));
             }
             for (ItemPlanoImportacao item : plano.atualizar()) {
-                if (interrompida) {
-                    return;
-                }
                 if (item.requerGeocodificacao()) {
+                    if (deveParar()) {
+                        return;
+                    }
                     processarItem(() -> atualizarGeocodificando(item, false));
                 }
             }
             for (ItemPlanoImportacao item : plano.reativar()) {
-                if (interrompida) {
-                    return;
-                }
                 if (item.requerGeocodificacao()) {
+                    if (deveParar()) {
+                        return;
+                    }
                     processarItem(() -> atualizarGeocodificando(item, true));
                 }
             }
 
-            if (interrompida) {
+            // Último ponto de verificação: dentro de DESATIVAR o pedido de cancelamento não é
+            // mais consultado. Ver o javadoc da classe.
+            if (deveParar()) {
                 return;
             }
             for (ItemPlanoImportacao item : plano.desativar()) {
                 processarItem(() -> gravar(item, () -> gravador.desativar(item.id()), () -> desativados++));
             }
+        }
+
+        /**
+         * Ponto de verificação, antes de cada item. A interrupção por falhas vem primeiro, então
+         * as duas condições nunca valem juntas e o desfecho FALHOU não muda.
+         */
+        private boolean deveParar() {
+            if (interrompida) {
+                return true;
+            }
+            canceladaPor = registro.cancelamentoSolicitadoPor(id).orElse(null);
+            return canceladaPor != null;
         }
 
         /** Conta o item como processado aconteça o que acontecer com ele. */

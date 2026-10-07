@@ -162,6 +162,8 @@ public final class PlanilhaPostosConstants {
             "Já existe uma importação de postos em andamento (id %s). Aguarde a conclusão para iniciar outra.";
     public static final String IMPORTACAO_NAO_ENCONTRADA_MESSAGE =
             "Importação de postos não encontrada. Registros finalizados são descartados após 24 horas.";
+    public static final String IMPORTACAO_NAO_EM_ANDAMENTO_MESSAGE =
+            "A importação de postos já foi finalizada (status %s) e não pode ser cancelada.";
 
     public static final String COORDENADAS_NAO_ENCONTRADAS_INSERIR_MESSAGE =
             "Endereço não localizado pelo serviço de geocodificação; posto não inserido";
@@ -181,6 +183,9 @@ public final class PlanilhaPostosConstants {
             "Importação interrompida: o serviço de geocodificação está indisponível ou bloqueando as "
                     + "requisições (%d falhas consecutivas). %d de %d itens processados; o que já foi gravado "
                     + "permanece e nenhum posto foi desativado.";
+    public static final String IMPORTACAO_CANCELADA_MESSAGE =
+            "Importação cancelada após %d de %d itens; o que já foi gravado permanece e nenhum posto foi "
+                    + "desativado.";
     public static final String IMPORTACAO_INTERROMPIDA_ERRO_MESSAGE =
             "Importação interrompida por erro inesperado. %d de %d itens processados; o que já foi gravado "
                     + "permanece e nenhum posto foi desativado.";

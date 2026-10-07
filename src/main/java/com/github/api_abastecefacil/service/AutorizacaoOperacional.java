@@ -67,13 +67,17 @@ public class AutorizacaoOperacional {
     /**
      * Só ADMINISTRADOR. Mesmo padrão de {@code UserService.autorizarExclusao}: o perfil vem
      * do banco, e a recusa é {@code PerfilNaoPermitidoException}.
+     *
+     * @return o autor, já carregado para conferir o perfil — o cancelamento da importação
+     *         registra o e-mail dele sem um segundo {@code SELECT}
      */
-    public void autorizarAdministracao() {
+    public User autorizarAdministracao() {
         User autor = usuarioAutenticadoProvider.obterUsuarioAutenticado();
 
         if (!Perfil.ADMINISTRADOR.equals(autor.getPerfil())) {
             throw new PerfilNaoPermitidoException(PERFIL_NAO_PERMITIDO_ADMINISTRACAO_MESSAGE);
         }
+        return autor;
     }
 
     /**

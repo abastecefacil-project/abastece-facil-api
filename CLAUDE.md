@@ -507,6 +507,7 @@ resultado por outro caminho.
 | POST | `/api/gas-stations/import` | **só `ADMINISTRADOR`** |
 | GET | `/api/gas-stations/import/atual` | **só `ADMINISTRADOR`** |
 | GET | `/api/gas-stations/import/{id}` | **só `ADMINISTRADOR`** |
+| POST | `/api/gas-stations/import/{id}/cancelamento` | **só `ADMINISTRADOR`** |
 
 **"gestão"** é a marca do P0.4 e significa `ADMINISTRADOR` **ou** `GESTOR_FROTA` —
 COLABORADOR recebe 403. Detalhe na subseção "Autorização do cadastro operacional".
@@ -730,7 +731,7 @@ bom e que a conta existe.
 
 ### Importação de postos
 
-Quatro rotas sob `/api/gas-stations/import`, todas **só `ADMINISTRADOR`**
+Cinco rotas sob `/api/gas-stations/import`, todas **só `ADMINISTRADOR`**
 (`AutorizacaoOperacional.autorizarAdministracao`, primeira instrução de cada método da
 `ImportacaoPostosService`). Ficam sob `/api/gas-stations/**`, que o `SecurityConfig` já exige
 autenticado: o `SecurityConfig` **não mudou**, e não há rota pública de importação.
@@ -741,7 +742,13 @@ autenticado: o `SecurityConfig` **não mudou**, e não há rota pública de impo
 | `POST /`, multipart, parte `arquivo` | **202** `{ "id": "<uuid>" }`, com `Location: /api/gas-stations/import/{id}` |
 | `GET /atual` | 200 `ImportacaoPostosStatus` da importação `EM_ANDAMENTO`, ou **204** sem corpo |
 | `GET /{id}` | 200 `ImportacaoPostosStatus` |
+| `POST /{id}/cancelamento`, sem corpo | **202** `ImportacaoPostosStatus` no instante do pedido, ainda `EM_ANDAMENTO` |
 
+- **O cancelamento responde 202, e não 200**: o pedido é registrado, mas a importação só
+  para no próximo ponto de verificação do executor (§6, item 40). O desfecho — `CANCELADA`,
+  ou `CONCLUIDA` se o pedido chegou tarde demais — sai no `GET /{id}`. O `{id}` segue a mesma
+  regra do `GET`: valor que não é UUID responde 404. Pedir de novo enquanto em andamento
+  responde 202 outra vez.
 - **`/atual` vence `/{id}`** porque o `PathPattern` ordena segmento literal acima de variável,
   o mesmo mecanismo de `/api/users/me`.
 - **O `{id}` é recebido como `String`.** Valor que não é UUID responde 404
@@ -768,7 +775,7 @@ autenticado: o `SecurityConfig` **não mudou**, e não há rota pública de impo
 - **As rotas não declaram `consumes`, de propósito.** Com `consumes = multipart/form-data`,
   JSON seria recusado com `HttpMediaTypeNotSupportedException`, sem handler, e cairia no 403
   vazio. Sem ele, o `@RequestPart` lança `MultipartException`, que tem handler.
-- `ImportacaoPostosStatus`: `id`, `status` (`EM_ANDAMENTO`/`CONCLUIDA`/`FALHOU`), `total`,
+- `ImportacaoPostosStatus`: `id`, `status` (`EM_ANDAMENTO`/`CONCLUIDA`/`FALHOU`/`CANCELADA`), `total`,
   `processados`, `iniciadaEm`, `concluidaEm`, `mensagem` e `resumo` — os três últimos `null`
   enquanto em andamento.
 
@@ -780,6 +787,7 @@ autenticado: o `SecurityConfig` **não mudou**, e não há rota pública de impo
 | arquivo acima de `spring.servlet.multipart.*` | **413** | `ARQUIVO_MUITO_GRANDE` |
 | nenhuma linha válida no escopo | 422 | `PLANILHA_SEM_POSTOS_NO_ESCOPO` |
 | já há importação em andamento | 409 | `IMPORTACAO_EM_ANDAMENTO` |
+| cancelamento de importação já finalizada (concluída, falha ou cancelada) | 409 | `IMPORTACAO_NAO_EM_ANDAMENTO` |
 | id inexistente, descartado após 24 h, ou que não é UUID | 404 | `IMPORTACAO_NAO_ENCONTRADA` |
 
 O 413 é o primeiro do projeto. A mensagem cita o limite **só quando a exceção o conhece**:
@@ -1458,7 +1466,7 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
       `consultar`, sem `@Scheduled`.
     - **Ordem:** ATUALIZAR e REATIVAR sem geocodificação; depois INSERIR, ATUALIZAR e
       REATIVAR com geocodificação; DESATIVAR por último, e só se a importação não foi
-      interrompida.
+      interrompida nem cancelada.
     - **Cada posto é gravado em transação curta** pelo `GravadorImportacaoPostos`, bean
       separado para o `@Transactional` valer pelo proxy. A geocodificação acontece antes e
       fora de transação, então a espera do throttle nunca prende conexão do pool.
@@ -1480,6 +1488,33 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
       da importação não tem `SecurityContext`. Pelo mesmo motivo a importação **não** usa
       `GasStationService.create/update`, que autorizam pelo `UsuarioAutenticadoProvider` e
       sempre regeocodificam, nem `deleteGasStation`, que é físico.
+    - **O cancelamento é cooperativo.** `POST /{id}/cancelamento` só registra o pedido, com
+      o e-mail de quem pediu, em `RegistroImportacoesPostos.solicitarCancelamento`. O pedido
+      mora na **mesma entrada do mapa** que o status, e não num mapa à parte: conferir
+      `EM_ANDAMENTO` e registrar é um único `compute`, atômico em relação ao `finalizar`, então
+      nenhum pedido é aceito para uma importação que já terminou (409
+      `IMPORTACAO_NAO_EM_ANDAMENTO`). O e-mail fica fora do `ImportacaoPostosStatus`, que é o
+      corpo da resposta. Um segundo pedido também recebe 202 e mantém o autor do primeiro.
+      - O executor consulta o pedido **antes de cada item** das duas primeiras etapas e uma
+        última vez antes de DESATIVAR. Não há `Thread.interrupt`: o item em andamento termina
+        normalmente, gravação inteira. Entre o pedido e a parada pode passar o tempo de um
+        item, até ~11 s com o throttle e o read-timeout do Nominatim, e nesse intervalo o
+        `GET` continua mostrando `EM_ANDAMENTO`.
+      - Cancelada, a importação termina `CANCELADA`, com
+        "Importação cancelada após X de Y itens; o que já foi gravado permanece e nenhum posto
+        foi desativado.", o resumo do que chegou a fazer, e a vaga liberada pelo mesmo
+        `finalizar` dos outros desfechos. DESATIVAR não roda.
+      - **Dentro de DESATIVAR o pedido não é mais consultado.** Parar no meio deixaria postos
+        desativados com a sincronização incompleta e desmentiria a mensagem. A etapa só grava
+        no banco e termina em segundos. Consequência: um pedido que chega depois do último
+        ponto de verificação recebeu 202, mas a importação termina **`CONCLUIDA`** — o
+        `GET /{id}` é a fonte da verdade, não o 202.
+      - **FALHOU não muda.** A interrupção por falhas é conferida antes do pedido, então as duas
+        condições nunca valem juntas; erro inesperado continua `FALHOU` mesmo com pedido.
+      - O e-mail é lido **na thread da requisição** — `autorizarAdministracao` passou a
+        devolver o `User` que já carregava para conferir o perfil — e sai em dois `INFO`: no
+        `ImportacaoPostosService`, ao aceitar o pedido, e no executor, ao finalizar como
+        `CANCELADA`, lido do registro.
 41. **A regra completa de sincronização com a planilha de postos**, de ponta a ponta — o
     que cada peça diz no seu javadoc, reunido num lugar só:
 
@@ -1506,6 +1541,9 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
       endereço reaparece na próxima importação, que tenta de novo.
     - **Falhas de comunicação consecutivas** (`importacao-postos.max-falhas-consecutivas`)
       interrompem como `FALHOU`; o que foi gravado permanece.
+    - **O administrador pode cancelar** (`POST /{id}/cancelamento`): a importação para antes
+      do próximo item como `CANCELADA`, o que foi gravado permanece e nada é desativado — salvo
+      se DESATIVAR já tiver começado, caso em que ela termina `CONCLUIDA` (item 40).
 
 ---
 
@@ -1902,7 +1940,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **550 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **570 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -1916,7 +1954,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   handler global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 550, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 570, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa

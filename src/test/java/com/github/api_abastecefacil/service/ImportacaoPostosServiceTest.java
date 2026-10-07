@@ -5,11 +5,14 @@ import com.github.api_abastecefacil.dto.gasStation.ItemPlanoImportacao;
 import com.github.api_abastecefacil.dto.gasStation.PlanoImportacao;
 import com.github.api_abastecefacil.dto.gasStation.PreviaImportacaoResponse;
 import com.github.api_abastecefacil.dto.gasStation.ResultadoLeituraPlanilha;
+import com.github.api_abastecefacil.exception.ImportacaoNaoEmAndamentoException;
 import com.github.api_abastecefacil.exception.ImportacaoNaoEncontradaException;
 import com.github.api_abastecefacil.exception.PerfilNaoPermitidoException;
 import com.github.api_abastecefacil.exception.PlanilhaInvalidaException;
 import com.github.api_abastecefacil.exception.PlanilhaSemPostosNoEscopoException;
+import com.github.api_abastecefacil.model.Perfil;
 import com.github.api_abastecefacil.model.StatusImportacao;
+import com.github.api_abastecefacil.model.User;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -114,6 +117,15 @@ class ImportacaoPostosServiceTest {
         negarAcesso();
 
         assertThrows(PerfilNaoPermitidoException.class, () -> service.consultar(UUID.randomUUID().toString()));
+
+        verifyNoInteractions(leitor, planejador, executor, registro);
+    }
+
+    @Test
+    void cancelar_ShouldAuthorizeBeforeTouchingAnythingElse() {
+        negarAcesso();
+
+        assertThrows(PerfilNaoPermitidoException.class, () -> service.cancelar(UUID.randomUUID().toString()));
 
         verifyNoInteractions(leitor, planejador, executor, registro);
     }
@@ -271,5 +283,43 @@ class ImportacaoPostosServiceTest {
         when(registro.atual()).thenReturn(Optional.of(status));
 
         assertThat(service.atual()).contains(status);
+    }
+
+    // ------------------------------------------------------------------ cancelamento
+
+    private void autenticadoComoAdministrador() {
+        when(autorizacaoOperacional.autorizarAdministracao())
+                .thenReturn(new User().setId(1L).setEmail("admin@fiesc.org.br").setPerfil(Perfil.ADMINISTRADOR));
+    }
+
+    @Test
+    void cancelar_ShouldRegisterTheRequestWithTheAuthorEmail_AndReturnTheCurrentStatus() {
+        autenticadoComoAdministrador();
+        UUID id = UUID.randomUUID();
+        ImportacaoPostosStatus status = new ImportacaoPostosStatus(id, StatusImportacao.EM_ANDAMENTO, 10, 4,
+                LocalDateTime.now(), null, null, null);
+        when(registro.solicitarCancelamento(id, "admin@fiesc.org.br")).thenReturn(status);
+
+        assertThat(service.cancelar(id.toString())).isEqualTo(status);
+        verifyNoInteractions(executor);
+    }
+
+    @Test
+    void cancelar_ShouldThrowImportacaoNaoEncontrada_WhenIdIsNotAUuid() {
+        autenticadoComoAdministrador();
+
+        assertThrows(ImportacaoNaoEncontradaException.class, () -> service.cancelar("nao-e-uuid"));
+
+        verifyNoInteractions(registro);
+    }
+
+    @Test
+    void cancelar_ShouldPropagateImportacaoNaoEmAndamento_WhenTheImportHasFinished() {
+        autenticadoComoAdministrador();
+        UUID id = UUID.randomUUID();
+        when(registro.solicitarCancelamento(id, "admin@fiesc.org.br"))
+                .thenThrow(new ImportacaoNaoEmAndamentoException("finalizada"));
+
+        assertThrows(ImportacaoNaoEmAndamentoException.class, () -> service.cancelar(id.toString()));
     }
 }

@@ -65,4 +65,14 @@ public class ImportacaoPostosController {
     public ResponseEntity<ImportacaoPostosStatus> consultar(@PathVariable String id) {
         return ResponseEntity.ok(importacaoPostosService.consultar(id));
     }
+
+    /**
+     * 202 e não 200: o pedido foi registrado, mas a importação só para no próximo ponto de
+     * verificação do executor. O corpo é o status naquele instante, ainda {@code EM_ANDAMENTO};
+     * o desfecho sai no {@code GET /{id}}.
+     */
+    @PostMapping("/{id}/cancelamento")
+    public ResponseEntity<ImportacaoPostosStatus> cancelar(@PathVariable String id) {
+        return ResponseEntity.accepted().body(importacaoPostosService.cancelar(id));
+    }
 }

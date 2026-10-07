@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.*;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -419,6 +420,142 @@ class ExecutorImportacaoPostosTest {
 
         verify(gravador).desativar(60L);
         assertThat(status.resumo().desativados()).isEqualTo(1);
+    }
+
+    // ------------------------------------------------------------------ cancelamento
+
+    private static final String ADMIN = "admin@fiesc.org.br";
+
+    /** Pede o cancelamento da importação em curso, como faria a thread da requisição. */
+    private void cancelarAtual() {
+        registro.solicitarCancelamento(registro.atual().orElseThrow().id(), ADMIN);
+    }
+
+    @Test
+    void executar_ShouldCancelWithZeroProcessed_WhenCancelledBeforeTheFirstItem() {
+        AtomicReference<Runnable> tarefa = new AtomicReference<>();
+        doAnswer(invocacao -> {
+            tarefa.set(invocacao.getArgument(0));
+            return null;
+        }).when(execucao).submeter(any());
+        UUID id = executor.iniciar(plano(List.of(inserir(1)), List.of(atualizar(20, 2, false)), List.of(),
+                List.of(desativar(60))));
+
+        registro.solicitarCancelamento(id, ADMIN);
+        tarefa.get().run();
+
+        ImportacaoPostosStatus status = executor.consultar(id);
+        verifyNoInteractions(gravador, openStreetMapService);
+        assertThat(status.status()).isEqualTo(StatusImportacao.CANCELADA);
+        assertThat(status.processados()).isZero();
+        assertThat(status.mensagem()).isEqualTo(String.format(IMPORTACAO_CANCELADA_MESSAGE, 0, 3));
+        assertThat(status.resumo().inseridos()).isZero();
+        assertThat(status.resumo().atualizados()).isZero();
+        assertThat(status.resumo().desativados()).isZero();
+    }
+
+    @Test
+    void executar_ShouldStopAtTheNextItemWithoutDeactivating_WhenCancelledInTheMiddle() {
+        geocodificacao(1, Optional.of(COORDENADAS));
+        doAnswer(invocacao -> {
+            cancelarAtual();
+            return null;
+        }).when(gravador).inserir(eq(linha(1)), any());
+
+        ImportacaoPostosStatus status = executar(plano(List.of(inserir(1), inserir(2), inserir(3)),
+                List.of(), List.of(), List.of(desativar(60))));
+
+        // O item em andamento termina normalmente; o seguinte nem chega a geocodificar.
+        verify(gravador).inserir(eq(linha(1)), eq(COORDENADAS));
+        verify(openStreetMapService, times(1)).geocodificarComFallback(any(), any(), any(), any(), any(), any());
+        verify(gravador, never()).inserir(eq(linha(2)), any());
+        verify(gravador, never()).desativar(anyLong());
+        assertThat(status.status()).isEqualTo(StatusImportacao.CANCELADA);
+        assertThat(status.processados()).isEqualTo(1);
+        assertThat(status.mensagem()).isEqualTo(String.format(IMPORTACAO_CANCELADA_MESSAGE, 1, 4));
+        assertThat(status.resumo().inseridos()).isEqualTo(1);
+        assertThat(status.resumo().desativados()).isZero();
+    }
+
+    @Test
+    void executar_ShouldStopInTheFirstStage_WhenCancelledDuringUpdatesWithoutGeocoding() {
+        doAnswer(invocacao -> {
+            cancelarAtual();
+            return null;
+        }).when(gravador).atualizar(eq(20L), any(), eq(false));
+
+        ImportacaoPostosStatus status = executar(plano(List.of(inserir(1)),
+                List.of(atualizar(20, 2, false), atualizar(21, 3, false)), List.of(), List.of()));
+
+        verify(gravador, never()).atualizar(eq(21L), any(), anyBoolean());
+        verifyNoInteractions(openStreetMapService);
+        assertThat(status.status()).isEqualTo(StatusImportacao.CANCELADA);
+        assertThat(status.resumo().atualizados()).isEqualTo(1);
+    }
+
+    @Test
+    void executar_ShouldNotDeactivate_WhenCancelledDuringTheLastItemBeforeDeactivations() {
+        geocodificacao(5, Optional.of(COORDENADAS));
+        doAnswer(invocacao -> {
+            cancelarAtual();
+            return null;
+        }).when(gravador).atualizarComCoordenadas(eq(50L), any(), any(), eq(true));
+
+        ImportacaoPostosStatus status = executar(plano(List.of(), List.of(),
+                List.of(atualizar(50, 5, true)), List.of(desativar(60), desativar(61))));
+
+        verify(gravador, never()).desativar(anyLong());
+        assertThat(status.status()).isEqualTo(StatusImportacao.CANCELADA);
+        assertThat(status.processados()).isEqualTo(1);
+        assertThat(status.mensagem()).isEqualTo(String.format(IMPORTACAO_CANCELADA_MESSAGE, 1, 3));
+        assertThat(status.resumo().reativados()).isEqualTo(1);
+        assertThat(status.resumo().desativados()).isZero();
+    }
+
+    @Test
+    void executar_ShouldFinishDeactivatingAndConclude_WhenCancelledAfterDeactivationsStarted() {
+        doAnswer(invocacao -> {
+            cancelarAtual();
+            return null;
+        }).when(gravador).desativar(60L);
+
+        ImportacaoPostosStatus status = executar(plano(List.of(), List.of(), List.of(),
+                List.of(desativar(60), desativar(61))));
+
+        verify(gravador).desativar(61L);
+        assertThat(status.status()).isEqualTo(StatusImportacao.CONCLUIDA);
+        assertThat(status.resumo().desativados()).isEqualTo(2);
+    }
+
+    @Test
+    void executar_ShouldReleaseTheSlot_AfterCancelling() {
+        doAnswer(invocacao -> {
+            cancelarAtual();
+            return null;
+        }).when(gravador).atualizar(eq(20L), any(), eq(false));
+        executar(plano(List.of(), List.of(atualizar(20, 2, false)), List.of(), List.of()));
+
+        assertThat(registro.atual()).isEmpty();
+        ImportacaoPostosStatus seguinte = executar(plano(List.of(), List.of(atualizar(21, 3, false)), List.of(),
+                List.of()));
+        assertThat(seguinte.status()).isEqualTo(StatusImportacao.CONCLUIDA);
+    }
+
+    @Test
+    void executar_ShouldStillFail_WhenTheFailureLimitIsReachedOnTheItemDuringWhichCancelWasRequested() {
+        executor = novoExecutor(1);
+        when(openStreetMapService.geocodificarComFallback(eq("Rua 1, 10"), any(), any(), any(), any(), any()))
+                .thenAnswer(invocacao -> {
+                    cancelarAtual();
+                    throw feignIndisponivel();
+                });
+
+        ImportacaoPostosStatus status = executar(plano(List.of(inserir(1), inserir(2)), List.of(), List.of(),
+                List.of(desativar(60))));
+
+        assertThat(status.status()).isEqualTo(StatusImportacao.FALHOU);
+        assertThat(status.mensagem()).isEqualTo(String.format(IMPORTACAO_INTERROMPIDA_FALHAS_MESSAGE, 1, 1, 3));
+        verify(gravador, never()).desativar(anyLong());
     }
 
     // ------------------------------------------------------------------ resumo
