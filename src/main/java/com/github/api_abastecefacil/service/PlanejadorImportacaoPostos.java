@@ -48,10 +48,11 @@ import static com.github.api_abastecefacil.validation.NormalizadorPlanilhaPostos
  * <p><b>Diferença de texto e necessidade de geocodificar são perguntas diferentes.</b> Os
  * campos são comparados exatamente, e qualquer diferença — até só de caixa ou acento —
  * entra em {@code camposAlterados} e atualiza o texto. Mas a geocodificação só é pedida se
- * o CEP mudar nos dígitos, ou Endereço, Bairro, Cidade ou UF mudarem depois de ignorar
- * caixa, acento e espaços: {@code "Rua X, 1"} para {@code "RUA X, 1"} é o mesmo lugar e não
- * justifica uma chamada ao Nominatim. O CEP é comparado só pelos dígitos em tudo, então um
- * posto gravado sem hífen não aparece como alterado.
+ * Endereço, Cidade ou UF mudarem depois de ignorar caixa, acento e espaços:
+ * {@code "Rua X, 1"} para {@code "RUA X, 1"} é o mesmo lugar e não justifica uma chamada ao
+ * Nominatim. CEP e Bairro atualizam o texto mas não geocodificam, porque a geocodificação não
+ * os usa. O CEP é comparado só pelos dígitos em tudo, então um posto gravado sem hífen não
+ * aparece como alterado.
  *
  * <p><b>Desativação.</b> Vão para desativar os postos ativos cujo CNPJ, em dígitos, não
  * está entre os presentes na planilha. Presentes são os das linhas válidas <b>e</b> os das
@@ -225,10 +226,15 @@ public class PlanejadorImportacaoPostos {
         return linha.cep() != null && !digitos(linha.cep()).equals(digitos(posto.getCep()));
     }
 
+    /**
+     * Só os campos que a geocodificação usa: endereço, cidade e UF — a mesma regra da edição
+     * manual ({@code GasStationService}). CEP e bairro continuam em {@link #camposAlterados} e
+     * são gravados pelo ATUALIZAR, mas não disparam consulta: desde a busca estruturada nenhuma
+     * das duas consultas os envia, então geocodificar de novo devolveria o mesmo ponto. Isso
+     * também impede que coordenadas informadas à mão sejam trocadas por uma mudança só de CEP.
+     */
     private static boolean requerGeocodificacao(GasStation posto, LinhaPlanilhaPosto linha) {
-        return cepDifere(posto, linha)
-                || lugarDifere(linha.address(), posto.getAddress())
-                || lugarDifere(linha.district(), posto.getDistrict())
+        return lugarDifere(linha.address(), posto.getAddress())
                 || lugarDifere(linha.city(), posto.getCity())
                 || lugarDifere(linha.state(), posto.getState());
     }

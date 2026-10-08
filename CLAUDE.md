@@ -537,7 +537,51 @@ porque não filtra.
 
 ### Formatos relevantes
 
-`GasStationResponse` devolve **latitude e longitude como String**, não número.
+`GasStationResponse` devolve **latitude e longitude como String**, não número. Todas as rotas
+de posto — `GET /api/public/gas-stations/{id}`, `/filter` e as respostas de `POST`/`PUT` —
+passam pelo mesmo `GasStationMapper.toResponse`, então a edição tem de onde preencher os campos.
+
+**Coordenadas informadas à mão em `POST /api/gas-stations` e `PUT /api/gas-stations/{id}`.**
+`CreateGasStationRequest` e `UpdateGasStationRequest` têm `latitude` e `longitude` opcionais
+(`BigDecimal`; o Jackson aceita número JSON ou string numérica). Existem para o posto que o
+Nominatim não localiza — 208 da planilha real depois da busca estruturada.
+
+| Validação (400 `BAD_REQUEST`, "Erro de validação: …") | Mensagem |
+|---|---|
+| só uma das duas informada | Latitude e longitude devem ser informadas juntas |
+| latitude fora de [-90, 90] | Latitude deve estar entre -90 e 90 |
+| longitude fora de [-180, 180] | Longitude deve estar entre -180 e 180 |
+
+"Juntas ou nenhuma" é um `@AssertTrue` em `isCoordenadasCompletas()` do próprio record: o
+Hibernate Validator o trata como propriedade, então a violação chega ao handler como
+`FieldError`, igual às demais. O valor informado é arredondado para **8 casas** (`HALF_UP`,
+`GasStationConstants.ESCALA_COORDENADAS`), a escala das colunas, para a resposta devolver o que o
+banco grava.
+
+| Criação | Resultado |
+|---|---|
+| com latitude e longitude | usa as informadas, **sem consultar** o Nominatim |
+| sem coordenadas | geocodifica (§6, item 2) |
+| sem coordenadas e não localizado | 400 `COORDINATES_NOT_FOUND`: "Endereço não localizado no mapa. Confira o endereço ou informe a latitude e a longitude manualmente." |
+
+| Edição | Antes | Agora |
+|---|---|---|
+| com latitude e longitude | — | usa as informadas, **sem consulta**, mesmo com endereço alterado |
+| sem coordenadas, mudou `address`, `city` ou `state` (pela `chaveComparacao`) | geocodifica | geocodifica |
+| sem coordenadas, mudou só CEP, bairro, telefone, nome, horário, CNPJ ou `isActive` | **geocodificava sempre** — e posto não localizável não podia mais ser editado | **mantém as coordenadas, sem consulta** |
+| endereço, cidade ou UF diferentes só em caixa, acento ou espaços repetidos | geocodificava | mantém, sem consulta (o texto novo é gravado) |
+| geocodificação falha | 400, nada gravado | 400 com a mensagem nova, nada gravado |
+
+> **Contrato da edição com o frontend:** `latitude` e `longitude` vão preenchidas **somente
+> quando o administrador as digitou ou alterou**; caso contrário, vão `null`. Reenviar as
+> coordenadas que o formulário carregou faria toda edição usá-las, e mudar o endereço nunca mais
+> regeocodificaria — o marcador ficaria no endereço antigo. O backend **não** tem heurística para
+> isso, de propósito: ele não distingue "o administrador confirmou estas coordenadas" de "o
+> formulário devolveu o que recebeu".
+
+Um posto legado gravado sem vírgula no endereço (`"Rua A"`) volta da tela de edição como
+`"Rua A, "` — ela desmonta e remonta por `split(',')` —, a chave muda e a edição geocodifica. É o
+comportamento de antes, não regressão, e o `save` já grava no formato novo.
 
 `CreateIncidentRequest`:
 ```json
@@ -1048,11 +1092,13 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
 1. **Criar ocorrência exige que o veículo exista.** `IncidentService` busca o carro
    por placa e lança `NotFoundException` se não achar. Uma placa não cadastrada
    resulta em erro, mesmo o endpoint sendo público.
-2. **Criar e editar posto dispara geocodificação.** `GasStationService` chama
-   `OpenStreetMapService.geocodificarComFallback(address, city, state)` — a **mesma** estratégia
-   da importação, descrita abaixo — e, sem coordenadas, lança `CoordinatesNotFoundException`
-   (400 `COORDINATES_NOT_FOUND`). Isso significa que **cadastrar posto depende de internet** e
-   está sujeito ao rate limit do Nominatim.
+2. **Criar posto dispara geocodificação, e editar só quando o lugar muda** — salvo quando o
+   administrador informa latitude e longitude, caso em que não há consulta nenhuma (item 42 e
+   §5). `GasStationService` chama `OpenStreetMapService.geocodificarComFallback(address, city,
+   state)` — a **mesma** estratégia da importação, descrita abaixo — e, sem coordenadas, lança
+   `CoordinatesNotFoundException` (400 `COORDINATES_NOT_FOUND`, com mensagem que orienta a
+   informar as coordenadas). Sem coordenadas informadas, **cadastrar posto depende de
+   internet** e está sujeito ao rate limit do Nominatim.
 
    Desde a preparação da importação em lote, o `OpenStreetMapService` tem:
 
@@ -1128,7 +1174,7 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
 
      | | Antes | Agora |
      |---|---|---|
-     | Consultas por gravação | 1 (~1,1 s) | até 2 (**~2,2 s**, dentro do `@Transactional`) |
+     | Consultas por gravação que geocodifica | 1 (~1,1 s) | até 2 (**~2,2 s**, dentro do `@Transactional`). Desde o item 42, coordenadas informadas e edição que não muda o lugar não consultam |
      | CEP e bairro | no texto | fora |
      | Resultado em outro estado | aceito — marcador no lugar errado, sem aviso | **recusado**: sem fallback válido, 400 `COORDINATES_NOT_FOUND` |
      | Estado por extenso | ia no texto | resolvido para a sigla |
@@ -1588,8 +1634,10 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
       não roda se a importação for interrompida.
     - **Nulo na planilha nunca sobrescreve o banco**, em nenhum campo: vazio na exportação é
       ausência de informação, não remoção.
-    - **Geocodificação só quando o lugar muda** — CEP nos dígitos, ou endereço, bairro,
-      cidade e UF ignorando caixa, acento e espaços.
+    - **Geocodificação só quando o lugar muda** — endereço, cidade ou UF, ignorando caixa,
+      acento e espaços. **CEP e bairro não disparam geocodificação** desde que nenhuma das duas
+      consultas os envia: continuam em `camposAlterados` e são gravados pelo ATUALIZAR, mas sem
+      consulta. A mesma regra vale para a edição manual (item 42).
     - **Falha de geocodificação mantém endereço e coordenadas.** INSERIR sem coordenada não
       grava; ATUALIZAR/REATIVAR grava só os campos que não são de endereço. A diferença de
       endereço reaparece na próxima importação, que tenta de novo.
@@ -1598,6 +1646,31 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
     - **O administrador pode cancelar** (`POST /{id}/cancelamento`): a importação para antes
       do próximo item como `CANCELADA`, o que foi gravado permanece e nada é desativado — salvo
       se DESATIVAR já tiver começado, caso em que ela termina `CONCLUIDA` (item 40).
+42. **Coordenadas informadas à mão, e quando o posto é regeocodificado.** O contrato HTTP está
+    na §5 ("Coordenadas informadas à mão"). As regras:
+
+    - **Criação:** com latitude e longitude, usa as informadas e não consulta; sem elas,
+      geocodifica, e não localizar é 400 `COORDINATES_NOT_FOUND` com a mensagem que orienta a
+      informar as coordenadas.
+    - **Edição:** com latitude e longitude, usa as informadas, mesmo com endereço alterado.
+      Sem elas, `GasStationService.lugarMudou` decide: só **endereço, cidade e UF**, pela
+      `NormalizadorPlanilhaPostos.chaveComparacao`. Mudou → geocodifica; não mudou → mantém as
+      coordenadas, sem consulta. É **a mesma regra** do
+      `PlanejadorImportacaoPostos.requerGeocodificacao`, alinhada de propósito: CEP e bairro não
+      entram em nenhuma das duas, porque a geocodificação não os usa desde a busca estruturada.
+    - **As coordenadas são resolvidas antes de a entidade ser tocada.** Se a geocodificação
+      falha, a exceção sai com o posto intacto e o `save` não é chamado. O rollback da
+      transação cobriria isso de qualquer jeito; a ordem é o que torna a garantia testável sem
+      banco.
+    - **Interação com a importação** (só documentada, nada mudou no executor):
+      - o posto criado à mão é reconhecido pelo **CNPJ em dígitos**, com máscara ou sem;
+      - se o endereço, a cidade ou a UF dele diferem dos da planilha, a importação tenta
+        geocodificar o da planilha. **Se falhar**, mantém endereço e coordenadas manuais (regra
+        do item 40). **Se localizar, as coordenadas manuais são substituídas** pelas da
+        geocodificação — limitação aceita;
+      - se só CEP, bairro ou campos que não são de lugar diferem, o texto é atualizado e as
+        coordenadas manuais **ficam**: o ATUALIZAR sem geocodificação não toca em latitude e
+        longitude.
 
 ---
 
@@ -2000,7 +2073,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **584 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **605 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -2014,7 +2087,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   handler global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 584, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 605, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa
@@ -2030,6 +2103,11 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   (no `@PathVariable` em vez do `@RequestBody`, corrigido no S2a) sobreviveu desde o
   início: o `@Email` do `UpdateUserRequest` nunca rodava e nada acusou. Mudança de
   contrato HTTP neste projeto **só é verificada à mão**.
+
+  **Exceção parcial: `GasStationRequestValidationTest`**, o primeiro teste de Bean Validation.
+  Cria o `Validator` com `Validation.buildDefaultValidatorFactory()`, sem contexto Spring, e
+  prova as anotações de latitude e longitude dos dois DTOs de posto. Não prova que o `@Valid` do
+  controller está no lugar certo — isso continua só verificável à mão.
 
   Ruído esperado na saída: `ResendEnviadorEmailTest` exercita falha de rede e rejeição do
   provedor, então **um stack trace de `IOException: conexão recusada` aparece no log da

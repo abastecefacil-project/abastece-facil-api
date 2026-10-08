@@ -15,7 +15,12 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.Objects;
+
 import static com.github.api_abastecefacil.constants.GasStationConstants.*;
+import static com.github.api_abastecefacil.validation.NormalizadorPlanilhaPostos.chaveComparacao;
 
 @Service
 @Transactional(readOnly = true)
@@ -38,23 +43,43 @@ public class GasStationService {
         this.autorizacaoOperacional = autorizacaoOperacional;
     }
 
+    /**
+     * Com latitude e longitude no request, usa as informadas e não consulta o Nominatim — é o
+     * caminho para o posto que a geocodificação não localiza. Sem elas, geocodifica.
+     */
     @Transactional
     public GasStationResponse create(CreateGasStationRequest request) {
         autorizacaoOperacional.autorizarEscrita();
         validateCnpjDoesNotExist(request.cnpj());
-        Coordinates coordinates = fetchCoordinatesFromAddress(request.address(), request.city(), request.state());
+        Coordinates coordinates = request.coordenadasInformadas()
+                ? informadas(request.latitude(), request.longitude())
+                : fetchCoordinatesFromAddress(request.address(), request.city(), request.state());
         GasStation gasStation = createGasStationEntity(request, coordinates);
         GasStation savedGasStation = gasStationRepository.save(gasStation);
         return gasStationMapper.toResponse(savedGasStation);
     }
 
+    /**
+     * As coordenadas são resolvidas <b>antes</b> de qualquer campo ser copiado para a entidade:
+     * se a geocodificação falhar, a exceção sai com o posto intacto e nada é gravado.
+     *
+     * <ul>
+     *   <li>com latitude e longitude no request: usa as informadas, sem consulta, mesmo com
+     *       endereço alterado;</li>
+     *   <li>sem elas, e com endereço, cidade ou UF diferentes do banco: geocodifica;</li>
+     *   <li>sem elas, e com o lugar igual: mantém as coordenadas atuais, sem consulta.
+     *       Mudança só de CEP, bairro, telefone, nome ou horário não toca no Nominatim.</li>
+     * </ul>
+     */
     @Transactional
     public GasStationResponse update(Long id, UpdateGasStationRequest request) {
         autorizacaoOperacional.autorizarEscrita();
         GasStation gasStation = findGasStationByIdOrThrow(id);
         validateCnpjNotUsedByAnotherGasStation(gasStation, request.cnpj());
+        Coordinates coordinates = resolveUpdatedCoordinates(gasStation, request);
         updateGasStationBasicFields(gasStation, request);
-        updateGasStationCoordinates(gasStation, request);
+        gasStation.setLatitude(coordinates.latitude());
+        gasStation.setLongitude(coordinates.longitude());
         GasStation updatedGasStation = gasStationRepository.save(gasStation);
         return gasStationMapper.toResponse(updatedGasStation);
     }
@@ -133,10 +158,35 @@ public class GasStationService {
         gasStation.setBusinessHours(request.businessHours());
     }
 
-    private void updateGasStationCoordinates(GasStation gasStation, UpdateGasStationRequest request) {
-        Coordinates coordinates = fetchCoordinatesFromAddress(request.address(), request.city(), request.state());
+    private Coordinates resolveUpdatedCoordinates(GasStation gasStation, UpdateGasStationRequest request) {
+        if (request.coordenadasInformadas()) {
+            return informadas(request.latitude(), request.longitude());
+        }
+        if (lugarMudou(gasStation, request)) {
+            return fetchCoordinatesFromAddress(request.address(), request.city(), request.state());
+        }
+        return new Coordinates(gasStation.getLatitude(), gasStation.getLongitude());
+    }
 
-        gasStation.setLatitude(coordinates.latitude());
-        gasStation.setLongitude(coordinates.longitude());
+    /**
+     * Só os campos que a geocodificação usa, sem caixa, acento e espaços repetidos — a mesma
+     * regra do {@code PlanejadorImportacaoPostos.requerGeocodificacao}. CEP e bairro não
+     * entram: nenhuma das consultas os envia, então geocodificar devolveria o mesmo ponto.
+     */
+    private static boolean lugarMudou(GasStation gasStation, UpdateGasStationRequest request) {
+        return difere(request.address(), gasStation.getAddress())
+                || difere(request.city(), gasStation.getCity())
+                || difere(request.state(), gasStation.getState());
+    }
+
+    private static boolean difere(String novo, String atual) {
+        return !Objects.equals(chaveComparacao(novo), chaveComparacao(atual));
+    }
+
+    /** Arredondada à escala da coluna, para a resposta mostrar o que o banco grava. */
+    private static Coordinates informadas(BigDecimal latitude, BigDecimal longitude) {
+        return new Coordinates(
+                latitude.setScale(ESCALA_COORDENADAS, RoundingMode.HALF_UP),
+                longitude.setScale(ESCALA_COORDENADAS, RoundingMode.HALF_UP));
     }
 }
