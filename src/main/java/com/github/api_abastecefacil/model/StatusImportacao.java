@@ -4,5 +4,7 @@ package com.github.api_abastecefacil.model;
 public enum StatusImportacao {
     EM_ANDAMENTO,
     CONCLUIDA,
-    FALHOU
+    FALHOU,
+    /** Interrompida a pedido de um administrador. Ver {@code ExecutorImportacaoPostos}. */
+    CANCELADA
 }

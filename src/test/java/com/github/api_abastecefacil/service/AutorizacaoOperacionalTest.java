@@ -130,6 +130,15 @@ class AutorizacaoOperacionalTest {
     }
 
     @Test
+    void autorizarAdministracao_ShouldReturnTheAuthenticatedAuthor() {
+        autenticadoComo(Perfil.ADMINISTRADOR);
+
+        User autor = autorizacao.autorizarAdministracao();
+
+        assertThat(autor.getEmail()).isEqualTo("autor@fiesc.org.br");
+    }
+
+    @Test
     void autorizarAdministracao_ShouldRejectGestorFrota() {
         autenticadoComo(Perfil.GESTOR_FROTA);
         PerfilNaoPermitidoException ex =

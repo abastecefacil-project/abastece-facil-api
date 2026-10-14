@@ -91,28 +91,65 @@ class PlanejadorImportacaoPostosTest {
         });
     }
 
+    /**
+     * CEP e bairro não disparam geocodificação: nenhuma das duas consultas os envia desde a
+     * busca estruturada. O texto é atualizado pelo ATUALIZAR, e as coordenadas — inclusive
+     * as informadas à mão — ficam.
+     */
     @Test
-    void planejar_ShouldRequireGeocoding_WhenCepDigitsChanged() {
+    void planejar_ShouldUpdateWithoutGeocoding_WhenOnlyCepDigitsChanged() {
         banco(posto(1L, CNPJ, true).setCep("89226-526"));
 
         PlanoImportacao plano = planejador.planejar(leitura(linha().build()));
 
         assertThat(plano.atualizar()).singleElement().satisfies(item -> {
             assertThat(item.camposAlterados()).containsExactly("CEP");
-            assertThat(item.requerGeocodificacao()).isTrue();
+            assertThat(item.requerGeocodificacao()).isFalse();
         });
     }
 
     @Test
-    void planejar_ShouldRequireGeocoding_WhenDistrictReallyChanged() {
+    void planejar_ShouldUpdateWithoutGeocoding_WhenOnlyDistrictReallyChanged() {
         banco(posto(1L, CNPJ, true).setDistrict("JARDIM PARAISO"));
 
         PlanoImportacao plano = planejador.planejar(leitura(linha().build()));
 
         assertThat(plano.atualizar()).singleElement().satisfies(item -> {
             assertThat(item.camposAlterados()).containsExactly("Bairro");
+            assertThat(item.requerGeocodificacao()).isFalse();
+        });
+    }
+
+    @Test
+    void planejar_ShouldRequireGeocoding_WhenAddressReallyChanged() {
+        banco(posto(1L, CNPJ, true).setAddress("RUA OUTRA, 50"));
+
+        PlanoImportacao plano = planejador.planejar(leitura(linha().build()));
+
+        assertThat(plano.atualizar()).singleElement().satisfies(item -> {
+            assertThat(item.camposAlterados()).containsExactly("Endereço");
             assertThat(item.requerGeocodificacao()).isTrue();
         });
+    }
+
+    @Test
+    void planejar_ShouldRequireGeocoding_WhenCityReallyChanged() {
+        banco(posto(1L, CNPJ, true).setCity("ARAQUARI"));
+
+        PlanoImportacao plano = planejador.planejar(leitura(linha().build()));
+
+        assertThat(plano.atualizar()).singleElement().satisfies(item ->
+                assertThat(item.requerGeocodificacao()).isTrue());
+    }
+
+    @Test
+    void planejar_ShouldRequireGeocoding_WhenStateReallyChanged() {
+        banco(posto(1L, CNPJ, true).setState("PR"));
+
+        PlanoImportacao plano = planejador.planejar(leitura(linha().build()));
+
+        assertThat(plano.atualizar()).singleElement().satisfies(item ->
+                assertThat(item.requerGeocodificacao()).isTrue());
     }
 
     @Test

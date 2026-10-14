@@ -1,5 +1,8 @@
 package com.github.api_abastecefacil.service;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.github.api_abastecefacil.dto.gasStation.ImportacaoPostosStatus;
 import com.github.api_abastecefacil.dto.gasStation.ItemPlanoImportacao;
 import com.github.api_abastecefacil.dto.gasStation.LinhaPlanilhaPosto;
@@ -9,6 +12,8 @@ import com.github.api_abastecefacil.exception.ImportacaoEmAndamentoException;
 import com.github.api_abastecefacil.exception.ImportacaoNaoEncontradaException;
 import com.github.api_abastecefacil.model.StatusImportacao;
 import com.github.api_abastecefacil.service.OpenStreetMapService.Coordinates;
+import com.github.api_abastecefacil.service.OpenStreetMapService.Geocodificacao;
+import com.github.api_abastecefacil.service.OpenStreetMapService.Origem;
 import feign.FeignException;
 import feign.Request;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,6 +24,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.task.TaskRejectedException;
 import org.springframework.dao.DataIntegrityViolationException;
 
@@ -32,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.*;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -129,13 +136,20 @@ class ExecutorImportacaoPostosTest {
         return new PlanoImportacao(inserir, atualizar, reativar, desativar, 0, 0, 0, 0, List.of(), List.of());
     }
 
+    /** Encontrado conta como resolvido na estruturada; vazio, como não localizado. */
     private void geocodificacao(int numero, Optional<Coordinates> resultado) {
-        when(openStreetMapService.geocodificarComFallback(eq("Rua " + numero + ", 10"), any(), any(), any(), any(), any()))
+        geocodificacao(numero, resultado
+                .map(coordenadas -> new Geocodificacao(Origem.ESTRUTURADA, coordenadas, 0))
+                .orElseGet(() -> new Geocodificacao(Origem.NAO_LOCALIZADO, null, 0)));
+    }
+
+    private void geocodificacao(int numero, Geocodificacao resultado) {
+        when(openStreetMapService.geocodificarComFallback(eq("Rua " + numero + ", 10"), any(), any()))
                 .thenReturn(resultado);
     }
 
     private void falhaDeComunicacao(int numero) {
-        when(openStreetMapService.geocodificarComFallback(eq("Rua " + numero + ", 10"), any(), any(), any(), any(), any()))
+        when(openStreetMapService.geocodificarComFallback(eq("Rua " + numero + ", 10"), any(), any()))
                 .thenThrow(feignIndisponivel());
     }
 
@@ -245,7 +259,7 @@ class ExecutorImportacaoPostosTest {
 
         executar(plano(List.of(inserir(1)), List.of(), List.of(), List.of()));
 
-        verify(openStreetMapService).geocodificarComFallback("Rua 1, 10", "Centro", "Joinville", "SC", "89201-250", "SC");
+        verify(openStreetMapService).geocodificarComFallback("Rua 1, 10", "Joinville", "SC");
     }
 
     // ------------------------------------------------------------------ geocodificação vazia
@@ -326,7 +340,7 @@ class ExecutorImportacaoPostosTest {
 
         ImportacaoPostosStatus status = executar(plano(itens, List.of(), List.of(), List.of(desativar(60))));
 
-        verify(openStreetMapService, times(5)).geocodificarComFallback(any(), any(), any(), any(), any(), any());
+        verify(openStreetMapService, times(5)).geocodificarComFallback(any(), any(), any());
         verify(gravador, never()).desativar(anyLong());
         verify(gravador, never()).inserir(any(), any());
         assertThat(status.status()).isEqualTo(StatusImportacao.FALHOU);
@@ -349,7 +363,7 @@ class ExecutorImportacaoPostosTest {
 
         ImportacaoPostosStatus status = executar(plano(itens, List.of(), List.of(), List.of(desativar(60))));
 
-        verify(openStreetMapService, times(9)).geocodificarComFallback(any(), any(), any(), any(), any(), any());
+        verify(openStreetMapService, times(9)).geocodificarComFallback(any(), any(), any());
         verify(gravador).desativar(60L);
         assertThat(status.status()).isEqualTo(StatusImportacao.CONCLUIDA);
     }
@@ -357,7 +371,7 @@ class ExecutorImportacaoPostosTest {
     @Test
     void executar_ShouldFailWithoutDeactivating_WhenThrottleWaitIsInterrupted() {
         geocodificacao(1, Optional.of(COORDENADAS));
-        when(openStreetMapService.geocodificarComFallback(eq("Rua 2, 10"), any(), any(), any(), any(), any()))
+        when(openStreetMapService.geocodificarComFallback(eq("Rua 2, 10"), any(), any()))
                 .thenThrow(new IllegalStateException("interrompida"));
 
         ImportacaoPostosStatus status = executar(plano(List.of(inserir(1), inserir(2), inserir(3)),
@@ -419,6 +433,232 @@ class ExecutorImportacaoPostosTest {
 
         verify(gravador).desativar(60L);
         assertThat(status.resumo().desativados()).isEqualTo(1);
+    }
+
+    // ------------------------------------------------------------------ métricas de geocodificação
+
+    /**
+     * As métricas só existem no log, então é nele que são conferidas. O appender é ligado só
+     * nestes testes e desligado no finally, para não vazar para os demais.
+     */
+    private List<ILoggingEvent> logsDurante(Runnable acao) {
+        ch.qos.logback.classic.Logger logger =
+                (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(ExecutorImportacaoPostos.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            acao.run();
+            return appender.list;
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    private static ILoggingEvent desfecho(List<ILoggingEvent> logs, Level nivel) {
+        return logs.stream()
+                .filter(evento -> evento.getLevel() == nivel && evento.getFormattedMessage().contains("geocodificação:"))
+                .reduce((primeiro, segundo) -> segundo)
+                .orElseThrow();
+    }
+
+    @Test
+    void executar_ShouldSumGeocodingMetricsAcrossTheFourOutcomes_InTheCompletionLog() {
+        geocodificacao(1, new Geocodificacao(Origem.ESTRUTURADA, COORDENADAS, 0));
+        geocodificacao(2, new Geocodificacao(Origem.TEXTO_LIVRE, COORDENADAS, 1));
+        geocodificacao(3, new Geocodificacao(Origem.NAO_LOCALIZADO, null, 2));
+        geocodificacao(4, new Geocodificacao(Origem.NAO_LOCALIZADO, null, 0));
+        falhaDeComunicacao(5);
+        geocodificacao(6, new Geocodificacao(Origem.TEXTO_LIVRE, COORDENADAS, 0));
+        PlanoImportacao plano = plano(
+                List.of(inserir(1), inserir(2), inserir(3), inserir(4), inserir(5)),
+                List.of(atualizar(30, 6, true), atualizar(20, 7, false)),
+                List.of(), List.of());
+
+        List<ILoggingEvent> logs = logsDurante(() -> executar(plano));
+
+        // Erro de comunicação (5) e atualização sem geocodificar (7) não entram nas métricas.
+        assertThat(desfecho(logs, Level.INFO).getFormattedMessage())
+                .contains("concluída")
+                .contains(String.format(METRICAS_GEOCODIFICACAO_FORMAT, 1, 2, 2, 3));
+    }
+
+    @Test
+    void executar_ShouldLogGeocodingMetrics_WhenCancelled() {
+        geocodificacao(1, new Geocodificacao(Origem.TEXTO_LIVRE, COORDENADAS, 1));
+        doAnswer(invocacao -> {
+            cancelarAtual();
+            return null;
+        }).when(gravador).inserir(eq(linha(1)), any());
+
+        List<ILoggingEvent> logs = logsDurante(() -> executar(plano(List.of(inserir(1), inserir(2)),
+                List.of(), List.of(), List.of())));
+
+        assertThat(desfecho(logs, Level.INFO).getFormattedMessage())
+                .contains("cancelada")
+                .contains(String.format(METRICAS_GEOCODIFICACAO_FORMAT, 0, 1, 0, 1));
+    }
+
+    @Test
+    void executar_ShouldLogGeocodingMetrics_WhenFailedByConsecutiveFailures() {
+        executor = novoExecutor(1);
+        geocodificacao(1, new Geocodificacao(Origem.NAO_LOCALIZADO, null, 2));
+        falhaDeComunicacao(2);
+
+        List<ILoggingEvent> logs = logsDurante(() -> executar(plano(List.of(inserir(1), inserir(2), inserir(3)),
+                List.of(), List.of(), List.of())));
+
+        assertThat(desfecho(logs, Level.WARN).getFormattedMessage())
+                .contains(String.format(METRICAS_GEOCODIFICACAO_FORMAT, 0, 0, 1, 2));
+    }
+
+    @Test
+    void executar_ShouldLogGeocodingMetrics_WhenFailedByUnexpectedError() {
+        geocodificacao(1, new Geocodificacao(Origem.ESTRUTURADA, COORDENADAS, 0));
+        when(openStreetMapService.geocodificarComFallback(eq("Rua 2, 10"), any(), any()))
+                .thenThrow(new IllegalStateException("interrompida"));
+
+        List<ILoggingEvent> logs = logsDurante(() -> executar(plano(List.of(inserir(1), inserir(2)),
+                List.of(), List.of(), List.of())));
+
+        assertThat(desfecho(logs, Level.ERROR).getFormattedMessage())
+                .contains(String.format(METRICAS_GEOCODIFICACAO_FORMAT, 1, 0, 0, 0));
+    }
+
+    // ------------------------------------------------------------------ cancelamento
+
+    private static final String ADMIN = "admin@fiesc.org.br";
+
+    /** Pede o cancelamento da importação em curso, como faria a thread da requisição. */
+    private void cancelarAtual() {
+        registro.solicitarCancelamento(registro.atual().orElseThrow().id(), ADMIN);
+    }
+
+    @Test
+    void executar_ShouldCancelWithZeroProcessed_WhenCancelledBeforeTheFirstItem() {
+        AtomicReference<Runnable> tarefa = new AtomicReference<>();
+        doAnswer(invocacao -> {
+            tarefa.set(invocacao.getArgument(0));
+            return null;
+        }).when(execucao).submeter(any());
+        UUID id = executor.iniciar(plano(List.of(inserir(1)), List.of(atualizar(20, 2, false)), List.of(),
+                List.of(desativar(60))));
+
+        registro.solicitarCancelamento(id, ADMIN);
+        tarefa.get().run();
+
+        ImportacaoPostosStatus status = executor.consultar(id);
+        verifyNoInteractions(gravador, openStreetMapService);
+        assertThat(status.status()).isEqualTo(StatusImportacao.CANCELADA);
+        assertThat(status.processados()).isZero();
+        assertThat(status.mensagem()).isEqualTo(String.format(IMPORTACAO_CANCELADA_MESSAGE, 0, 3));
+        assertThat(status.resumo().inseridos()).isZero();
+        assertThat(status.resumo().atualizados()).isZero();
+        assertThat(status.resumo().desativados()).isZero();
+    }
+
+    @Test
+    void executar_ShouldStopAtTheNextItemWithoutDeactivating_WhenCancelledInTheMiddle() {
+        geocodificacao(1, Optional.of(COORDENADAS));
+        doAnswer(invocacao -> {
+            cancelarAtual();
+            return null;
+        }).when(gravador).inserir(eq(linha(1)), any());
+
+        ImportacaoPostosStatus status = executar(plano(List.of(inserir(1), inserir(2), inserir(3)),
+                List.of(), List.of(), List.of(desativar(60))));
+
+        // O item em andamento termina normalmente; o seguinte nem chega a geocodificar.
+        verify(gravador).inserir(eq(linha(1)), eq(COORDENADAS));
+        verify(openStreetMapService, times(1)).geocodificarComFallback(any(), any(), any());
+        verify(gravador, never()).inserir(eq(linha(2)), any());
+        verify(gravador, never()).desativar(anyLong());
+        assertThat(status.status()).isEqualTo(StatusImportacao.CANCELADA);
+        assertThat(status.processados()).isEqualTo(1);
+        assertThat(status.mensagem()).isEqualTo(String.format(IMPORTACAO_CANCELADA_MESSAGE, 1, 4));
+        assertThat(status.resumo().inseridos()).isEqualTo(1);
+        assertThat(status.resumo().desativados()).isZero();
+    }
+
+    @Test
+    void executar_ShouldStopInTheFirstStage_WhenCancelledDuringUpdatesWithoutGeocoding() {
+        doAnswer(invocacao -> {
+            cancelarAtual();
+            return null;
+        }).when(gravador).atualizar(eq(20L), any(), eq(false));
+
+        ImportacaoPostosStatus status = executar(plano(List.of(inserir(1)),
+                List.of(atualizar(20, 2, false), atualizar(21, 3, false)), List.of(), List.of()));
+
+        verify(gravador, never()).atualizar(eq(21L), any(), anyBoolean());
+        verifyNoInteractions(openStreetMapService);
+        assertThat(status.status()).isEqualTo(StatusImportacao.CANCELADA);
+        assertThat(status.resumo().atualizados()).isEqualTo(1);
+    }
+
+    @Test
+    void executar_ShouldNotDeactivate_WhenCancelledDuringTheLastItemBeforeDeactivations() {
+        geocodificacao(5, Optional.of(COORDENADAS));
+        doAnswer(invocacao -> {
+            cancelarAtual();
+            return null;
+        }).when(gravador).atualizarComCoordenadas(eq(50L), any(), any(), eq(true));
+
+        ImportacaoPostosStatus status = executar(plano(List.of(), List.of(),
+                List.of(atualizar(50, 5, true)), List.of(desativar(60), desativar(61))));
+
+        verify(gravador, never()).desativar(anyLong());
+        assertThat(status.status()).isEqualTo(StatusImportacao.CANCELADA);
+        assertThat(status.processados()).isEqualTo(1);
+        assertThat(status.mensagem()).isEqualTo(String.format(IMPORTACAO_CANCELADA_MESSAGE, 1, 3));
+        assertThat(status.resumo().reativados()).isEqualTo(1);
+        assertThat(status.resumo().desativados()).isZero();
+    }
+
+    @Test
+    void executar_ShouldFinishDeactivatingAndConclude_WhenCancelledAfterDeactivationsStarted() {
+        doAnswer(invocacao -> {
+            cancelarAtual();
+            return null;
+        }).when(gravador).desativar(60L);
+
+        ImportacaoPostosStatus status = executar(plano(List.of(), List.of(), List.of(),
+                List.of(desativar(60), desativar(61))));
+
+        verify(gravador).desativar(61L);
+        assertThat(status.status()).isEqualTo(StatusImportacao.CONCLUIDA);
+        assertThat(status.resumo().desativados()).isEqualTo(2);
+    }
+
+    @Test
+    void executar_ShouldReleaseTheSlot_AfterCancelling() {
+        doAnswer(invocacao -> {
+            cancelarAtual();
+            return null;
+        }).when(gravador).atualizar(eq(20L), any(), eq(false));
+        executar(plano(List.of(), List.of(atualizar(20, 2, false)), List.of(), List.of()));
+
+        assertThat(registro.atual()).isEmpty();
+        ImportacaoPostosStatus seguinte = executar(plano(List.of(), List.of(atualizar(21, 3, false)), List.of(),
+                List.of()));
+        assertThat(seguinte.status()).isEqualTo(StatusImportacao.CONCLUIDA);
+    }
+
+    @Test
+    void executar_ShouldStillFail_WhenTheFailureLimitIsReachedOnTheItemDuringWhichCancelWasRequested() {
+        executor = novoExecutor(1);
+        when(openStreetMapService.geocodificarComFallback(eq("Rua 1, 10"), any(), any()))
+                .thenAnswer(invocacao -> {
+                    cancelarAtual();
+                    throw feignIndisponivel();
+                });
+
+        ImportacaoPostosStatus status = executar(plano(List.of(inserir(1), inserir(2)), List.of(), List.of(),
+                List.of(desativar(60))));
+
+        assertThat(status.status()).isEqualTo(StatusImportacao.FALHOU);
+        assertThat(status.mensagem()).isEqualTo(String.format(IMPORTACAO_INTERROMPIDA_FALHAS_MESSAGE, 1, 1, 3));
+        verify(gravador, never()).desativar(anyLong());
     }
 
     // ------------------------------------------------------------------ resumo

@@ -349,6 +349,20 @@ class GlobalExceptionHandlerTest {
     }
 
     @Test
+    void handleImportacaoNaoEmAndamentoException_ShouldReturn409WithOwnError() {
+        ImportacaoNaoEmAndamentoException ex = new ImportacaoNaoEmAndamentoException("A importação já foi finalizada");
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleImportacaoNaoEmAndamentoException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().status()).isEqualTo(409);
+        assertThat(response.getBody().error()).isEqualTo("IMPORTACAO_NAO_EM_ANDAMENTO");
+        assertThat(response.getBody().message()).isEqualTo("A importação já foi finalizada");
+        assertThat(response.getBody().path()).isEqualTo("uri=/test");
+    }
+
+    @Test
     void handleImportacaoNaoEncontradaException_ShouldReturn404WithOwnError() {
         ImportacaoNaoEncontradaException ex = new ImportacaoNaoEncontradaException("Importação não encontrada");
 

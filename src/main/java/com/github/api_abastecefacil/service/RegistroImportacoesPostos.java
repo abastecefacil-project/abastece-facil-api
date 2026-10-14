@@ -3,6 +3,7 @@ package com.github.api_abastecefacil.service;
 import com.github.api_abastecefacil.dto.gasStation.ImportacaoPostosStatus;
 import com.github.api_abastecefacil.dto.gasStation.ResumoImportacaoPostos;
 import com.github.api_abastecefacil.exception.ImportacaoEmAndamentoException;
+import com.github.api_abastecefacil.exception.ImportacaoNaoEmAndamentoException;
 import com.github.api_abastecefacil.exception.ImportacaoNaoEncontradaException;
 import com.github.api_abastecefacil.model.StatusImportacao;
 import org.springframework.stereotype.Service;
@@ -17,6 +18,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.IMPORTACAO_EM_ANDAMENTO_MESSAGE;
+import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.IMPORTACAO_NAO_EM_ANDAMENTO_MESSAGE;
 import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.IMPORTACAO_NAO_ENCONTRADA_MESSAGE;
 
 /**
@@ -31,6 +33,12 @@ import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.IMP
  * <p><b>Os valores são imutáveis.</b> A thread da importação escreve e as threads de
  * requisição leem; cada avanço substitui o record por {@code computeIfPresent}, então
  * nenhuma leitura vê um objeto pela metade.
+ *
+ * <p><b>O pedido de cancelamento mora na mesma entrada que o status.</b> Assim
+ * {@link #solicitarCancelamento} confere {@code EM_ANDAMENTO} e registra o pedido num único
+ * {@code compute}, atômico em relação ao {@code computeIfPresent} de {@link #finalizar}: um
+ * pedido nunca é aceito para uma importação que já terminou. O e-mail de quem pediu fica fora
+ * do {@link ImportacaoPostosStatus}, que é o corpo das respostas HTTP.
  *
  * <p><b>Retenção de 24 horas, com limpeza oportunista.</b> Os finalizados há mais de 24 horas
  * são removidos ao iniciar e ao consultar — não há {@code @Scheduled}. São poucos registros
@@ -48,7 +56,7 @@ public class RegistroImportacoesPostos {
     static final Duration RETENCAO = Duration.ofHours(24);
 
     private final Clock clock;
-    private final Map<UUID, ImportacaoPostosStatus> registros = new ConcurrentHashMap<>();
+    private final Map<UUID, Entrada> registros = new ConcurrentHashMap<>();
     private final AtomicReference<UUID> emAndamento = new AtomicReference<>();
 
     public RegistroImportacoesPostos(Clock clock) {
@@ -68,18 +76,19 @@ public class RegistroImportacoesPostos {
 
         ImportacaoPostosStatus status = new ImportacaoPostosStatus(id, StatusImportacao.EM_ANDAMENTO, total, 0,
                 LocalDateTime.now(clock), null, null, null);
-        registros.put(id, status);
+        registros.put(id, new Entrada(status, null));
         return status;
     }
 
     public void avancar(UUID id) {
-        registros.computeIfPresent(id, (chave, status) -> status.comMaisUmProcessado());
+        registros.computeIfPresent(id, (chave, entrada) -> entrada.comStatus(entrada.status().comMaisUmProcessado()));
     }
 
     /** Grava o desfecho e só então libera a vaga para a próxima importação. */
     public void finalizar(UUID id, StatusImportacao status, String mensagem, ResumoImportacaoPostos resumo) {
         LocalDateTime agora = LocalDateTime.now(clock);
-        registros.computeIfPresent(id, (chave, atual) -> atual.finalizada(status, agora, mensagem, resumo));
+        registros.computeIfPresent(id,
+                (chave, entrada) -> entrada.comStatus(entrada.status().finalizada(status, agora, mensagem, resumo)));
         emAndamento.compareAndSet(id, null);
     }
 
@@ -88,11 +97,7 @@ public class RegistroImportacoesPostos {
      */
     public ImportacaoPostosStatus consultar(UUID id) {
         descartarExpirados();
-        ImportacaoPostosStatus status = registros.get(id);
-        if (status == null) {
-            throw new ImportacaoNaoEncontradaException(IMPORTACAO_NAO_ENCONTRADA_MESSAGE);
-        }
-        return status;
+        return buscar(id).status();
     }
 
     /**
@@ -108,11 +113,60 @@ public class RegistroImportacoesPostos {
             return Optional.empty();
         }
         return Optional.ofNullable(registros.get(id))
+                .map(Entrada::status)
                 .filter(status -> status.status() == StatusImportacao.EM_ANDAMENTO);
+    }
+
+    /**
+     * Registra o pedido de cancelamento. Só o registra: quem para é o executor, no próximo
+     * ponto de verificação. Um segundo pedido para a mesma importação é aceito e mantém o
+     * autor do primeiro.
+     *
+     * @param email quem pediu, lido na thread da requisição — a da importação não tem
+     *              {@code SecurityContext}
+     * @return o status no momento do pedido, ainda {@code EM_ANDAMENTO}
+     * @throws ImportacaoNaoEncontradaException  se o id não existe ou já foi descartado
+     * @throws ImportacaoNaoEmAndamentoException se a importação já terminou
+     */
+    public ImportacaoPostosStatus solicitarCancelamento(UUID id, String email) {
+        descartarExpirados();
+        Entrada entrada = registros.compute(id, (chave, atual) -> {
+            if (atual == null) {
+                throw new ImportacaoNaoEncontradaException(IMPORTACAO_NAO_ENCONTRADA_MESSAGE);
+            }
+            if (atual.status().status() != StatusImportacao.EM_ANDAMENTO) {
+                throw new ImportacaoNaoEmAndamentoException(
+                        String.format(IMPORTACAO_NAO_EM_ANDAMENTO_MESSAGE, atual.status().status()));
+            }
+            return atual.canceladoPor() != null ? atual : new Entrada(atual.status(), email);
+        });
+        return entrada.status();
+    }
+
+    /** O e-mail de quem pediu o cancelamento, se alguém pediu. Consultado pelo executor. */
+    public Optional<String> cancelamentoSolicitadoPor(UUID id) {
+        return Optional.ofNullable(registros.get(id)).map(Entrada::canceladoPor);
+    }
+
+    private Entrada buscar(UUID id) {
+        Entrada entrada = registros.get(id);
+        if (entrada == null) {
+            throw new ImportacaoNaoEncontradaException(IMPORTACAO_NAO_ENCONTRADA_MESSAGE);
+        }
+        return entrada;
     }
 
     private void descartarExpirados() {
         LocalDateTime limite = LocalDateTime.now(clock).minus(RETENCAO);
-        registros.values().removeIf(status -> status.concluidaEm() != null && status.concluidaEm().isBefore(limite));
+        registros.values().removeIf(entrada -> entrada.status().concluidaEm() != null
+                && entrada.status().concluidaEm().isBefore(limite));
+    }
+
+    /** @param canceladoPor {@code null} enquanto ninguém pediu o cancelamento */
+    private record Entrada(ImportacaoPostosStatus status, String canceladoPor) {
+
+        private Entrada comStatus(ImportacaoPostosStatus novoStatus) {
+            return new Entrada(novoStatus, canceladoPor);
+        }
     }
 }

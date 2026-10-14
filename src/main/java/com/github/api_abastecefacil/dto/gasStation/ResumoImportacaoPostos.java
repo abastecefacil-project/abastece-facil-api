@@ -3,8 +3,9 @@ package com.github.api_abastecefacil.dto.gasStation;
 import java.util.List;
 
 /**
- * Desfecho de uma importação de postos. Existe tanto na {@code CONCLUIDA} quanto na
- * {@code FALHOU}: numa importação interrompida, mostra o que chegou a ser gravado.
+ * Desfecho de uma importação de postos. Existe na {@code CONCLUIDA}, na {@code FALHOU} e na
+ * {@code CANCELADA}: numa importação interrompida ou cancelada, mostra o que chegou a ser
+ * gravado.
  *
  * <p>As contagens só sobem quando a gravação deu certo. {@code semAlteracao} vem do plano.
  *

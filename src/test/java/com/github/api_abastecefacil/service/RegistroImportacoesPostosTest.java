@@ -3,6 +3,7 @@ package com.github.api_abastecefacil.service;
 import com.github.api_abastecefacil.dto.gasStation.ImportacaoPostosStatus;
 import com.github.api_abastecefacil.dto.gasStation.ResumoImportacaoPostos;
 import com.github.api_abastecefacil.exception.ImportacaoEmAndamentoException;
+import com.github.api_abastecefacil.exception.ImportacaoNaoEmAndamentoException;
 import com.github.api_abastecefacil.exception.ImportacaoNaoEncontradaException;
 import com.github.api_abastecefacil.model.StatusImportacao;
 import org.junit.jupiter.api.BeforeEach;
@@ -206,5 +207,71 @@ class RegistroImportacoesPostosTest {
         registro.finalizar(id, StatusImportacao.CONCLUIDA, "ok", RESUMO);
 
         assertThat(registro.atual()).isEmpty();
+    }
+
+    // ------------------------------------------------------------------ cancelamento
+
+    @Test
+    void solicitarCancelamento_ShouldRegisterTheRequest_AndReturnTheStatusStillInProgress() {
+        ImportacaoPostosStatus iniciada = registro.iniciar(5);
+        registro.avancar(iniciada.id());
+
+        ImportacaoPostosStatus status = registro.solicitarCancelamento(iniciada.id(), "admin@fiesc.org.br");
+
+        assertThat(status.status()).isEqualTo(StatusImportacao.EM_ANDAMENTO);
+        assertThat(status.processados()).isEqualTo(1);
+        assertThat(registro.cancelamentoSolicitadoPor(iniciada.id())).contains("admin@fiesc.org.br");
+        // O pedido não finaliza nada: quem para é o executor.
+        assertThat(registro.atual()).contains(status);
+    }
+
+    @Test
+    void cancelamentoSolicitadoPor_ShouldBeEmpty_WhenNobodyAskedToCancel() {
+        ImportacaoPostosStatus iniciada = registro.iniciar(5);
+
+        assertThat(registro.cancelamentoSolicitadoPor(iniciada.id())).isEmpty();
+        assertThat(registro.cancelamentoSolicitadoPor(UUID.randomUUID())).isEmpty();
+    }
+
+    @Test
+    void solicitarCancelamento_ShouldKeepTheFirstAuthor_WhenAskedTwice() {
+        ImportacaoPostosStatus iniciada = registro.iniciar(5);
+
+        registro.solicitarCancelamento(iniciada.id(), "primeiro@fiesc.org.br");
+        registro.solicitarCancelamento(iniciada.id(), "segundo@fiesc.org.br");
+
+        assertThat(registro.cancelamentoSolicitadoPor(iniciada.id())).contains("primeiro@fiesc.org.br");
+    }
+
+    @Test
+    void solicitarCancelamento_ShouldThrowImportacaoNaoEmAndamento_ForEveryFinalStatus() {
+        for (StatusImportacao desfecho : List.of(StatusImportacao.CONCLUIDA, StatusImportacao.FALHOU,
+                StatusImportacao.CANCELADA)) {
+            ImportacaoPostosStatus iniciada = registro.iniciar(5);
+            registro.finalizar(iniciada.id(), desfecho, "fim", RESUMO);
+
+            assertThatThrownBy(() -> registro.solicitarCancelamento(iniciada.id(), "admin@fiesc.org.br"))
+                    .isInstanceOf(ImportacaoNaoEmAndamentoException.class)
+                    .hasMessageContaining(desfecho.name());
+            assertThat(registro.cancelamentoSolicitadoPor(iniciada.id())).isEmpty();
+            assertThat(registro.consultar(iniciada.id()).status()).isEqualTo(desfecho);
+        }
+    }
+
+    @Test
+    void solicitarCancelamento_ShouldThrowImportacaoNaoEncontrada_WhenIdDoesNotExist() {
+        assertThatThrownBy(() -> registro.solicitarCancelamento(UUID.randomUUID(), "admin@fiesc.org.br"))
+                .isInstanceOf(ImportacaoNaoEncontradaException.class);
+    }
+
+    @Test
+    void finalizar_ShouldReleaseTheSlot_WhenTheImportIsCancelled() {
+        ImportacaoPostosStatus primeira = registro.iniciar(5);
+        registro.solicitarCancelamento(primeira.id(), "admin@fiesc.org.br");
+
+        registro.finalizar(primeira.id(), StatusImportacao.CANCELADA, "cancelada", RESUMO);
+
+        assertThat(registro.atual()).isEmpty();
+        assertThat(registro.iniciar(3).status()).isEqualTo(StatusImportacao.EM_ANDAMENTO);
     }
 }

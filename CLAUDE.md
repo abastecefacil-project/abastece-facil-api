@@ -507,6 +507,7 @@ resultado por outro caminho.
 | POST | `/api/gas-stations/import` | **só `ADMINISTRADOR`** |
 | GET | `/api/gas-stations/import/atual` | **só `ADMINISTRADOR`** |
 | GET | `/api/gas-stations/import/{id}` | **só `ADMINISTRADOR`** |
+| POST | `/api/gas-stations/import/{id}/cancelamento` | **só `ADMINISTRADOR`** |
 
 **"gestão"** é a marca do P0.4 e significa `ADMINISTRADOR` **ou** `GESTOR_FROTA` —
 COLABORADOR recebe 403. Detalhe na subseção "Autorização do cadastro operacional".
@@ -536,7 +537,51 @@ porque não filtra.
 
 ### Formatos relevantes
 
-`GasStationResponse` devolve **latitude e longitude como String**, não número.
+`GasStationResponse` devolve **latitude e longitude como String**, não número. Todas as rotas
+de posto — `GET /api/public/gas-stations/{id}`, `/filter` e as respostas de `POST`/`PUT` —
+passam pelo mesmo `GasStationMapper.toResponse`, então a edição tem de onde preencher os campos.
+
+**Coordenadas informadas à mão em `POST /api/gas-stations` e `PUT /api/gas-stations/{id}`.**
+`CreateGasStationRequest` e `UpdateGasStationRequest` têm `latitude` e `longitude` opcionais
+(`BigDecimal`; o Jackson aceita número JSON ou string numérica). Existem para o posto que o
+Nominatim não localiza — 208 da planilha real depois da busca estruturada.
+
+| Validação (400 `BAD_REQUEST`, "Erro de validação: …") | Mensagem |
+|---|---|
+| só uma das duas informada | Latitude e longitude devem ser informadas juntas |
+| latitude fora de [-90, 90] | Latitude deve estar entre -90 e 90 |
+| longitude fora de [-180, 180] | Longitude deve estar entre -180 e 180 |
+
+"Juntas ou nenhuma" é um `@AssertTrue` em `isCoordenadasCompletas()` do próprio record: o
+Hibernate Validator o trata como propriedade, então a violação chega ao handler como
+`FieldError`, igual às demais. O valor informado é arredondado para **8 casas** (`HALF_UP`,
+`GasStationConstants.ESCALA_COORDENADAS`), a escala das colunas, para a resposta devolver o que o
+banco grava.
+
+| Criação | Resultado |
+|---|---|
+| com latitude e longitude | usa as informadas, **sem consultar** o Nominatim |
+| sem coordenadas | geocodifica (§6, item 2) |
+| sem coordenadas e não localizado | 400 `COORDINATES_NOT_FOUND`: "Endereço não localizado no mapa. Confira o endereço ou informe a latitude e a longitude manualmente." |
+
+| Edição | Antes | Agora |
+|---|---|---|
+| com latitude e longitude | — | usa as informadas, **sem consulta**, mesmo com endereço alterado |
+| sem coordenadas, mudou `address`, `city` ou `state` (pela `chaveComparacao`) | geocodifica | geocodifica |
+| sem coordenadas, mudou só CEP, bairro, telefone, nome, horário, CNPJ ou `isActive` | **geocodificava sempre** — e posto não localizável não podia mais ser editado | **mantém as coordenadas, sem consulta** |
+| endereço, cidade ou UF diferentes só em caixa, acento ou espaços repetidos | geocodificava | mantém, sem consulta (o texto novo é gravado) |
+| geocodificação falha | 400, nada gravado | 400 com a mensagem nova, nada gravado |
+
+> **Contrato da edição com o frontend:** `latitude` e `longitude` vão preenchidas **somente
+> quando o administrador as digitou ou alterou**; caso contrário, vão `null`. Reenviar as
+> coordenadas que o formulário carregou faria toda edição usá-las, e mudar o endereço nunca mais
+> regeocodificaria — o marcador ficaria no endereço antigo. O backend **não** tem heurística para
+> isso, de propósito: ele não distingue "o administrador confirmou estas coordenadas" de "o
+> formulário devolveu o que recebeu".
+
+Um posto legado gravado sem vírgula no endereço (`"Rua A"`) volta da tela de edição como
+`"Rua A, "` — ela desmonta e remonta por `split(',')` —, a chave muda e a edição geocodifica. É o
+comportamento de antes, não regressão, e o `save` já grava no formato novo.
 
 `CreateIncidentRequest`:
 ```json
@@ -730,7 +775,7 @@ bom e que a conta existe.
 
 ### Importação de postos
 
-Quatro rotas sob `/api/gas-stations/import`, todas **só `ADMINISTRADOR`**
+Cinco rotas sob `/api/gas-stations/import`, todas **só `ADMINISTRADOR`**
 (`AutorizacaoOperacional.autorizarAdministracao`, primeira instrução de cada método da
 `ImportacaoPostosService`). Ficam sob `/api/gas-stations/**`, que o `SecurityConfig` já exige
 autenticado: o `SecurityConfig` **não mudou**, e não há rota pública de importação.
@@ -741,7 +786,13 @@ autenticado: o `SecurityConfig` **não mudou**, e não há rota pública de impo
 | `POST /`, multipart, parte `arquivo` | **202** `{ "id": "<uuid>" }`, com `Location: /api/gas-stations/import/{id}` |
 | `GET /atual` | 200 `ImportacaoPostosStatus` da importação `EM_ANDAMENTO`, ou **204** sem corpo |
 | `GET /{id}` | 200 `ImportacaoPostosStatus` |
+| `POST /{id}/cancelamento`, sem corpo | **202** `ImportacaoPostosStatus` no instante do pedido, ainda `EM_ANDAMENTO` |
 
+- **O cancelamento responde 202, e não 200**: o pedido é registrado, mas a importação só
+  para no próximo ponto de verificação do executor (§6, item 40). O desfecho — `CANCELADA`,
+  ou `CONCLUIDA` se o pedido chegou tarde demais — sai no `GET /{id}`. O `{id}` segue a mesma
+  regra do `GET`: valor que não é UUID responde 404. Pedir de novo enquanto em andamento
+  responde 202 outra vez.
 - **`/atual` vence `/{id}`** porque o `PathPattern` ordena segmento literal acima de variável,
   o mesmo mecanismo de `/api/users/me`.
 - **O `{id}` é recebido como `String`.** Valor que não é UUID responde 404
@@ -768,7 +819,7 @@ autenticado: o `SecurityConfig` **não mudou**, e não há rota pública de impo
 - **As rotas não declaram `consumes`, de propósito.** Com `consumes = multipart/form-data`,
   JSON seria recusado com `HttpMediaTypeNotSupportedException`, sem handler, e cairia no 403
   vazio. Sem ele, o `@RequestPart` lança `MultipartException`, que tem handler.
-- `ImportacaoPostosStatus`: `id`, `status` (`EM_ANDAMENTO`/`CONCLUIDA`/`FALHOU`), `total`,
+- `ImportacaoPostosStatus`: `id`, `status` (`EM_ANDAMENTO`/`CONCLUIDA`/`FALHOU`/`CANCELADA`), `total`,
   `processados`, `iniciadaEm`, `concluidaEm`, `mensagem` e `resumo` — os três últimos `null`
   enquanto em andamento.
 
@@ -780,6 +831,7 @@ autenticado: o `SecurityConfig` **não mudou**, e não há rota pública de impo
 | arquivo acima de `spring.servlet.multipart.*` | **413** | `ARQUIVO_MUITO_GRANDE` |
 | nenhuma linha válida no escopo | 422 | `PLANILHA_SEM_POSTOS_NO_ESCOPO` |
 | já há importação em andamento | 409 | `IMPORTACAO_EM_ANDAMENTO` |
+| cancelamento de importação já finalizada (concluída, falha ou cancelada) | 409 | `IMPORTACAO_NAO_EM_ANDAMENTO` |
 | id inexistente, descartado após 24 h, ou que não é UUID | 404 | `IMPORTACAO_NAO_ENCONTRADA` |
 
 O 413 é o primeiro do projeto. A mensagem cita o limite **só quando a exceção o conhece**:
@@ -1040,9 +1092,12 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
 1. **Criar ocorrência exige que o veículo exista.** `IncidentService` busca o carro
    por placa e lança `NotFoundException` se não achar. Uma placa não cadastrada
    resulta em erro, mesmo o endpoint sendo público.
-2. **Criar posto dispara geocodificação.** `GasStationService` monta o endereço e
-   consulta o Nominatim para obter latitude/longitude. Se não encontrar, lança
-   `CoordinatesNotFoundException`. Isso significa que **cadastrar posto depende de
+2. **Criar posto dispara geocodificação, e editar só quando o lugar muda** — salvo quando o
+   administrador informa latitude e longitude, caso em que não há consulta nenhuma (item 42 e
+   §5). `GasStationService` chama `OpenStreetMapService.geocodificarComFallback(address, city,
+   state)` — a **mesma** estratégia da importação, descrita abaixo — e, sem coordenadas, lança
+   `CoordinatesNotFoundException` (400 `COORDINATES_NOT_FOUND`, com mensagem que orienta a
+   informar as coordenadas). Sem coordenadas informadas, **cadastrar posto depende de
    internet** e está sujeito ao rate limit do Nominatim.
 
    Desde a preparação da importação em lote, o `OpenStreetMapService` tem:
@@ -1063,19 +1118,72 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
    - **Timeouts do Feign**: connect 5 s e read 10 s. O default do OpenFeign era 10 s e
      60 s. Estourar o prazo gera `RetryableException`, que o `handleFeignException` já
      responde como 502.
-   - **`geocodificarComFallback(address, district, city, state, cep, uf)`**, para a
-     importação. Tenta o endereço completo (`GasStationConstants.ADDRESS_FORMAT`) e, se
-     ele vier vazio ou for rejeitado, tenta `"<via>, <cidade>, <UF>, Brasil"`, sendo a via
-     o trecho de `address` antes da vírgula. Rejeitado quer dizer que
-     `address.ISO3166-2-lvl4` veio e é diferente de `"BR-" + UF`. Se o campo não vier, ou
-     vier com tipo inesperado (`address` que não é objeto, código que não é string), o
-     resultado é **aceito**. A leitura é defensiva e nunca lança `ClassCastException`.
-     Com a via vazia, o fallback não é feito, porque devolveria o centro da cidade.
-     **Contrato de erro:** `Optional` vazio significa só "não encontrado ou rejeitado pela
-     UF". Uma `FeignException` (timeout, 429, 5xx) é **propagada**, venha da primeira
-     consulta ou do fallback, e erro na primeira **não** dispara o fallback.
-   - A validação de UF e o fallback **não** se aplicam ao cadastro manual: o
-     `getCoordinates` só ganhou o throttle, o `countrycodes` e a correção do §9, item 18.
+   - **Estratégia de geocodificação — `geocodificarComFallback(address, city, uf)`**, única,
+     usada pela importação e pelo cadastro e edição manuais. **No máximo duas consultas por
+     posto** (~1,1 s cada, pelo throttle), e **nenhuma com CEP**:
+
+     1. **Busca estruturada** (`OpenStreetMapClient.searchEstruturada`, sem `q` — o Nominatim
+        recusa `q` combinado com os campos): `street` = `"<número> <via>"`, ou só a via;
+        `city`; `state` com o **nome** do estado (`OpenStreetMapConstants.NOME_POR_UF`, as 27
+        UFs: `"SC"` → `"Santa Catarina"`); `country` = `Brasil`.
+     2. Se ela vier **vazia ou rejeitada pela UF**, **texto livre**
+        `"<via>, <cidade>, <UF>, Brasil"`.
+
+     Via e número saem do `address` no formato `"<via>, <número>"` usado em todo o sistema
+     (planilha e formulário): via antes da primeira vírgula, número depois. O número só entra
+     no `street` se for predial — dígitos com ou sem uma letra (`622`, `1285 E`, `1285E`,
+     `OpenStreetMapConstants.NUMERO_PREDIAL`). `S/N`, vazio e **`KM 206`** ficam de fora.
+     `address` sem vírgula é todo via.
+
+     **Por que sem CEP:** na carga real, 215 de 1.128 postos novos (19%) não foram localizados
+     com o CEP no texto livre. O Nominatim tem cobertura fraca de CEP no Brasil, e cidade
+     pequena usa CEP genérico (`89887000` em Palmitos), então o CEP mais atrapalhava. O bairro
+     também saiu: a busca estruturada não tem campo para ele.
+
+     **Regra de UF**, nas duas consultas: rejeitado quer dizer que `address.ISO3166-2-lvl4`
+     veio e é diferente de `"BR-" + UF`. Se o campo não vier, ou vier com tipo inesperado
+     (`address` que não é objeto, código que não é string), o resultado é **aceito**. A
+     leitura é defensiva e nunca lança `ClassCastException`. A UF pode chegar como sigla ou
+     nome por extenso, sem diferença de caixa e acento (`"santa catarina"` → `SC`), e é
+     resolvida antes, porque o campo de estado do formulário é editável. Valor desconhecido
+     segue como veio e simplesmente não confere.
+
+     **Via vazia não gera consulta nenhuma**: sobrariam cidade e UF, e o resultado seria o
+     centro da cidade.
+
+     **Contrato de erro:** `Geocodificacao.coordenadas()` vazio significa só "não encontrado
+     ou rejeitado pela UF". Uma `FeignException` (timeout, 429, 5xx) é **propagada**, venha da
+     estruturada ou do fallback, e erro na estruturada **não** dispara o fallback.
+
+     **O retorno é `Geocodificacao(origem, ponto, rejeitadosPelaUf)`**, com `origem` em
+     `ESTRUTURADA`, `TEXTO_LIVRE` ou `NAO_LOCALIZADO`. É por chamada, e não contador no
+     serviço, porque o bean é singleton e compartilhado com o cadastro manual. Quem soma é o
+     executor da importação, e os quatro números saem só no **log** de desfecho (INFO de
+     `CONCLUIDA` e `CANCELADA`, WARN e ERROR de `FALHOU`), nunca no `ResumoImportacaoPostos`,
+     que é contrato da API:
+     `geocodificação: X na consulta estruturada, Y só no fallback, Z não localizados, W
+     resultados rejeitados pela UF`. Para ler direito:
+     - X + Y + Z = postos geocodificados **sem** erro de comunicação. `FeignException` é erro
+       do item e não entra.
+     - W conta **resultados** (0 a 2 por posto), não postos, e se sobrepõe: um posto recusado
+       na estruturada e resolvido no fallback está em Y e em W.
+     - Imprecisão conhecida: se a estruturada for recusada pela UF e o fallback lançar
+       `FeignException`, essa recusa não é contada, porque não há retorno.
+   - **Mudança de comportamento do fluxo manual**, que até aqui fazia uma consulta em texto
+     livre com endereço, bairro, cidade, estado e CEP, sem fallback e sem regra de UF:
+
+     | | Antes | Agora |
+     |---|---|---|
+     | Consultas por gravação que geocodifica | 1 (~1,1 s) | até 2 (**~2,2 s**, dentro do `@Transactional`). Desde o item 42, coordenadas informadas e edição que não muda o lugar não consultam |
+     | CEP e bairro | no texto | fora |
+     | Resultado em outro estado | aceito — marcador no lugar errado, sem aviso | **recusado**: sem fallback válido, 400 `COORDINATES_NOT_FOUND` |
+     | Estado por extenso | ia no texto | resolvido para a sigla |
+     | Número `KM 206` | no texto | fora do `street` |
+     | Via vazia (`", 123"`) | consultava | 400 sem consultar |
+
+     A terceira linha é a única que pode transformar em 400 um cadastro que antes passava, e
+     é deliberada. O `getCoordinates(String)` foi removido junto com o
+     `GasStationConstants.ADDRESS_FORMAT`.
 3. **CNPJ é único** e verificado tanto na criação quanto na atualização.
 4. **Login rejeita usuário inativo** com mensagem específica, distinta de
    credencial inválida.
@@ -1458,7 +1566,7 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
       `consultar`, sem `@Scheduled`.
     - **Ordem:** ATUALIZAR e REATIVAR sem geocodificação; depois INSERIR, ATUALIZAR e
       REATIVAR com geocodificação; DESATIVAR por último, e só se a importação não foi
-      interrompida.
+      interrompida nem cancelada.
     - **Cada posto é gravado em transação curta** pelo `GravadorImportacaoPostos`, bean
       separado para o `@Transactional` valer pelo proxy. A geocodificação acontece antes e
       fora de transação, então a espera do throttle nunca prende conexão do pool.
@@ -1480,6 +1588,33 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
       da importação não tem `SecurityContext`. Pelo mesmo motivo a importação **não** usa
       `GasStationService.create/update`, que autorizam pelo `UsuarioAutenticadoProvider` e
       sempre regeocodificam, nem `deleteGasStation`, que é físico.
+    - **O cancelamento é cooperativo.** `POST /{id}/cancelamento` só registra o pedido, com
+      o e-mail de quem pediu, em `RegistroImportacoesPostos.solicitarCancelamento`. O pedido
+      mora na **mesma entrada do mapa** que o status, e não num mapa à parte: conferir
+      `EM_ANDAMENTO` e registrar é um único `compute`, atômico em relação ao `finalizar`, então
+      nenhum pedido é aceito para uma importação que já terminou (409
+      `IMPORTACAO_NAO_EM_ANDAMENTO`). O e-mail fica fora do `ImportacaoPostosStatus`, que é o
+      corpo da resposta. Um segundo pedido também recebe 202 e mantém o autor do primeiro.
+      - O executor consulta o pedido **antes de cada item** das duas primeiras etapas e uma
+        última vez antes de DESATIVAR. Não há `Thread.interrupt`: o item em andamento termina
+        normalmente, gravação inteira. Entre o pedido e a parada pode passar o tempo de um
+        item, até ~11 s com o throttle e o read-timeout do Nominatim, e nesse intervalo o
+        `GET` continua mostrando `EM_ANDAMENTO`.
+      - Cancelada, a importação termina `CANCELADA`, com
+        "Importação cancelada após X de Y itens; o que já foi gravado permanece e nenhum posto
+        foi desativado.", o resumo do que chegou a fazer, e a vaga liberada pelo mesmo
+        `finalizar` dos outros desfechos. DESATIVAR não roda.
+      - **Dentro de DESATIVAR o pedido não é mais consultado.** Parar no meio deixaria postos
+        desativados com a sincronização incompleta e desmentiria a mensagem. A etapa só grava
+        no banco e termina em segundos. Consequência: um pedido que chega depois do último
+        ponto de verificação recebeu 202, mas a importação termina **`CONCLUIDA`** — o
+        `GET /{id}` é a fonte da verdade, não o 202.
+      - **FALHOU não muda.** A interrupção por falhas é conferida antes do pedido, então as duas
+        condições nunca valem juntas; erro inesperado continua `FALHOU` mesmo com pedido.
+      - O e-mail é lido **na thread da requisição** — `autorizarAdministracao` passou a
+        devolver o `User` que já carregava para conferir o perfil — e sai em dois `INFO`: no
+        `ImportacaoPostosService`, ao aceitar o pedido, e no executor, ao finalizar como
+        `CANCELADA`, lido do registro.
 41. **A regra completa de sincronização com a planilha de postos**, de ponta a ponta — o
     que cada peça diz no seu javadoc, reunido num lugar só:
 
@@ -1499,13 +1634,43 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
       não roda se a importação for interrompida.
     - **Nulo na planilha nunca sobrescreve o banco**, em nenhum campo: vazio na exportação é
       ausência de informação, não remoção.
-    - **Geocodificação só quando o lugar muda** — CEP nos dígitos, ou endereço, bairro,
-      cidade e UF ignorando caixa, acento e espaços.
+    - **Geocodificação só quando o lugar muda** — endereço, cidade ou UF, ignorando caixa,
+      acento e espaços. **CEP e bairro não disparam geocodificação** desde que nenhuma das duas
+      consultas os envia: continuam em `camposAlterados` e são gravados pelo ATUALIZAR, mas sem
+      consulta. A mesma regra vale para a edição manual (item 42).
     - **Falha de geocodificação mantém endereço e coordenadas.** INSERIR sem coordenada não
       grava; ATUALIZAR/REATIVAR grava só os campos que não são de endereço. A diferença de
       endereço reaparece na próxima importação, que tenta de novo.
     - **Falhas de comunicação consecutivas** (`importacao-postos.max-falhas-consecutivas`)
       interrompem como `FALHOU`; o que foi gravado permanece.
+    - **O administrador pode cancelar** (`POST /{id}/cancelamento`): a importação para antes
+      do próximo item como `CANCELADA`, o que foi gravado permanece e nada é desativado — salvo
+      se DESATIVAR já tiver começado, caso em que ela termina `CONCLUIDA` (item 40).
+42. **Coordenadas informadas à mão, e quando o posto é regeocodificado.** O contrato HTTP está
+    na §5 ("Coordenadas informadas à mão"). As regras:
+
+    - **Criação:** com latitude e longitude, usa as informadas e não consulta; sem elas,
+      geocodifica, e não localizar é 400 `COORDINATES_NOT_FOUND` com a mensagem que orienta a
+      informar as coordenadas.
+    - **Edição:** com latitude e longitude, usa as informadas, mesmo com endereço alterado.
+      Sem elas, `GasStationService.lugarMudou` decide: só **endereço, cidade e UF**, pela
+      `NormalizadorPlanilhaPostos.chaveComparacao`. Mudou → geocodifica; não mudou → mantém as
+      coordenadas, sem consulta. É **a mesma regra** do
+      `PlanejadorImportacaoPostos.requerGeocodificacao`, alinhada de propósito: CEP e bairro não
+      entram em nenhuma das duas, porque a geocodificação não os usa desde a busca estruturada.
+    - **As coordenadas são resolvidas antes de a entidade ser tocada.** Se a geocodificação
+      falha, a exceção sai com o posto intacto e o `save` não é chamado. O rollback da
+      transação cobriria isso de qualquer jeito; a ordem é o que torna a garantia testável sem
+      banco.
+    - **Interação com a importação** (só documentada, nada mudou no executor):
+      - o posto criado à mão é reconhecido pelo **CNPJ em dígitos**, com máscara ou sem;
+      - se o endereço, a cidade ou a UF dele diferem dos da planilha, a importação tenta
+        geocodificar o da planilha. **Se falhar**, mantém endereço e coordenadas manuais (regra
+        do item 40). **Se localizar, as coordenadas manuais são substituídas** pelas da
+        geocodificação — limitação aceita;
+      - se só CEP, bairro ou campos que não são de lugar diferem, o texto é atualizado e as
+        coordenadas manuais **ficam**: o ATUALIZAR sem geocodificação não toca em latitude e
+        longitude.
 
 ---
 
@@ -1739,6 +1904,12 @@ Problemas reais já encontrados. Consultar antes de investigar comportamento est
     adjacentes: o compilador não acusa a inversão, e um teste com os dois valendo 1 também
     não. O que segura é o teste que verifica a chamada pelos **nomes** das constantes.
 
+    **Vale também para `searchEstruturada`**, cuja assinatura é `(street, city, state,
+    country, format, addressdetails, limit, countrycodes, User-Agent)`: são dois métodos com
+    o mesmo par adjacente, e cada um tem o próprio teste por nome de constante no
+    `OpenStreetMapServiceTest`. Os nomes dos parâmetros HTTP também são constantes
+    (`OpenStreetMapConstants.PARAM_*`).
+
 19. **Um bean do tipo `java.util.concurrent.Executor` desliga o `applicationTaskExecutor`
     do Spring Boot.** No Boot 3.5.4 (conferido no bytecode da autoconfiguração), o executor
     padrão só é criado se não houver **nenhum** bean `Executor`, ou com
@@ -1902,7 +2073,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **550 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **605 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -1916,7 +2087,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   handler global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 550, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 605, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa
@@ -1932,6 +2103,11 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   (no `@PathVariable` em vez do `@RequestBody`, corrigido no S2a) sobreviveu desde o
   início: o `@Email` do `UpdateUserRequest` nunca rodava e nada acusou. Mudança de
   contrato HTTP neste projeto **só é verificada à mão**.
+
+  **Exceção parcial: `GasStationRequestValidationTest`**, o primeiro teste de Bean Validation.
+  Cria o `Validator` com `Validation.buildDefaultValidatorFactory()`, sem contexto Spring, e
+  prova as anotações de latitude e longitude dos dois DTOs de posto. Não prova que o `@Valid` do
+  controller está no lugar certo — isso continua só verificável à mão.
 
   Ruído esperado na saída: `ResendEnviadorEmailTest` exercita falha de rede e rejeição do
   provedor, então **um stack trace de `IOException: conexão recusada` aparece no log da
