@@ -1,11 +1,16 @@
 package com.github.api_abastecefacil.repository;
 
+import com.github.api_abastecefacil.dto.dashboard.ContagemAgrupada;
 import com.github.api_abastecefacil.model.User;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -62,4 +67,45 @@ public interface UserRepository extends JpaRepository<User, Long> {
     long countByIsActiveTrueAndId(Long id);
 
     long countByIsActiveTrueAndSenhaDefinidaFalseAndId(Long id);
+
+    // Convites pendentes "antigos": criados antes do limite. created_at e gravado no fuso
+    // da JVM (LocalDateTime.now()), e o limite chega calculado em America/Sao_Paulo.
+
+    long countByIsActiveTrueAndSenhaDefinidaFalseAndCreatedAtBefore(LocalDateTime limite);
+
+    long countByIsActiveTrueAndSenhaDefinidaFalseAndCreatedAtBeforeAndRegionalId(
+            LocalDateTime limite, Long regionalId);
+
+    long countByIsActiveTrueAndSenhaDefinidaFalseAndCreatedAtBeforeAndId(
+            LocalDateTime limite, Long id);
+
+    // Ativos por perfil, uma consulta por escopo. O perfil volta como texto da coluna -- em
+    // query nativa o enum nao e convertido -- e o service faz Perfil.valueOf. Perfil sem
+    // usuario nao aparece; quem preenche o zero e o service.
+
+    @Query(value = """
+            SELECT u.perfil AS chave, COUNT(*) AS total
+              FROM users u
+             WHERE u.is_active = true
+             GROUP BY u.perfil
+            """, nativeQuery = true)
+    List<ContagemAgrupada> contarAtivosPorPerfil();
+
+    @Query(value = """
+            SELECT u.perfil AS chave, COUNT(*) AS total
+              FROM users u
+             WHERE u.is_active = true
+               AND u.regional_id = :regionalId
+             GROUP BY u.perfil
+            """, nativeQuery = true)
+    List<ContagemAgrupada> contarAtivosPorPerfilNaRegional(@Param("regionalId") Long regionalId);
+
+    @Query(value = """
+            SELECT u.perfil AS chave, COUNT(*) AS total
+              FROM users u
+             WHERE u.is_active = true
+               AND u.id = :id
+             GROUP BY u.perfil
+            """, nativeQuery = true)
+    List<ContagemAgrupada> contarAtivosPorPerfilDoUsuario(@Param("id") Long id);
 }

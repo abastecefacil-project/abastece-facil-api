@@ -1,11 +1,14 @@
 package com.github.api_abastecefacil.repository;
 
+import com.github.api_abastecefacil.dto.dashboard.ContagemCidade;
 import com.github.api_abastecefacil.model.GasStation;
 import feign.Param;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+
+import java.util.List;
 
 public interface GasStationRepository extends JpaRepository<GasStation, Long> {
     boolean existsGasStationById(Long id);
@@ -48,4 +51,24 @@ public interface GasStationRepository extends JpaRepository<GasStation, Long> {
              WHERE is_active = true
             """, nativeQuery = true)
     long countCidadesAtendidas();
+
+    /**
+     * Cidades com mais postos ativos, agrupadas pela mesma chave de
+     * {@link #countCidadesAtendidas} — as duas precisam continuar iguais, senão o ranking e o
+     * total de cidades deixam de falar das mesmas cidades. {@code MIN(TRIM(city))} escolhe um
+     * rótulo entre as grafias que caíram no mesmo grupo.
+     *
+     * <p>O {@code @Param} vem qualificado de propósito: o import deste arquivo é o
+     * {@code feign.Param}, que o Spring Data ignora.
+     */
+    @Query(value = """
+            SELECT MIN(TRIM(city)) AS cidade, UPPER(TRIM(state)) AS uf, COUNT(*) AS total
+              FROM gas_stations
+             WHERE is_active = true
+             GROUP BY LOWER(TRIM(city)), UPPER(TRIM(state))
+             ORDER BY total DESC, cidade ASC
+             LIMIT :limite
+            """, nativeQuery = true)
+    List<ContagemCidade> rankingCidades(
+            @org.springframework.data.repository.query.Param("limite") int limite);
 }

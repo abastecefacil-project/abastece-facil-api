@@ -1,7 +1,16 @@
 package com.github.api_abastecefacil.service;
 
+import com.github.api_abastecefacil.dto.dashboard.CidadeComPostos;
+import com.github.api_abastecefacil.dto.dashboard.ContagemAgrupada;
+import com.github.api_abastecefacil.dto.dashboard.ContagemCidade;
 import com.github.api_abastecefacil.dto.dashboard.DashboardResponse;
+import com.github.api_abastecefacil.dto.dashboard.OcorrenciaRecente;
+import com.github.api_abastecefacil.dto.dashboard.OcorrenciasNoMes;
+import com.github.api_abastecefacil.dto.dashboard.UsuariosNoPerfil;
+import com.github.api_abastecefacil.dto.dashboard.VeiculoComOcorrencias;
 import com.github.api_abastecefacil.exception.PerfilNaoPermitidoException;
+import com.github.api_abastecefacil.mapper.DashboardMapper;
+import com.github.api_abastecefacil.model.Incident;
 import com.github.api_abastecefacil.model.Perfil;
 import com.github.api_abastecefacil.model.Regional;
 import com.github.api_abastecefacil.model.User;
@@ -14,13 +23,17 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Limit;
 
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -65,7 +78,40 @@ class DashboardServiceTest {
     void setUp() {
         dashboardService = new DashboardService(
                 gasStationRepository, carRepository, incidentRepository, userRepository,
-                autorizacaoOperacional, clock);
+                autorizacaoOperacional, new DashboardMapper(), clock);
+    }
+
+    private static ContagemAgrupada linha(String chave, long total) {
+        return new ContagemAgrupada() {
+            @Override
+            public String getChave() {
+                return chave;
+            }
+
+            @Override
+            public Long getTotal() {
+                return total;
+            }
+        };
+    }
+
+    private static ContagemCidade cidade(String nome, String uf, long total) {
+        return new ContagemCidade() {
+            @Override
+            public String getCidade() {
+                return nome;
+            }
+
+            @Override
+            public String getUf() {
+                return uf;
+            }
+
+            @Override
+            public Long getTotal() {
+                return total;
+            }
+        };
     }
 
     private void autenticadoComo(User autor) {
@@ -221,5 +267,195 @@ class DashboardServiceTest {
                 LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 30));
         verify(incidentRepository, never()).countByOccurrenceDateBetween(
                 LocalDate.of(2026, 11, 1), LocalDate.of(2026, 11, 30));
+    }
+
+    // ------------------------------------------------------- serie por mes
+
+    @Test
+    void getResumo_ShouldReturnSixMonthSeriesInOrderWithZerosForEmptyMonths() {
+        autenticadoComo(administrador());
+        relogioEm(HOJE);
+        when(incidentRepository.contarPorMes(LocalDate.of(2026, 5, 1), LocalDate.of(2026, 10, 31)))
+                .thenReturn(List.of(linha("2026-10", 2), linha("2026-07", 3)));
+
+        List<OcorrenciasNoMes> serie = dashboardService.getResumo().ocorrenciasPorMes();
+
+        assertThat(serie).containsExactly(
+                new OcorrenciasNoMes("2026-05", 0),
+                new OcorrenciasNoMes("2026-06", 0),
+                new OcorrenciasNoMes("2026-07", 3),
+                new OcorrenciasNoMes("2026-08", 0),
+                new OcorrenciasNoMes("2026-09", 0),
+                new OcorrenciasNoMes("2026-10", 2));
+    }
+
+    @Test
+    void getResumo_ShouldReturnSixZerosWhenThereAreNoIncidents() {
+        autenticadoComo(administrador());
+        relogioEm(HOJE);
+
+        List<OcorrenciasNoMes> serie = dashboardService.getResumo().ocorrenciasPorMes();
+
+        assertThat(serie).hasSize(6).allSatisfy(item -> assertThat(item.total()).isZero());
+    }
+
+    @Test
+    void getResumo_ShouldBuildSeriesAcrossYearBoundary() {
+        autenticadoComo(administrador());
+        relogioEm(Instant.parse("2027-02-10T15:00:00Z"));
+        when(incidentRepository.contarPorMes(LocalDate.of(2026, 9, 1), LocalDate.of(2027, 2, 28)))
+                .thenReturn(List.of(linha("2026-12", 4), linha("2027-01", 1)));
+
+        List<OcorrenciasNoMes> serie = dashboardService.getResumo().ocorrenciasPorMes();
+
+        assertThat(serie).extracting(OcorrenciasNoMes::mes)
+                .containsExactly("2026-09", "2026-10", "2026-11", "2026-12", "2027-01", "2027-02");
+        assertThat(serie).extracting(OcorrenciasNoMes::total)
+                .containsExactly(0L, 0L, 0L, 4L, 1L, 0L);
+    }
+
+    // ------------------------------------------------------------- rankings
+
+    @Test
+    void getResumo_ShouldRankPlatesInLastNinetyDaysIncludingToday() {
+        autenticadoComo(administrador());
+        relogioEm(HOJE);
+        when(incidentRepository.rankingPlacas(LocalDate.of(2026, 7, 24), LocalDate.of(2026, 10, 21), 5))
+                .thenReturn(List.of(linha("MGM5H18", 3), linha("ABC1234", 1)));
+
+        List<VeiculoComOcorrencias> ranking = dashboardService.getResumo().veiculosComMaisOcorrencias();
+
+        assertThat(ranking).containsExactly(
+                new VeiculoComOcorrencias("MGM5H18", 3),
+                new VeiculoComOcorrencias("ABC1234", 1));
+    }
+
+    @Test
+    void getResumo_ShouldRankCitiesByActiveStations() {
+        autenticadoComo(administrador());
+        relogioEm(HOJE);
+        when(gasStationRepository.rankingCidades(5))
+                .thenReturn(List.of(cidade("JOINVILLE", "SC", 48), cidade("BLUMENAU", "SC", 33)));
+
+        List<CidadeComPostos> ranking = dashboardService.getResumo().cidadesComMaisPostos();
+
+        assertThat(ranking).containsExactly(
+                new CidadeComPostos("JOINVILLE", "SC", 48),
+                new CidadeComPostos("BLUMENAU", "SC", 33));
+    }
+
+    // ------------------------------------------------------ usuarios por perfil
+
+    @Test
+    void getResumo_ShouldCountAllProfilesForAdministradorWithZeroForMissing() {
+        autenticadoComo(administrador());
+        relogioEm(HOJE);
+        when(userRepository.contarAtivosPorPerfil())
+                .thenReturn(List.of(linha("COLABORADOR", 30), linha("ADMINISTRADOR", 2)));
+
+        List<UsuariosNoPerfil> porPerfil = dashboardService.getResumo().usuariosPorPerfil();
+
+        assertThat(porPerfil).containsExactly(
+                new UsuariosNoPerfil(Perfil.COLABORADOR, 30),
+                new UsuariosNoPerfil(Perfil.GESTOR_FROTA, 0),
+                new UsuariosNoPerfil(Perfil.ADMINISTRADOR, 2));
+        verify(userRepository, never()).contarAtivosPorPerfilNaRegional(anyLong());
+        verify(userRepository, never()).contarAtivosPorPerfilDoUsuario(anyLong());
+    }
+
+    @Test
+    void getResumo_ShouldCountProfilesOnlyInOwnRegionalForGestor() {
+        autenticadoComo(gestorDaRegional(1L));
+        relogioEm(HOJE);
+        when(userRepository.contarAtivosPorPerfilNaRegional(1L))
+                .thenReturn(List.of(linha("COLABORADOR", 8), linha("GESTOR_FROTA", 2)));
+
+        List<UsuariosNoPerfil> porPerfil = dashboardService.getResumo().usuariosPorPerfil();
+
+        assertThat(porPerfil).containsExactly(
+                new UsuariosNoPerfil(Perfil.COLABORADOR, 8),
+                new UsuariosNoPerfil(Perfil.GESTOR_FROTA, 2),
+                new UsuariosNoPerfil(Perfil.ADMINISTRADOR, 0));
+        verify(userRepository, never()).contarAtivosPorPerfil();
+        verify(userRepository, never()).contarAtivosPorPerfilDoUsuario(anyLong());
+    }
+
+    @Test
+    void getResumo_ShouldCountOnlySelfProfileForGestorWithoutRegional() {
+        autenticadoComo(gestorSemRegional());
+        relogioEm(HOJE);
+        when(userRepository.contarAtivosPorPerfilDoUsuario(3L))
+                .thenReturn(List.of(linha("GESTOR_FROTA", 1)));
+
+        List<UsuariosNoPerfil> porPerfil = dashboardService.getResumo().usuariosPorPerfil();
+
+        assertThat(porPerfil).extracting(UsuariosNoPerfil::total).containsExactly(0L, 1L, 0L);
+        verify(userRepository, never()).contarAtivosPorPerfil();
+        verify(userRepository, never()).contarAtivosPorPerfilNaRegional(anyLong());
+    }
+
+    // ------------------------------------------------ convites pendentes antigos
+
+    // 15h UTC = 12h em Sao Paulo; o limite e 7 dias antes, na hora de Sao Paulo.
+    private static final LocalDateTime LIMITE_CONVITE = LocalDateTime.of(2026, 10, 14, 12, 0);
+
+    @Test
+    void getResumo_ShouldCountOldPendingInvitesForAdministrador() {
+        autenticadoComo(administrador());
+        relogioEm(HOJE);
+        when(userRepository.countByIsActiveTrueAndSenhaDefinidaFalseAndCreatedAtBefore(LIMITE_CONVITE))
+                .thenReturn(4L);
+
+        assertThat(dashboardService.getResumo().usuariosAguardandoAtivacaoAntigos()).isEqualTo(4L);
+        verify(userRepository, never())
+                .countByIsActiveTrueAndSenhaDefinidaFalseAndCreatedAtBeforeAndRegionalId(any(), anyLong());
+        verify(userRepository, never())
+                .countByIsActiveTrueAndSenhaDefinidaFalseAndCreatedAtBeforeAndId(any(), anyLong());
+    }
+
+    @Test
+    void getResumo_ShouldCountOldPendingInvitesOnlyInOwnRegionalForGestor() {
+        autenticadoComo(gestorDaRegional(1L));
+        relogioEm(HOJE);
+        when(userRepository.countByIsActiveTrueAndSenhaDefinidaFalseAndCreatedAtBeforeAndRegionalId(
+                LIMITE_CONVITE, 1L)).thenReturn(2L);
+
+        assertThat(dashboardService.getResumo().usuariosAguardandoAtivacaoAntigos()).isEqualTo(2L);
+        verify(userRepository, never()).countByIsActiveTrueAndSenhaDefinidaFalseAndCreatedAtBefore(any());
+        verify(userRepository, never())
+                .countByIsActiveTrueAndSenhaDefinidaFalseAndCreatedAtBeforeAndId(any(), anyLong());
+    }
+
+    @Test
+    void getResumo_ShouldCountOldPendingInvitesOnlyForSelfForGestorWithoutRegional() {
+        autenticadoComo(gestorSemRegional());
+        relogioEm(HOJE);
+
+        assertThat(dashboardService.getResumo().usuariosAguardandoAtivacaoAntigos()).isZero();
+        verify(userRepository).countByIsActiveTrueAndSenhaDefinidaFalseAndCreatedAtBeforeAndId(LIMITE_CONVITE, 3L);
+        verify(userRepository, never()).countByIsActiveTrueAndSenhaDefinidaFalseAndCreatedAtBefore(any());
+        verify(userRepository, never())
+                .countByIsActiveTrueAndSenhaDefinidaFalseAndCreatedAtBeforeAndRegionalId(any(), anyLong());
+    }
+
+    // ---------------------------------------------------- ultimas ocorrencias
+
+    @Test
+    void getResumo_ShouldReturnLatestIncidentsWithFourFields() {
+        autenticadoComo(administrador());
+        relogioEm(HOJE);
+        Incident recente = new Incident()
+                .setId(9L)
+                .setTitle("Sujo internamente")
+                .setCarPlate("MGM5H18")
+                .setUserName("Fulano")
+                .setDescription("texto")
+                .setOccurrenceDate(LocalDate.of(2026, 10, 5));
+        when(incidentRepository.findAllByOrderByCreatedAtDesc(Limit.of(5))).thenReturn(List.of(recente));
+
+        List<OcorrenciaRecente> ultimas = dashboardService.getResumo().ultimasOcorrencias();
+
+        assertThat(ultimas).containsExactly(
+                new OcorrenciaRecente(9L, "Sujo internamente", "MGM5H18", LocalDate.of(2026, 10, 5)));
     }
 }
