@@ -496,6 +496,7 @@ resultado por outro caminho.
 | GET | `/api/users/me` | autenticado — **o próprio registro** |
 | GET | `/api/users/{userId}` | autenticado — **autorizado por perfil/regional** |
 | GET | `/api/users/dashboard` | autenticado |
+| GET | `/api/dashboard` | **gestão** — usuários **escopados por perfil** |
 | POST | `/api/users` | autenticado |
 | POST | `/api/users/{userId}/reenviar-ativacao` | autenticado |
 | PATCH | `/api/users/{userId}` | autenticado — **autorizado por perfil/regional** |
@@ -772,6 +773,41 @@ quais são deixaria o gestor sem saída — a lista é configuração operaciona
 As duas primeiras compartilham status **e mensagem** de propósito: responder algo
 diferente para "usuário desativado" confirmaria a quem segura o link que aquele token era
 bom e que a conta existe.
+
+### Resumo da Home de gestão (`GET /api/dashboard`)
+
+KPIs da Home, num corpo só. Autorização de **gestão** (`AutorizacaoOperacional.autorizarConsulta`,
+a mesma de `GET /api/incidents/dashboard`): COLABORADOR recebe 403 `PERFIL_NAO_PERMITIDO`.
+`/api/incidents/dashboard` e `/api/users/dashboard` continuam existindo, sem mudança.
+
+```json
+{
+  "postos":      { "ativos": 968, "inativos": 3, "cidadesAtendidas": 240 },
+  "veiculos":    { "ativos": 2, "inativos": 0 },
+  "ocorrencias": { "mesAtual": 0, "mesAnterior": 0 },
+  "usuarios":    { "ativos": 3, "aguardandoAtivacao": 0 }
+}
+```
+
+| Bloco | Como é contado | Escopo |
+|---|---|---|
+| `postos` | `is_active`; `cidadesAtendidas` = pares distintos `(LOWER(TRIM(city)), UPPER(TRIM(state)))` entre os ativos | global |
+| `veiculos` | `active` | global |
+| `ocorrencias` | `occurrence_date` (data do fato, não do registro) dentro do mês, **no calendário de São Paulo** | global |
+| `usuarios` | `ativos` = `is_active`; `aguardandoAtivacao` = ativo **e** `senha_definida = false` | **por perfil**, igual a `GET /api/users` |
+
+- **Só usuários são escopados.** Postos, veículos e ocorrências não têm regional — mesma
+  constatação do P0.4 —, então admin e gestor veem os mesmos três primeiros blocos. O escopo
+  de usuários é o de `EscopoUsuarios` (§6, item 33): admin vê todos; gestor com regional, a
+  própria regional; gestor sem regional, só a si mesmo.
+- **Toda contagem é feita no banco** (`countBy...` derivados e um `@Query` nativo); nenhuma
+  entidade é carregada para ser contada.
+- **O mês vem do `Clock` de `SchedulingConfig` convertido por `DashboardConstants.FUSO_HORARIO`**
+  (`America/Sao_Paulo`), e não do fuso da JVM: o container não fixa `TZ`, e entre 21h e
+  meia-noite do último dia do mês um relógio em UTC já estaria no mês seguinte.
+- **`cidadesAtendidas` não normaliza acento**: "Sao Jose" e "São José" contam como duas. O
+  banco não tem a extensão `unaccent`, e instalá-la seria migration. Na carga real de
+  desenvolvimento não há variação de caixa nem de acento (240 nos três critérios).
 
 ### Importação de postos
 
@@ -1454,7 +1490,10 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
     `findUserByIdOrThrow` continua existindo, com o comportamento antigo, para
     `reenviarAtivacao`.
 33. **A listagem é escopada, e por isso a correção não é contornável.** `getAllUsers`
-    escolhe entre três consultas do `UserRepository` conforme o perfil do autor. Sem isso,
+    escolhe entre três consultas do `UserRepository` conforme o perfil do autor. A decisão
+    de *qual* escopo mora em `service/EscopoUsuarios.de(autor)` desde o resumo da Home, que
+    a reaproveita para **contar** em vez de listar — não duplique a regra num terceiro
+    lugar. Sem isso,
     restringir `GET /api/users/{id}` não valeria nada: o mesmo dado sairia por
     `GET /api/users`, que devolvia todo mundo para qualquer autenticado.
 
@@ -2050,6 +2089,20 @@ O A3 acrescentou mais duas, ambas em `config/AdministradorInicialInitializer`:
 - **Renomeação de DTO com JSON preservado** — `AtivacaoRequest` → `DefinicaoSenhaRequest` e
   `AtivacaoValidacaoResponse` → `TokenValidacaoResponse`. Ver a tabela na §5.
 
+### Primeiras ocorrências introduzidas pelo resumo da Home
+
+- **`sealed interface` com records e `switch` por pattern matching** — `EscopoUsuarios`
+  (`Todos`, `DaRegional(regionalId)`, `Proprio(userId)`). Selada para que o `switch` em
+  `UserService.buscarUsuariosVisiveis` e em `DashboardService.resumirUsuarios` seja
+  exaustivo: um quarto escopo quebra a compilação dos dois em vez de cair num ramo padrão.
+- **`ZoneId` explícito para data de negócio** — `DashboardConstants.FUSO_HORARIO`. Até aqui
+  todo o projeto usava o fuso da JVM (`LocalDateTime.now()`). O cálculo usa
+  `LocalDate.ofInstant(clock.instant(), FUSO_HORARIO)`, e não `clock.withZone(...)`: nos
+  testes o `Clock` é `@Mock`, e `withZone` num mock devolveria `null`.
+- **Guarda operacional que devolve o autor** — `autorizarConsulta()` passou de `void` a
+  `User`, como `autorizarAdministracao()` já fazia, para o resumo escopar usuários sem um
+  segundo `SELECT`. Os chamadores antigos ignoram o retorno; `autorizarEscrita()` segue `void`.
+
 ### O formulário de usuário do frontend está quebrado desde o S2a
 
 `components/admin/UserDialog.vue` monta `{ name, email, password }` e chama
@@ -2073,7 +2126,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **605 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **619 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -2083,11 +2136,11 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   `AutorizacaoOperacional`, o `NormalizadorPlanilhaPostos`, o `LeitorPlanilhaPostos`, o
   `PlanejadorImportacaoPostos`, o `RegistroImportacoesPostos`, o `ExecucaoImportacaoPostos`,
   o `GravadorImportacaoPostos`, o `ExecutorImportacaoPostos`, o `ImportacaoPostosService`, o
-  `PreviaImportacaoResponse` e o
+  `PreviaImportacaoResponse`, o `DashboardService`, o `EscopoUsuarios` e o
   handler global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 605, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 619, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa

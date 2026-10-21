@@ -48,4 +48,18 @@ public interface UserRepository extends JpaRepository<User, Long> {
      */
     Page<User> findByIsActiveAndIdAndNameContainingIgnoreCase(
             Boolean active, Long id, String name, Pageable pageable);
+
+    // Contagens do resumo da Home, uma por escopo de EscopoUsuarios -- o escopo Todos usa
+    // o countByIsActiveTrue acima. "Aguardando ativacao" e ativo sem senha definida: o
+    // usuario criado pelo cadastro administrativo que ainda nao abriu o convite.
+
+    long countByIsActiveTrueAndSenhaDefinidaFalse();
+
+    long countByIsActiveTrueAndRegionalId(Long regionalId);
+
+    long countByIsActiveTrueAndSenhaDefinidaFalseAndRegionalId(Long regionalId);
+
+    long countByIsActiveTrueAndId(Long id);
+
+    long countByIsActiveTrueAndSenhaDefinidaFalseAndId(Long id);
 }

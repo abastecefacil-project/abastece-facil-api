@@ -11,6 +11,9 @@ import java.time.LocalDate;
 
 public interface IncidentRepository extends JpaRepository<Incident, Long> {
 
+    /** Intervalo fechado nas duas pontas, como o BETWEEN do SQL. */
+    long countByOccurrenceDateBetween(LocalDate inicio, LocalDate fim);
+
     @Query(value = """
             SELECT * FROM incidents i
             WHERE (:carPlate IS NULL OR i.car_plate = :carPlate)

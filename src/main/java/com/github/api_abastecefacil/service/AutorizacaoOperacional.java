@@ -59,9 +59,15 @@ public class AutorizacaoOperacional {
         exigirGestao(PERFIL_NAO_PERMITIDO_ESCRITA_MESSAGE);
     }
 
-    /** Consultar veículo ou ocorrência pelas rotas autenticadas. */
-    public void autorizarConsulta() {
-        exigirGestao(PERFIL_NAO_PERMITIDO_CONSULTA_MESSAGE);
+    /**
+     * Consultar veículo, ocorrência ou o resumo da Home pelas rotas autenticadas.
+     *
+     * @return o autor, já carregado para conferir o perfil — o resumo da Home escopa a
+     *         contagem de usuários por ele sem um segundo {@code SELECT}, como
+     *         {@link #autorizarAdministracao} faz para o cancelamento da importação
+     */
+    public User autorizarConsulta() {
+        return exigirGestao(PERFIL_NAO_PERMITIDO_CONSULTA_MESSAGE);
     }
 
     /**
@@ -86,12 +92,12 @@ public class AutorizacaoOperacional {
      * o token vive até 30 dias para COLABORADOR, então alguém rebaixado de perfil
      * continuaria autorizado até o próximo login.
      */
-    private void exigirGestao(String mensagem) {
+    private User exigirGestao(String mensagem) {
         User autor = usuarioAutenticadoProvider.obterUsuarioAutenticado();
 
         if (Perfil.ADMINISTRADOR.equals(autor.getPerfil())
                 || Perfil.GESTOR_FROTA.equals(autor.getPerfil())) {
-            return;
+            return autor;
         }
 
         throw new PerfilNaoPermitidoException(mensagem);

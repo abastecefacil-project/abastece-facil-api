@@ -31,4 +31,21 @@ public interface GasStationRepository extends JpaRepository<GasStation, Long> {
     Page<GasStation> findByFilters(@Param("search") String search,
                                    @Param("active") Boolean active,
                                    Pageable pageable);
+
+    long countByIsActive(Boolean isActive);
+
+    /**
+     * Cidades distintas entre os postos ativos, para o resumo da Home.
+     *
+     * <p>A chave é o par cidade + UF, porque o mesmo nome existe em estados diferentes. Caixa
+     * e espaços nas pontas são neutralizados, já que o cadastro manual digita o texto livre;
+     * <b>acento não é</b>: o banco não tem a extensão {@code unaccent}, e "Sao Jose" e
+     * "São José" contariam como duas cidades.
+     */
+    @Query(value = """
+            SELECT COUNT(DISTINCT (LOWER(TRIM(city)), UPPER(TRIM(state))))
+              FROM gas_stations
+             WHERE is_active = true
+            """, nativeQuery = true)
+    long countCidadesAtendidas();
 }
