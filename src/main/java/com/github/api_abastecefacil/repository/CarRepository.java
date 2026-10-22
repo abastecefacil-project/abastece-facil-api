@@ -17,6 +17,8 @@ public interface CarRepository extends JpaRepository<Car, Long> {
 
     boolean existsCarByLicensePlate(String licensePlate);
 
+    long countByActive(Boolean active);
+
     @Query(value = "SELECT * FROM cars c WHERE " +
             "(:search IS NULL OR " +
             "LOWER(c.model) LIKE LOWER(CONCAT('%', :search, '%')) OR " +

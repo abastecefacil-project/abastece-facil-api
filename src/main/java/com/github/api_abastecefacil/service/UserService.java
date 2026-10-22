@@ -380,10 +380,9 @@ public class UserService {
     }
 
     /**
-     * Listagem escopada pelo perfil de quem chama: ADMINISTRADOR ve todos, GESTOR_FROTA
-     * ve a propria regional, COLABORADOR ve apenas a si mesmo. O gestor <b>sem</b>
-     * regional cai no ultimo caso -- nao ha escopo com que filtrar, e o caminho permissivo
-     * seria mostrar-lhe o sistema inteiro.
+     * Listagem escopada pelo perfil de quem chama. A regra -- quem ve quem -- mora em
+     * {@link EscopoUsuarios}, compartilhada com o resumo da Home; aqui so se escolhe a
+     * consulta paginada de cada escopo.
      *
      * <p><b>Por que a listagem entrou junto do GET /{id}.</b> Sem ela a restricao do
      * detalhe seria contornavel em uma requisicao: o mesmo dado sairia por
@@ -400,17 +399,16 @@ public class UserService {
     }
 
     private Page<User> buscarUsuariosVisiveis(User autor, Boolean active, String name, Pageable pageable) {
-        if (Perfil.ADMINISTRADOR.equals(autor.getPerfil())) {
-            return userRepository.findByIsActiveAndNameContainingIgnoreCase(active, name, pageable);
-        }
-
-        if (Perfil.GESTOR_FROTA.equals(autor.getPerfil()) && autor.getRegional() != null) {
-            return userRepository.findByIsActiveAndRegionalIdAndNameContainingIgnoreCase(
-                    active, autor.getRegional().getId(), name, pageable);
-        }
-
-        return userRepository.findByIsActiveAndIdAndNameContainingIgnoreCase(
-                active, autor.getId(), name, pageable);
+        return switch (EscopoUsuarios.de(autor)) {
+            case EscopoUsuarios.Todos todos ->
+                    userRepository.findByIsActiveAndNameContainingIgnoreCase(active, name, pageable);
+            case EscopoUsuarios.DaRegional(Long regionalId) ->
+                    userRepository.findByIsActiveAndRegionalIdAndNameContainingIgnoreCase(
+                            active, regionalId, name, pageable);
+            case EscopoUsuarios.Proprio(Long userId) ->
+                    userRepository.findByIsActiveAndIdAndNameContainingIgnoreCase(
+                            active, userId, name, pageable);
+        };
     }
 
     public Long countAllActiveUsers() {

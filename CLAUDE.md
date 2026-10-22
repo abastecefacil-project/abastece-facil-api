@@ -490,12 +490,13 @@ resultado por outro caminho.
 | DELETE | `/api/cars/{carId}` | **gestão** |
 | GET | `/api/incidents` | **gestão** |
 | GET | `/api/incidents/{id}` | **gestão** |
-| GET | `/api/incidents/dashboard` | **gestão** |
+| GET | `/api/incidents/dashboard` | **gestão** — em uso pelo `AdminDashboard.vue`; sai depois da migração para `/api/dashboard` |
 | PATCH | `/api/incidents/{id}` | **gestão** |
 | GET | `/api/users` | autenticado — **escopado por perfil** |
 | GET | `/api/users/me` | autenticado — **o próprio registro** |
 | GET | `/api/users/{userId}` | autenticado — **autorizado por perfil/regional** |
-| GET | `/api/users/dashboard` | autenticado |
+| GET | `/api/users/dashboard` | autenticado — **sem uso no front, candidato a remoção** |
+| GET | `/api/dashboard` | **gestão** — usuários **escopados por perfil** |
 | POST | `/api/users` | autenticado |
 | POST | `/api/users/{userId}/reenviar-ativacao` | autenticado |
 | PATCH | `/api/users/{userId}` | autenticado — **autorizado por perfil/regional** |
@@ -772,6 +773,82 @@ quais são deixaria o gestor sem saída — a lista é configuração operaciona
 As duas primeiras compartilham status **e mensagem** de propósito: responder algo
 diferente para "usuário desativado" confirmaria a quem segura o link que aquele token era
 bom e que a conta existe.
+
+### Resumo da Home de gestão (`GET /api/dashboard`)
+
+Resumo da Home, num corpo só. Autorização de **gestão** (`AutorizacaoOperacional.autorizarConsulta`,
+a mesma de `GET /api/incidents/dashboard`): COLABORADOR recebe 403 `PERFIL_NAO_PERMITIDO`.
+
+```json
+{
+  "postos":      { "ativos": 968, "inativos": 3, "cidadesAtendidas": 240 },
+  "veiculos":    { "ativos": 2, "inativos": 0 },
+  "ocorrencias": { "mesAtual": 2, "mesAnterior": 1 },
+  "usuarios":    { "ativos": 3, "aguardandoAtivacao": 0 },
+  "ocorrenciasPorMes": [ { "mes": "2026-05", "total": 1 }, { "mes": "2026-06", "total": 0 }, "… 6 itens" ],
+  "veiculosComMaisOcorrencias": [ { "placa": "MGM5H18", "total": 3 } ],
+  "cidadesComMaisPostos": [ { "cidade": "JOINVILLE", "uf": "SC", "total": 48 } ],
+  "usuariosPorPerfil": [ { "perfil": "COLABORADOR", "total": 1 }, { "perfil": "GESTOR_FROTA", "total": 1 }, { "perfil": "ADMINISTRADOR", "total": 1 } ],
+  "usuariosAguardandoAtivacaoAntigos": 0,
+  "ultimasOcorrencias": [ { "id": 7, "title": "...", "carPlate": "ABC1234", "occurrenceDate": "2026-05-20" } ]
+}
+```
+
+| Campo | Como é calculado | Escopo |
+|---|---|---|
+| `postos` | `is_active`; `cidadesAtendidas` = pares distintos `(LOWER(TRIM(city)), UPPER(TRIM(state)))` entre os ativos | global |
+| `veiculos` | `active` | global |
+| `ocorrencias` | `occurrence_date` (data do fato, não do registro) dentro do mês, **no calendário de São Paulo** | global |
+| `usuarios` | `ativos` = `is_active`; `aguardandoAtivacao` = ativo **e** `senha_definida = false` | **por perfil** |
+| `ocorrenciasPorMes` | **sempre 6 itens** (`MESES_SERIE_OCORRENCIAS`), cronológicos, terminando no mês atual; `mes` em `YYYY-MM`; mês sem ocorrência vem com `total: 0` | global |
+| `veiculosComMaisOcorrencias` | top 5 por placa **normalizada** (`UPPER(TRIM(car_plate))`), `occurrence_date` em `[hoje − 89, hoje]` — 90 dias de calendário com hoje incluído; desempate pela placa | global |
+| `cidadesComMaisPostos` | top 5 por postos ativos, com a **mesma chave** de `cidadesAtendidas`; `cidade` é `MIN(TRIM(city))` do grupo; desempate pelo nome | global |
+| `usuariosPorPerfil` | ativos por perfil; **os três perfis sempre presentes**, na ordem do enum, com zero nos ausentes | **por perfil** |
+| `usuariosAguardandoAtivacaoAntigos` | ativo, `senha_definida = false` e `created_at` anterior a **agora − 7 dias** | **por perfil** |
+| `ultimasOcorrencias` | as 5 mais recentes por `created_at`, só `id`, `title`, `carPlate`, `occurrenceDate` | global |
+
+Limites e janelas em `DashboardConstants`. A mudança da segunda etapa foi **aditiva**: os
+quatro blocos da primeira não mudaram.
+
+- **Só os campos de usuário são escopados.** Postos, veículos e ocorrências não têm regional —
+  mesma constatação do P0.4 —, então admin e gestor veem o resto igual. O escopo é o de
+  `EscopoUsuarios` (§6, item 33): admin vê todos; gestor com regional, a própria regional;
+  gestor sem regional, só a si mesmo. Os três campos de usuário usam `switch` exaustivo sobre
+  ele. Gestor de regional vê `ADMINISTRADOR: 0`, porque administrador não tem regional.
+- **Agregação no banco** (`countBy...` derivados e `@Query` nativas com `GROUP BY`); nenhuma
+  entidade é carregada para ser contada. A exceção são as 5 `ultimasOcorrencias`, que são
+  listagem. As consultas de agregação devolvem as interfaces de projeção `ContagemAgrupada` e
+  `ContagemCidade` (`dto/dashboard/`), e o perfil volta como texto da coluna — o service faz
+  `Perfil.valueOf`.
+- **Os meses vazios da série são preenchidos no service**, não no SQL: a consulta devolve só os
+  meses que têm ocorrência. Mesma coisa para os perfis zerados.
+- **Datas vêm do `Clock` de `SchedulingConfig` convertido por `DashboardConstants.FUSO_HORARIO`**
+  (`America/Sao_Paulo`), e não do fuso da JVM: o container não fixa `TZ`, e entre 21h e
+  meia-noite do último dia do mês um relógio em UTC já estaria no mês seguinte. O instante é
+  lido **uma vez** por resumo, para todos os campos verem o mesmo "hoje".
+- **Fronteira dos 7 dias e o fuso de `created_at`.** O limite é calculado em São Paulo, mas
+  `users.created_at` é gravado com `LocalDateTime.now()`, no fuso da JVM. Com a JVM em UTC, a
+  fronteira se desloca 3 horas. Irrelevante para "mais de 7 dias", mas é a mesma família de
+  problema da §9, item 15.
+- **A normalização de placa é só do ranking.** A criação de ocorrência continua exigindo
+  igualdade exata com `cars.license_plate`: `mgm5h18` e `" ABC1234 "` respondem 404 "Carro não
+  encontrado com essa placa" (medido). Por isso o agrupamento por placa normalizada hoje só faz
+  diferença para dados legados ou inseridos por fora da API.
+- **`ultimasOcorrencias` não reaproveita `IncidentMapper.toResponse`**, que devolve 7 campos
+  (`userName`, `description` e `createdAt` a mais). A conversão é do `mapper/DashboardMapper`.
+- **`CreateIncidentRequest` aceita `occurrenceDate` futura** — não há `@PastOrPresent`. A série
+  vai até o fim do mês atual, então uma ocorrência datada mais adiante no mesmo mês já conta;
+  o ranking de placas termina em hoje e a ignora. Registrado, não corrigido.
+
+**Endpoints de resumo anteriores**, conferidos no `abastece-facil-web`:
+
+| Endpoint | Uso no front | Situação |
+|---|---|---|
+| `GET /api/users/dashboard` | **nenhum** — o `getUsersDashboard()` do front chama `GET /api/users?size=1` e lê `totalElements` | **candidato a remoção** |
+| `GET /api/incidents/dashboard` | **em uso** — `views/admin/AdminDashboard.vue`, via `getDashboardOccurrences()`, lê `total` e `latestIncidents` | removível **só depois** que a Home migrar para `GET /api/dashboard` |
+- **`cidadesAtendidas` não normaliza acento**: "Sao Jose" e "São José" contam como duas. O
+  banco não tem a extensão `unaccent`, e instalá-la seria migration. Na carga real de
+  desenvolvimento não há variação de caixa nem de acento (240 nos três critérios).
 
 ### Importação de postos
 
@@ -1454,7 +1531,10 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
     `findUserByIdOrThrow` continua existindo, com o comportamento antigo, para
     `reenviarAtivacao`.
 33. **A listagem é escopada, e por isso a correção não é contornável.** `getAllUsers`
-    escolhe entre três consultas do `UserRepository` conforme o perfil do autor. Sem isso,
+    escolhe entre três consultas do `UserRepository` conforme o perfil do autor. A decisão
+    de *qual* escopo mora em `service/EscopoUsuarios.de(autor)` desde o resumo da Home, que
+    a reaproveita para **contar** em vez de listar — não duplique a regra num terceiro
+    lugar. Sem isso,
     restringir `GET /api/users/{id}` não valeria nada: o mesmo dado sairia por
     `GET /api/users`, que devolvia todo mundo para qualquer autenticado.
 
@@ -2050,6 +2130,20 @@ O A3 acrescentou mais duas, ambas em `config/AdministradorInicialInitializer`:
 - **Renomeação de DTO com JSON preservado** — `AtivacaoRequest` → `DefinicaoSenhaRequest` e
   `AtivacaoValidacaoResponse` → `TokenValidacaoResponse`. Ver a tabela na §5.
 
+### Primeiras ocorrências introduzidas pelo resumo da Home
+
+- **`sealed interface` com records e `switch` por pattern matching** — `EscopoUsuarios`
+  (`Todos`, `DaRegional(regionalId)`, `Proprio(userId)`). Selada para que o `switch` em
+  `UserService.buscarUsuariosVisiveis` e em `DashboardService.resumirUsuarios` seja
+  exaustivo: um quarto escopo quebra a compilação dos dois em vez de cair num ramo padrão.
+- **`ZoneId` explícito para data de negócio** — `DashboardConstants.FUSO_HORARIO`. Até aqui
+  todo o projeto usava o fuso da JVM (`LocalDateTime.now()`). O cálculo usa
+  `LocalDate.ofInstant(clock.instant(), FUSO_HORARIO)`, e não `clock.withZone(...)`: nos
+  testes o `Clock` é `@Mock`, e `withZone` num mock devolveria `null`.
+- **Guarda operacional que devolve o autor** — `autorizarConsulta()` passou de `void` a
+  `User`, como `autorizarAdministracao()` já fazia, para o resumo escopar usuários sem um
+  segundo `SELECT`. Os chamadores antigos ignoram o retorno; `autorizarEscrita()` segue `void`.
+
 ### O formulário de usuário do frontend está quebrado desde o S2a
 
 `components/admin/UserDialog.vue` monta `{ name, email, password }` e chama
@@ -2073,7 +2167,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **605 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **631 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -2083,11 +2177,11 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   `AutorizacaoOperacional`, o `NormalizadorPlanilhaPostos`, o `LeitorPlanilhaPostos`, o
   `PlanejadorImportacaoPostos`, o `RegistroImportacoesPostos`, o `ExecucaoImportacaoPostos`,
   o `GravadorImportacaoPostos`, o `ExecutorImportacaoPostos`, o `ImportacaoPostosService`, o
-  `PreviaImportacaoResponse` e o
+  `PreviaImportacaoResponse`, o `DashboardService`, o `EscopoUsuarios` e o
   handler global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 605, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 631, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa

@@ -1,11 +1,14 @@
 package com.github.api_abastecefacil.repository;
 
+import com.github.api_abastecefacil.dto.dashboard.ContagemCidade;
 import com.github.api_abastecefacil.model.GasStation;
 import feign.Param;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+
+import java.util.List;
 
 public interface GasStationRepository extends JpaRepository<GasStation, Long> {
     boolean existsGasStationById(Long id);
@@ -31,4 +34,41 @@ public interface GasStationRepository extends JpaRepository<GasStation, Long> {
     Page<GasStation> findByFilters(@Param("search") String search,
                                    @Param("active") Boolean active,
                                    Pageable pageable);
+
+    long countByIsActive(Boolean isActive);
+
+    /**
+     * Cidades distintas entre os postos ativos, para o resumo da Home.
+     *
+     * <p>A chave é o par cidade + UF, porque o mesmo nome existe em estados diferentes. Caixa
+     * e espaços nas pontas são neutralizados, já que o cadastro manual digita o texto livre;
+     * <b>acento não é</b>: o banco não tem a extensão {@code unaccent}, e "Sao Jose" e
+     * "São José" contariam como duas cidades.
+     */
+    @Query(value = """
+            SELECT COUNT(DISTINCT (LOWER(TRIM(city)), UPPER(TRIM(state))))
+              FROM gas_stations
+             WHERE is_active = true
+            """, nativeQuery = true)
+    long countCidadesAtendidas();
+
+    /**
+     * Cidades com mais postos ativos, agrupadas pela mesma chave de
+     * {@link #countCidadesAtendidas} — as duas precisam continuar iguais, senão o ranking e o
+     * total de cidades deixam de falar das mesmas cidades. {@code MIN(TRIM(city))} escolhe um
+     * rótulo entre as grafias que caíram no mesmo grupo.
+     *
+     * <p>O {@code @Param} vem qualificado de propósito: o import deste arquivo é o
+     * {@code feign.Param}, que o Spring Data ignora.
+     */
+    @Query(value = """
+            SELECT MIN(TRIM(city)) AS cidade, UPPER(TRIM(state)) AS uf, COUNT(*) AS total
+              FROM gas_stations
+             WHERE is_active = true
+             GROUP BY LOWER(TRIM(city)), UPPER(TRIM(state))
+             ORDER BY total DESC, cidade ASC
+             LIMIT :limite
+            """, nativeQuery = true)
+    List<ContagemCidade> rankingCidades(
+            @org.springframework.data.repository.query.Param("limite") int limite);
 }
