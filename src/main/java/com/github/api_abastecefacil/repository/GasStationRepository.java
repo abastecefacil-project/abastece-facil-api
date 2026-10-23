@@ -2,15 +2,45 @@ package com.github.api_abastecefacil.repository;
 
 import com.github.api_abastecefacil.dto.dashboard.ContagemCidade;
 import com.github.api_abastecefacil.model.GasStation;
-import feign.Param;
+import org.springframework.data.repository.query.Param;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Modifying;
+import java.util.Optional;
+import java.time.LocalDateTime;
 
 import java.util.List;
 
 public interface GasStationRepository extends JpaRepository<GasStation, Long> {
+    @Modifying
+    @Query(value = """
+            INSERT INTO avaliacoes_neo (posto_id, usuario_id, passou_neo)
+            VALUES (:postoId, :usuarioId, :passouNeo)
+            ON CONFLICT (posto_id, usuario_id)
+            DO UPDATE SET passou_neo = EXCLUDED.passou_neo, atualizado_em = CURRENT_TIMESTAMP
+            WHERE avaliacoes_neo.passou_neo IS DISTINCT FROM EXCLUDED.passou_neo
+            """, nativeQuery = true)
+    int salvarAvaliacaoNeo(@Param("postoId") Long postoId,
+                           @Param("usuarioId") Long usuarioId,
+                           @Param("passouNeo") boolean passouNeo);
+
+    @Modifying
+    @Query(value = "DELETE FROM avaliacoes_neo WHERE posto_id = :postoId AND usuario_id = :usuarioId", nativeQuery = true)
+    void removerAvaliacaoNeo(@Param("postoId") Long postoId, @Param("usuarioId") Long usuarioId);
+
+    @Query(value = "SELECT passou_neo FROM avaliacoes_neo WHERE posto_id = :postoId AND usuario_id = :usuarioId", nativeQuery = true)
+    Optional<Boolean> buscarAvaliacaoNeo(@Param("postoId") Long postoId,
+                                       @Param("usuarioId") Long usuarioId);
+
+    @Query(value = "SELECT COUNT(*) FROM avaliacoes_neo WHERE posto_id = :postoId AND passou_neo = :passouNeo", nativeQuery = true)
+    long contarAvaliacoesNeo(@Param("postoId") Long postoId,
+                            @Param("passouNeo") boolean passouNeo);
+
+    @Query(value = "SELECT MAX(atualizado_em) FROM avaliacoes_neo WHERE posto_id = :postoId", nativeQuery = true)
+    Optional<LocalDateTime> buscarUltimoRelatoNeo(@Param("postoId") Long postoId);
+
     boolean existsGasStationById(Long id);
 
     boolean existsByCnpj(String cnpj);
