@@ -71,7 +71,7 @@ public class AutorizacaoOperacional {
     }
 
     /**
-     * Só ADMINISTRADOR. Mesmo padrão de {@code UserService.autorizarExclusao}: o perfil vem
+     * Só ADMINISTRADOR. Mesmo padrão de {@code UserService.autorizarAlteracaoStatus}: o perfil vem
      * do banco, e a recusa é {@code PerfilNaoPermitidoException}.
      *
      * @return o autor, já carregado para conferir o perfil — o cancelamento da importação

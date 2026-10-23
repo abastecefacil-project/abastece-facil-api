@@ -884,6 +884,43 @@ class UserServiceTest {
                 .containsExactly("name", "email", "password");
     }
 
+    @Test
+    void reativarUser_ShouldPreserveCredentialsAndPendingActivation() {
+        User alvo = alvoPendente().setActive(false);
+        String senha = alvo.getPassword();
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.ADMINISTRADOR, null));
+        when(userRepository.findById(5L)).thenReturn(Optional.of(alvo));
+        when(userRepository.save(alvo)).thenReturn(alvo);
+        when(userMapper.toResponse(alvo)).thenReturn(userResponse);
+
+        assertThat(userService.reativarUser(5L)).isEqualTo(userResponse);
+        assertThat(alvo.getActive()).isTrue();
+        assertThat(alvo.getSenhaDefinida()).isFalse();
+        assertThat(alvo.getPassword()).isEqualTo(senha);
+    }
+
+    @Test
+    void reativarUser_ShouldRejectGestorAndColaborador() {
+        User alvo = alvoPendente().setActive(false);
+        when(userRepository.findById(5L)).thenReturn(Optional.of(alvo));
+        for (Perfil perfil : new Perfil[]{Perfil.GESTOR_FROTA, Perfil.COLABORADOR}) {
+            when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(autor(perfil, joinville));
+            assertThrows(PerfilNaoPermitidoException.class, () -> userService.reativarUser(5L));
+        }
+        assertThat(alvo.getActive()).isFalse();
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void reativarUser_ShouldRejectOwnAccount() {
+        User admin = autorComId(1L, Perfil.ADMINISTRADOR, null);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(admin);
+        when(userRepository.findById(1L)).thenReturn(Optional.of(admin));
+        assertThrows(AutoExclusaoNaoPermitidaException.class, () -> userService.reativarUser(1L));
+        verify(userRepository, never()).save(any());
+    }
+
     // ------------------------------------------------- P0.4c: exclusao de usuario
 
     @Test
