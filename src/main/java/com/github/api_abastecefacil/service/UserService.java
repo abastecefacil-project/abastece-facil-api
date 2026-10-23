@@ -212,20 +212,8 @@ public class UserService {
                 PERFIL_NAO_PERMITIDO_EDICAO_MESSAGE, REGIONAL_NAO_PERMITIDA_EDICAO_MESSAGE);
     }
 
-    /**
-     * Exclusao: somente ADMINISTRADOR, e nunca a propria conta.
-     *
-     * <p>O perfil e conferido antes do autosservico de proposito. Um colaborador tentando
-     * excluir a si mesmo leva "somente um administrador pode excluir usuarios", que e
-     * verdade; a mensagem de autoexclusao daria a entender que ele poderia excluir outra
-     * pessoa.
-     *
-     * <p>Por que nem o administrador se exclui: a exclusao e logica e, desde o S3, usuario
-     * inativo deixa de autenticar. Ele perderia o proprio acesso na hora, e nao ha
-     * endpoint que reative ninguem -- se for o unico administrador, o sistema fica sem
-     * caminho administrativo.
-     */
-    private void autorizarExclusao(User autor, User alvo) {
+    // Impede que o administrador retire o próprio acesso, inclusive se for o único.
+    private void autorizarAlteracaoStatus(User autor, User alvo) {
         if (!Perfil.ADMINISTRADOR.equals(autor.getPerfil())) {
             throw new PerfilNaoPermitidoException(PERFIL_NAO_PERMITIDO_EXCLUSAO_MESSAGE);
         }
@@ -340,11 +328,20 @@ public class UserService {
         User autor = usuarioAutenticadoProvider.obterUsuarioAutenticado();
         User alvo = buscarUsuarioPorId(userId);
 
-        autorizarExclusao(autor, alvo);
+        autorizarAlteracaoStatus(autor, alvo);
         validateUserIsActive(alvo);
 
         alvo.setActive(false);
         userRepository.save(alvo);
+    }
+
+    @Transactional
+    public UserResponse reativarUser(Long userId) {
+        User autor = usuarioAutenticadoProvider.obterUsuarioAutenticado();
+        User alvo = buscarUsuarioPorId(userId);
+        autorizarAlteracaoStatus(autor, alvo);
+        alvo.setActive(true);
+        return userMapper.toResponse(userRepository.save(alvo));
     }
 
     /**

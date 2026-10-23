@@ -90,4 +90,9 @@ public class UserController {
         return ResponseEntity.noContent().build();
     }
 
+    @PostMapping("/{userId}/reativar")
+    public ResponseEntity<UserResponse> reativarUser(@PathVariable Long userId) {
+        return ResponseEntity.ok(userService.reativarUser(userId));
+    }
+
 }

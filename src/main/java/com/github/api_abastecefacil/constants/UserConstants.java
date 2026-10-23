@@ -158,17 +158,11 @@ public class UserConstants {
             "Gestor de frota só pode alterar usuários da própria regional";
 
     public static final String PERFIL_NAO_PERMITIDO_EXCLUSAO_MESSAGE =
-            "Somente um administrador pode excluir usuários";
+            "Somente um administrador pode inativar ou reativar usuários";
 
-    /**
-     * Excluir a si mesmo e sempre recusado, inclusive para ADMINISTRADOR. A exclusao e
-     * logica (is_active = false) e, desde o S3, um usuario inativo deixa de autenticar --
-     * entao um administrador que se exclui perde o proprio acesso na hora, e como nao ha
-     * endpoint que reative ninguem, so um UPDATE manual no banco o traria de volta. Se ele
-     * for o unico administrador, o sistema fica sem caminho administrativo.
-     */
+    // O código de erro antigo é preservado por compatibilidade com os clientes.
     public static final String AUTO_EXCLUSAO_NAO_PERMITIDA_MESSAGE =
-            "Você não pode excluir a própria conta";
+            "Você não pode alterar o status da própria conta";
 
     /**
      * O PATCH so aceita senha quando o alvo e o proprio autor.
