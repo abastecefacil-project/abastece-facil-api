@@ -2,6 +2,7 @@ package com.github.api_abastecefacil.repository;
 
 import com.github.api_abastecefacil.dto.dashboard.ContagemAgrupada;
 import com.github.api_abastecefacil.model.User;
+import com.github.api_abastecefacil.model.Perfil;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -15,6 +16,8 @@ import java.util.Optional;
 
 @Repository
 public interface UserRepository extends JpaRepository<User, Long> {
+    List<User> findByIsActiveTrueAndPerfilAndRegionalIdOrderByNameAsc(Perfil perfil, Long regionalId);
+
     Optional<User> findByEmail(String email);
 
     boolean existsByEmail(String email);

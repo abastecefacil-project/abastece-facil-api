@@ -682,6 +682,45 @@ class UserServiceTest {
     // ------------------------------------------------ P0.5b: GET /api/users/me
 
     @Test
+    void gestoresDaRegional_ConsultaApenasAtivosComPerfilGestorNaRegionalDoAutor() {
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.COLABORADOR, joinville));
+        User gestor = new User().setName("Gestora Joinville").setTelefone("47999998888");
+        User outroGestor = new User().setName("Outro gestor").setTelefone(null);
+        when(userRepository.findByIsActiveTrueAndPerfilAndRegionalIdOrderByNameAsc(
+                Perfil.GESTOR_FROTA, REGIONAL_JOI)).thenReturn(List.of(gestor, outroGestor));
+
+        var contatos = userService.getGestoresDaMinhaRegional();
+
+        assertThat(contatos).hasSize(2);
+        assertThat(contatos.getFirst().nome()).isEqualTo("Gestora Joinville");
+        assertThat(contatos.getFirst().telefone()).isEqualTo("47999998888");
+        assertThat(contatos.get(1).telefone()).isNull();
+        verify(userRepository).findByIsActiveTrueAndPerfilAndRegionalIdOrderByNameAsc(
+                Perfil.GESTOR_FROTA, REGIONAL_JOI);
+        verifyNoMoreInteractions(userRepository);
+    }
+
+    @Test
+    void gestoresDaRegional_SemRegionalNaoConsultaOutrasRegionais() {
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.COLABORADOR, null));
+
+        assertThat(userService.getGestoresDaMinhaRegional()).isEmpty();
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    void gestoresDaRegional_SemGestorRetornaListaVazia() {
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.COLABORADOR, joinville));
+        when(userRepository.findByIsActiveTrueAndPerfilAndRegionalIdOrderByNameAsc(
+                Perfil.GESTOR_FROTA, REGIONAL_JOI)).thenReturn(List.of());
+
+        assertThat(userService.getGestoresDaMinhaRegional()).isEmpty();
+    }
+
+    @Test
     void getUsuarioAutenticado_ShouldReturnOwnRecord_WithRegional() {
         User gestor = autorComId(9L, Perfil.GESTOR_FROTA, joinville);
         UserResponse esperado = new UserResponse(

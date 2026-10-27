@@ -1,6 +1,7 @@
 package com.github.api_abastecefacil.controller;
 
 import com.github.api_abastecefacil.dto.user.CreateUserRequest;
+import com.github.api_abastecefacil.dto.user.ContatoGestorResponse;
 import com.github.api_abastecefacil.dto.user.UpdateUserRequest;
 import com.github.api_abastecefacil.dto.user.UserResponse;
 import com.github.api_abastecefacil.service.UserService;
@@ -13,6 +14,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/users")
@@ -34,6 +36,11 @@ public class UserController {
     @GetMapping("/me")
     public ResponseEntity<UserResponse> getUsuarioAutenticado() {
         return ResponseEntity.ok(userService.getUsuarioAutenticado());
+    }
+
+    @GetMapping("/me/gestores-frota")
+    public ResponseEntity<List<ContatoGestorResponse>> getGestoresDaMinhaRegional() {
+        return ResponseEntity.ok(userService.getGestoresDaMinhaRegional());
     }
 
     @GetMapping("/{userId}")

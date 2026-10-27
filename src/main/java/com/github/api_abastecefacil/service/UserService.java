@@ -1,6 +1,7 @@
 package com.github.api_abastecefacil.service;
 
 import com.github.api_abastecefacil.dto.user.CreateUserRequest;
+import com.github.api_abastecefacil.dto.user.ContatoGestorResponse;
 import com.github.api_abastecefacil.dto.user.UpdateUserRequest;
 import com.github.api_abastecefacil.dto.user.UserResponse;
 import com.github.api_abastecefacil.exception.AutoExclusaoNaoPermitidaException;
@@ -364,6 +365,17 @@ public class UserService {
      */
     public UserResponse getUsuarioAutenticado() {
         return userMapper.toResponse(usuarioAutenticadoProvider.obterUsuarioAutenticado());
+    }
+
+    public List<ContatoGestorResponse> getGestoresDaMinhaRegional() {
+        User autor = usuarioAutenticadoProvider.obterUsuarioAutenticado();
+        if (autor.getRegional() == null) return List.of();
+
+        return userRepository.findByIsActiveTrueAndPerfilAndRegionalIdOrderByNameAsc(
+                        Perfil.GESTOR_FROTA, autor.getRegional().getId())
+                .stream()
+                .map(gestor -> new ContatoGestorResponse(gestor.getName(), gestor.getTelefone()))
+                .toList();
     }
 
     public UserResponse getUserById(Long userId) {

@@ -15,6 +15,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import static org.mockito.Mockito.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(UserController.class)
@@ -24,6 +25,20 @@ class UserStatusControllerTest {
     @MockitoBean UserService service;
     @MockitoBean JwtService jwtService;
     @MockitoBean UserDetailsService userDetailsService;
+
+    @Test
+    void contatosDosGestoresExigemLogin() throws Exception {
+        mvc.perform(get("/api/users/me/gestores-frota")).andExpect(status().isForbidden());
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void colaboradorPodeConsultarContatosDaSuaRegional() throws Exception {
+        mvc.perform(get("/api/users/me/gestores-frota")
+                        .with(user("colaborador").roles("COLABORADOR")))
+                .andExpect(status().isOk());
+        verify(service).getGestoresDaMinhaRegional();
+    }
 
     @Test
     void reativacaoExigeLogin() throws Exception {
