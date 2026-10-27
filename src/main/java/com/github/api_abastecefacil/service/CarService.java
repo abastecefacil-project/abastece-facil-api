@@ -13,6 +13,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
+
 import static com.github.api_abastecefacil.constants.CarConstants.CAR_NOT_FOUND_MESSAGE;
 import static com.github.api_abastecefacil.constants.CarConstants.LICENSE_PLATE_ALREADY_EXISTS_MESSAGE;
 
@@ -64,6 +66,12 @@ public class CarService {
         autorizacaoOperacional.autorizarEscrita();
         Car car = findCarByIdOrThrow(carId);
         carRepository.delete(car);
+    }
+
+    // Todos os perfis autenticados podem selecionar um veículo ativo ao registrar ocorrência.
+    public List<CarResponse> getAvailableCars() {
+        return carRepository.findByFilters(null, true, Pageable.unpaged())
+                .map(carMapper::toResponse).getContent();
     }
 
     public Page<CarResponse> getCarsByFilters(String search, Boolean active, Pageable pageable) {

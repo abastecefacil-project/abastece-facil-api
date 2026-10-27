@@ -12,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
+import java.util.List;
 
 @RestController
 @RequestMapping("/api")
@@ -33,6 +34,11 @@ public class CarController {
     @GetMapping("cars/{carId}")
     public ResponseEntity<CarResponse> getCarById(@PathVariable Long carId) {
         return ResponseEntity.ok(carService.getCarById(carId));
+    }
+
+    @GetMapping("cars/available")
+    public ResponseEntity<List<CarResponse>> getAvailableCars() {
+        return ResponseEntity.ok(carService.getAvailableCars());
     }
 
     @GetMapping("cars/filter")

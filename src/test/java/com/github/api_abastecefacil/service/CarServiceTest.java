@@ -60,6 +60,18 @@ class CarServiceTest {
     }
 
     @Test
+    void getAvailableCars_ShouldReturnAllActiveCarsWithoutManagementPermission() {
+        when(carRepository.findByFilters(null, true, Pageable.unpaged()))
+                .thenReturn(new PageImpl<>(List.of(car)));
+        when(carMapper.toResponse(car)).thenReturn(carResponse);
+
+        assertThat(carService.getAvailableCars()).containsExactly(carResponse);
+
+        verify(carRepository).findByFilters(null, true, Pageable.unpaged());
+        verifyNoInteractions(autorizacaoOperacional);
+    }
+
+    @Test
     void createCar_ShouldCreateCarSuccessfully() {
         CreateCarRequest request = new CreateCarRequest("ABC1234", "Civic");
         when(carRepository.existsCarByLicensePlate("ABC1234")).thenReturn(false);
