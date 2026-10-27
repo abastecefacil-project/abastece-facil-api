@@ -32,6 +32,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 
 import static com.github.api_abastecefacil.constants.RegionalConstants.REGIONAL_NOT_FOUND_MESSAGE;
 import static com.github.api_abastecefacil.constants.UserConstants.*;
@@ -233,9 +234,8 @@ public class UserService {
     }
 
     /**
-     * Matrícula e regional são obrigatórias para COLABORADOR e GESTOR_FROTA, e opcionais
-     * para ADMINISTRADOR — que é conta de infraestrutura e pode não pertencer a regional
-     * nenhuma, como o administrador inicial criado pelo A3.
+     * Matrícula e regional são obrigatórias para COLABORADOR e GESTOR_FROTA.
+     * ADMINISTRADOR tem matrícula opcional e não pode ter regional.
      *
      * <p>A regra é condicional ao perfil, então não cabe em anotação do Bean Validation
      * sem um validador customizado; fica aqui, junto da autorização, que também depende
@@ -243,6 +243,9 @@ public class UserService {
      */
     private void validateCamposObrigatoriosDoPerfil(CreateUserRequest request) {
         if (Perfil.ADMINISTRADOR.equals(request.perfil())) {
+            if (request.regionalId() != null) {
+                throw new InvalidUserDataException("Administrador não pode ter regional vinculada");
+            }
             return;
         }
         if (isBlank(request.matricula())) {
@@ -299,10 +302,8 @@ public class UserService {
      * Alteracao administrativa e autosservico pelo mesmo endpoint, com a autorizacao
      * antes de qualquer escrita.
      *
-     * <p>{@code UpdateUserRequest} continua sem {@code perfil} e sem {@code regionalId} --
-     * promover alguem segue sendo UPDATE manual no banco. Por isso nao ha guarda contra
-     * autopromocao aqui: ela nao tem campo por onde acontecer, e um teste de campo
-     * inexistente seria codigo morto sugerindo o contrario.
+     * <p>Apenas ADMINISTRADOR altera perfil, regional, telefone e matrícula.
+     * O próprio perfil do administrador é preservado para não retirar seu acesso.
      *
      * <p>A ordem e a mesma dos outros fluxos: buscar o alvo, autorizar, so entao validar e
      * escrever. Conferir "ja excluido" antes de autorizar diria a quem nao pode ver o
@@ -316,12 +317,57 @@ public class UserService {
         autorizarEdicao(autor, alvo);
         validateUserIsActive(alvo);
 
+        updateCadastroAdministrativoIfProvided(autor, alvo, request);
         updateNameIfProvided(alvo, request.name());
         updateEmailIfProvided(alvo, request.email());
         updatePasswordIfProvided(autor, alvo, request.password());
 
-        User updatedUser = userRepository.save(alvo);
+        User updatedUser = salvarComBackstop(alvo);
         return userMapper.toResponse(updatedUser);
+    }
+
+    private void updateCadastroAdministrativoIfProvided(User autor, User alvo, UpdateUserRequest request) {
+        if (request.regionalId() == null && request.telefone() == null
+                && request.matricula() == null && request.perfil() == null) return;
+        if (!Perfil.ADMINISTRADOR.equals(autor.getPerfil())) {
+            throw new PerfilNaoPermitidoException(
+                    "Somente um administrador pode alterar perfil, regional, telefone ou matrícula");
+        }
+
+        Perfil perfil = request.perfil() == null ? alvo.getPerfil() : request.perfil();
+        if (ehOMesmoUsuario(autor, alvo) && perfil != alvo.getPerfil()) {
+            throw new PerfilNaoPermitidoException("Você não pode alterar o próprio perfil");
+        }
+        Regional regional = alvo.getRegional();
+        if (perfil == Perfil.ADMINISTRADOR) {
+            if (request.regionalId() != null) {
+                throw new InvalidUserDataException("Administrador não pode ter regional vinculada");
+            }
+            regional = null;
+        } else if (request.regionalId() != null && !request.regionalId().equals(regionalIdDe(alvo))) {
+            regional = resolverRegional(request.regionalId());
+            if (!Boolean.TRUE.equals(regional.getAtivo())) {
+                throw new InvalidUserDataException("Selecione uma regional ativa");
+            }
+        }
+
+        String matricula = request.matricula() == null ? alvo.getMatricula()
+                : (isBlank(request.matricula()) ? null : request.matricula().trim());
+        UserValidator.validarMatricula(matricula);
+        if (perfil != Perfil.ADMINISTRADOR && (request.perfil() != null || request.matricula() != null)) {
+            if (matricula == null) throw new InvalidUserDataException(MATRICULA_OBRIGATORIA_MESSAGE);
+            if (regional == null) throw new InvalidUserDataException(REGIONAL_OBRIGATORIA_MESSAGE);
+        }
+        if (matricula != null && !Objects.equals(matricula, alvo.getMatricula())
+                && userRepository.existsByMatriculaAndIdNot(matricula, alvo.getId())) {
+            throw new MatriculaDuplicadaException(MATRICULA_ALREADY_EXISTS_MESSAGE);
+        }
+        if (request.telefone() != null) {
+            String telefone = isBlank(request.telefone()) ? null : request.telefone().trim();
+            UserValidator.validarTelefone(telefone);
+            alvo.setTelefone(UserValidator.normalizarTelefone(telefone));
+        }
+        alvo.setPerfil(perfil).setRegional(regional).setMatricula(matricula);
     }
 
     @Transactional

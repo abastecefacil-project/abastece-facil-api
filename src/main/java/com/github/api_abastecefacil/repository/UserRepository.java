@@ -30,6 +30,8 @@ public interface UserRepository extends JpaRepository<User, Long> {
      */
     boolean existsByMatricula(String matricula);
 
+    boolean existsByMatriculaAndIdNot(String matricula, Long id);
+
     Page<User> findByIsActiveAndNameContainingIgnoreCase(Boolean active, String name, Pageable pageable);
 
     Long countByIsActiveTrue();

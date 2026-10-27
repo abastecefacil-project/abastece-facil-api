@@ -22,8 +22,8 @@ import jakarta.validation.constraints.Size;
  * escolhe a senha de outra pessoa.
  *
  * <p>As anotações cobrem só o que não depende do perfil. {@code matricula} e
- * {@code regionalId} são obrigatórias para COLABORADOR e GESTOR_FROTA e opcionais para
- * ADMINISTRADOR — regra condicional que o Bean Validation não expressa sem um validador
+ * {@code regionalId} são obrigatórias para COLABORADOR e GESTOR_FROTA. ADMINISTRADOR
+ * tem matrícula opcional e não pode ter regional — regra que exige um validador
  * customizado, e que por isso vive no {@code UserService}, junto com a autorização.
  */
 public record CreateUserRequest(

@@ -640,8 +640,8 @@ usuário do sistema:
 
 **Não tem `password`, e essa é a regra central**: o usuário nasce com senha nula,
 `senhaDefinida = false` e ativo. `matricula` e `regionalId` são obrigatórias para
-`COLABORADOR` e `GESTOR_FROTA`, e opcionais para `ADMINISTRADOR` — conta de
-infraestrutura pode não pertencer a regional nenhuma, como o administrador inicial do A3.
+`COLABORADOR` e `GESTOR_FROTA`. Para `ADMINISTRADOR`, matrícula é opcional e regional
+é proibida. A V103 remove vínculos regionais de administradores e impõe essa restrição no banco.
 
 **O `POST /api/auth/register` foi removido pelo S8**, e com ele o `RegisterRequest` e o
 `AuthService.register`. Era autocadastro público: qualquer pessoa criava a própria conta
@@ -681,9 +681,13 @@ lados, e mudar de um exige mudar do outro. A origem única é
 token vai em query string, e não em path, porque é Base64 URL-safe (sem `+`, `/` ou `=`)
 e não precisa de escape.
 
-Escrita de `perfil`, `regional`, `telefone` e `matricula` pelo **`PATCH`** continua sem
-caminho HTTP: `UpdateUserRequest` não aceita esses campos. Promover alguém já existente
-ainda é `UPDATE` manual no banco. Ver §6.
+O **`PATCH /api/users/{id}`** permite ao ADMINISTRADOR editar todos os campos do cadastro:
+nome, e-mail, telefone, matrícula, perfil e regional. Gestores e colaboradores continuam
+limitados a nome e e-mail pela interface. Os campos administrativos são protegidos no
+serviço, inclusive contra alteração da própria conta por um gestor ou colaborador.
+Promover a ADMINISTRADOR remove a regional; os outros perfis exigem regional e matrícula.
+O administrador não altera o próprio perfil. Matrícula é única, telefone é normalizado;
+string vazia limpa telefone ou matrícula opcional, enquanto campo omitido é preservado.
 
 **`GET /api/auth/ativacao/validar?token=` responde 200 SEMPRE**, inclusive para token
 inválido — e essa é uma **exceção deliberada** ao contrato de erro do projeto:

@@ -99,7 +99,8 @@ está no `CLAUDE.md`, seção 3.
 ### Administrador inicial
 
 O primeiro administrador é criado na subida da aplicação, por configuração — não existe
-endpoint de bootstrap e não há como promover alguém pela interface ainda. Três variáveis:
+endpoint público de bootstrap. Após o primeiro acesso, administradores podem criar e
+editar perfis pela tela de usuários. Três variáveis:
 
 | Variável | Obrigatória | Default |
 |---|---|---|

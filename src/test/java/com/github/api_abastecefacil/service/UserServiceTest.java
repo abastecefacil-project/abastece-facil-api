@@ -36,7 +36,6 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
-import java.lang.reflect.RecordComponent;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -635,7 +634,7 @@ class UserServiceTest {
     void updateUser_ShouldUpdateUserSuccessfully() {
         // A senha e do proprio autor, unico caso que o PATCH aceita desde o P0.4c, e
         // passa pela politica do S3 -- 10 caracteres, letra e digito, sem nome nem e-mail.
-        UpdateUserRequest request = new UpdateUserRequest("Updated Name", "nova@test.com", "Chuva2026Forte");
+        UpdateUserRequest request = new UpdateUserRequest("Updated Name", "nova@test.com", "Chuva2026Forte", null, null, null, null);
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
                 .thenReturn(autorComId(1L, Perfil.COLABORADOR, null));
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
@@ -819,7 +818,7 @@ class UserServiceTest {
 
     @Test
     void updateUser_ShouldThrowPerfilNaoPermitido_WhenColaboradorUpdatesAnotherUser() {
-        UpdateUserRequest request = new UpdateUserRequest("Invadido", null, null);
+        UpdateUserRequest request = new UpdateUserRequest("Invadido", null, null, null, null, null, null);
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
                 .thenReturn(autor(Perfil.COLABORADOR, joinville));
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
@@ -832,7 +831,7 @@ class UserServiceTest {
     @Test
     void updateUser_ShouldAllowGestor_OnOwnRegionalColaborador() {
         User alvo = alvoPendente();
-        UpdateUserRequest request = new UpdateUserRequest("Nome Corrigido", null, null);
+        UpdateUserRequest request = new UpdateUserRequest("Nome Corrigido", null, null, null, null, null, null);
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
                 .thenReturn(autor(Perfil.GESTOR_FROTA, joinville));
         when(userRepository.findById(5L)).thenReturn(Optional.of(alvo));
@@ -849,7 +848,7 @@ class UserServiceTest {
         // de criar outro gestor. Sem esta regra, dois gestores da mesma regional poderiam
         // editar um ao outro -- escalacao lateral.
         User alvo = alvoPendente().setPerfil(Perfil.GESTOR_FROTA);
-        UpdateUserRequest request = new UpdateUserRequest("Nome", null, null);
+        UpdateUserRequest request = new UpdateUserRequest("Nome", null, null, null, null, null, null);
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
                 .thenReturn(autor(Perfil.GESTOR_FROTA, joinville));
         when(userRepository.findById(5L)).thenReturn(Optional.of(alvo));
@@ -860,7 +859,7 @@ class UserServiceTest {
     @Test
     void updateUser_ShouldThrowRegionalNaoPermitida_WhenGestorUpdatesAnotherRegional() {
         User alvo = alvoPendente().setRegional(florianopolis());
-        UpdateUserRequest request = new UpdateUserRequest("Nome", null, null);
+        UpdateUserRequest request = new UpdateUserRequest("Nome", null, null, null, null, null, null);
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
                 .thenReturn(autor(Perfil.GESTOR_FROTA, joinville));
         when(userRepository.findById(5L)).thenReturn(Optional.of(alvo));
@@ -868,11 +867,189 @@ class UserServiceTest {
         assertThrows(RegionalNaoPermitidaException.class, () -> userService.updateUser(5L, request));
     }
 
+    private void prepararEdicaoAdministrativa() {
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(autor(Perfil.ADMINISTRADOR, null));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+    }
+
+    @Test
+    void administradorEditaTodosOsCamposDoCadastro() {
+        prepararEdicaoAdministrativa();
+        when(regionalRepository.findById(REGIONAL_JOI)).thenReturn(Optional.of(joinville));
+        when(userRepository.save(user)).thenReturn(user);
+        userService.updateUser(1L, new UpdateUserRequest("Novo nome", "novo@fiesc.org.br", null,
+                REGIONAL_JOI, "(47) 99999-8888", "5678", Perfil.GESTOR_FROTA));
+        assertThat(user.getName()).isEqualTo("Novo nome");
+        assertThat(user.getEmail()).isEqualTo("novo@fiesc.org.br");
+        assertThat(user.getTelefone()).isEqualTo("47999998888");
+        assertThat(user.getMatricula()).isEqualTo("5678");
+        assertThat(user.getPerfil()).isEqualTo(Perfil.GESTOR_FROTA);
+        assertThat(user.getRegional()).isSameAs(joinville);
+    }
+
+    @Test
+    void promocaoParaAdministradorRemoveRegionalEPodeLimparCamposOpcionais() {
+        prepararEdicaoAdministrativa();
+        user.setRegional(joinville).setTelefone("47999998888").setMatricula("1234");
+        when(userRepository.save(user)).thenReturn(user);
+        userService.updateUser(1L, new UpdateUserRequest(null, null, null, null, "", "", Perfil.ADMINISTRADOR));
+        assertThat(user.getRegional()).isNull();
+        assertThat(user.getTelefone()).isNull();
+        assertThat(user.getMatricula()).isNull();
+        assertThat(user.getPerfil()).isEqualTo(Perfil.ADMINISTRADOR);
+    }
+
+    @Test
+    void administradorNaoPodeAlterarOProprioPerfil() {
+        user.setPerfil(Perfil.ADMINISTRADOR);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(user);
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        assertThrows(PerfilNaoPermitidoException.class, () -> userService.updateUser(1L,
+                new UpdateUserRequest(null, null, null, REGIONAL_JOI, null, "1234", Perfil.GESTOR_FROTA)));
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void gestorEColaboradorNaoPodemEditarPerfilTelefoneOuMatriculaNemDaPropriaConta() {
+        for (Perfil perfil : List.of(Perfil.GESTOR_FROTA, Perfil.COLABORADOR)) {
+            user.setPerfil(perfil);
+            when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(user);
+            when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+            for (UpdateUserRequest request : List.of(
+                    new UpdateUserRequest(null, null, null, null, null, null, Perfil.ADMINISTRADOR),
+                    new UpdateUserRequest(null, null, null, null, "47999998888", null, null),
+                    new UpdateUserRequest(null, null, null, null, null, "1234", null))) {
+                assertThrows(PerfilNaoPermitidoException.class, () -> userService.updateUser(1L, request));
+            }
+        }
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void alteracaoDePerfilExigeMatriculaERegionalParaGestorOuColaborador() {
+        prepararEdicaoAdministrativa();
+        user.setPerfil(Perfil.ADMINISTRADOR);
+        for (Perfil perfil : List.of(Perfil.GESTOR_FROTA, Perfil.COLABORADOR)) {
+            assertThrows(InvalidUserDataException.class, () -> userService.updateUser(1L,
+                    new UpdateUserRequest(null, null, null, null, null, "1234", perfil)));
+            user.setRegional(joinville);
+            assertThrows(InvalidUserDataException.class, () -> userService.updateUser(1L,
+                    new UpdateUserRequest(null, null, null, null, null, "", perfil)));
+            user.setRegional(null);
+        }
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void edicaoValidaTelefoneMatriculaEDuplicidade() {
+        prepararEdicaoAdministrativa();
+        user.setRegional(joinville).setMatricula("1234");
+        assertThrows(InvalidUserDataException.class, () -> userService.updateUser(1L,
+                new UpdateUserRequest(null, null, null, null, "123", null, null)));
+        assertThrows(InvalidUserDataException.class, () -> userService.updateUser(1L,
+                new UpdateUserRequest(null, null, null, null, null, "abc", null)));
+        when(userRepository.existsByMatriculaAndIdNot("5678", 1L)).thenReturn(true);
+        assertThrows(MatriculaDuplicadaException.class, () -> userService.updateUser(1L,
+                new UpdateUserRequest(null, null, null, null, null, "5678", null)));
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void reenviarMesmaMatriculaNaoContaComoDuplicidade() {
+        prepararEdicaoAdministrativa();
+        user.setRegional(joinville).setMatricula("1234");
+        when(userRepository.save(user)).thenReturn(user);
+        userService.updateUser(1L, new UpdateUserRequest(null, null, null, null, null, "1234", null));
+        verify(userRepository, never()).existsByMatriculaAndIdNot(any(), any());
+    }
+
+    @Test
+    void administradorPodeTransferirColaboradorEGestor() {
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(autor(Perfil.ADMINISTRADOR, null));
+        Regional destino = florianopolis();
+        when(regionalRepository.findById(REGIONAL_FLN)).thenReturn(Optional.of(destino));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(userRepository.save(user)).thenReturn(user);
+
+        for (Perfil perfil : List.of(Perfil.COLABORADOR, Perfil.GESTOR_FROTA)) {
+            user.setPerfil(perfil).setRegional(joinville);
+            userService.updateUser(1L, new UpdateUserRequest(null, null, null, REGIONAL_FLN, null, null, null));
+            assertThat(user.getRegional()).isSameAs(destino);
+        }
+    }
+
+    @Test
+    void gestorNaoPodeTrocarRegionalDoColaboradorNemAPropria() {
+        User gestor = autorComId(7L, Perfil.GESTOR_FROTA, joinville);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(gestor);
+        for (User alvo : List.of(user.setRegional(joinville), gestor)) {
+            when(userRepository.findById(alvo.getId())).thenReturn(Optional.of(alvo));
+            assertThrows(PerfilNaoPermitidoException.class, () -> userService.updateUser(
+                    alvo.getId(), new UpdateUserRequest(null, null, null, REGIONAL_FLN, null, null, null)));
+            assertThat(alvo.getRegional()).isSameAs(joinville);
+        }
+        verify(userRepository, never()).save(any());
+        verifyNoInteractions(regionalRepository);
+    }
+
+    @Test
+    void colaboradorNaoPodeTrocarAPropriaRegional() {
+        user.setRegional(joinville);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(user);
+        when(userRepository.findById(user.getId())).thenReturn(Optional.of(user));
+        assertThrows(PerfilNaoPermitidoException.class, () -> userService.updateUser(
+                user.getId(), new UpdateUserRequest(null, null, null, REGIONAL_FLN, null, null, null)));
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void administradorNaoPodeReceberRegionalNaEdicao() {
+        user.setPerfil(Perfil.ADMINISTRADOR);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(autor(Perfil.ADMINISTRADOR, null));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        assertThrows(InvalidUserDataException.class, () -> userService.updateUser(
+                1L, new UpdateUserRequest(null, null, null, REGIONAL_JOI, null, null, null)));
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void administradorNaoPodeReceberRegionalNoCadastro() {
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(autor(Perfil.ADMINISTRADOR, null));
+        assertThrows(InvalidUserDataException.class, () -> userService.createUser(
+                pedido(Perfil.ADMINISTRADOR, REGIONAL_JOI, null), IP));
+        verify(userRepository, never()).save(any());
+        verifyNoInteractions(regionalRepository);
+    }
+
+    @Test
+    void transferenciaRecusaRegionalInexistenteOuInativa() {
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(autor(Perfil.ADMINISTRADOR, null));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        UpdateUserRequest request = new UpdateUserRequest(null, null, null, REGIONAL_FLN, null, null, null);
+        when(regionalRepository.findById(REGIONAL_FLN)).thenReturn(Optional.empty());
+        assertThrows(NotFoundException.class, () -> userService.updateUser(1L, request));
+        when(regionalRepository.findById(REGIONAL_FLN)).thenReturn(Optional.of(florianopolis().setAtivo(false)));
+        assertThrows(InvalidUserDataException.class, () -> userService.updateUser(1L, request));
+        verify(userRepository, never()).save(any());
+    }
+
+    @Test
+    void edicaoSemRegionalPreservaOVinculoAtual() {
+        user.setRegional(joinville);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(autor(Perfil.ADMINISTRADOR, null));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(userRepository.save(user)).thenReturn(user);
+        userService.updateUser(1L, new UpdateUserRequest("Nome", null, null, null, null, null, null));
+        assertThat(user.getRegional()).isSameAs(joinville);
+        verifyNoInteractions(regionalRepository);
+    }
+
     @Test
     void updateUser_ShouldThrowSenhaDeTerceiro_WhenAdministradorSetsAnotherUsersPassword() {
         // Era por aqui que qualquer autenticado assumia a conta de um administrador. Nem
         // o administrador escolhe a senha de outra pessoa: quem esqueceu usa a recuperacao.
-        UpdateUserRequest request = new UpdateUserRequest(null, null, "Chuva2026Forte");
+        UpdateUserRequest request = new UpdateUserRequest(null, null, "Chuva2026Forte", null, null, null, null);
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
                 .thenReturn(autor(Perfil.ADMINISTRADOR, null));
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
@@ -887,7 +1064,7 @@ class UserServiceTest {
     void updateUser_ShouldThrowSenhaFraca_WhenTheOwnPasswordViolatesThePolicy() {
         // O PATCH era um segundo caminho para senha fraca, depois de o S3 ter fechado o
         // da ativacao.
-        UpdateUserRequest request = new UpdateUserRequest(null, null, "123");
+        UpdateUserRequest request = new UpdateUserRequest(null, null, "123", null, null, null, null);
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
                 .thenReturn(autorComId(1L, Perfil.COLABORADOR, null));
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
@@ -899,7 +1076,7 @@ class UserServiceTest {
 
     @Test
     void updateUser_ShouldNotTreatTheOwnCurrentEmailAsDuplicate() {
-        UpdateUserRequest request = new UpdateUserRequest("Nome Novo", "one@fiesc.org.br", null);
+        UpdateUserRequest request = new UpdateUserRequest("Nome Novo", "one@fiesc.org.br", null, null, null, null, null);
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
                 .thenReturn(autorComId(1L, Perfil.COLABORADOR, null));
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
@@ -909,18 +1086,6 @@ class UserServiceTest {
         assertThat(userService.updateUser(1L, request)).isNotNull();
 
         verify(userRepository, never()).existsByEmail(anyString());
-    }
-
-    @Test
-    void updateUserRequest_ShouldNotCarryPerfilNorRegional() {
-        // Criterio de aceite do P0.4c: ninguem altera perfil nem regional pelo PATCH, o
-        // proprio inclusive. Nao ha checagem no service porque nao ha campo -- guardar
-        // contra um campo inexistente seria codigo morto sugerindo o contrario. Este
-        // teste guarda a premissa: acrescentar os campos ao DTO quebra aqui e obriga a
-        // decidir a autorizacao junto.
-        assertThat(UpdateUserRequest.class.getRecordComponents())
-                .extracting(RecordComponent::getName)
-                .containsExactly("name", "email", "password");
     }
 
     @Test
