@@ -35,9 +35,9 @@ public class CustomUserDetailsService implements UserDetailsService {
      * com a mesma mensagem: distinguir confirmaria a existência da conta a quem só tem
      * um e-mail.
      *
-     * <p>O login não muda de comportamento: {@code AuthService.login} já barra inativo
-     * com {@code USER_INACTIVE_MESSAGE} antes de tocar o {@code AuthenticationManager}, e
-     * continua sendo ele quem responde ali.
+     * <p>No login, quem responde é o {@code AuthService.login}: ele recusa o inativo antes
+     * de tocar o {@code AuthenticationManager}, com a mesma recusa genérica de credencial
+     * inválida e o mesmo custo de BCrypt.
      */
     @Override
     public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {

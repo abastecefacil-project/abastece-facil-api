@@ -13,6 +13,7 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
+import static com.github.api_abastecefacil.constants.AuthConstants.INVALID_CREDENTIALS_MESSAGE;
 import static com.github.api_abastecefacil.constants.AuthConstants.LIMITE_SOLICITACOES_EXCEDIDO_MESSAGE;
 import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.ARQUIVO_MUITO_GRANDE_SEM_LIMITE_MESSAGE;
 import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.ARQUIVO_OBRIGATORIO_MESSAGE;
@@ -65,6 +66,21 @@ class GlobalExceptionHandlerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().error()).isEqualTo("UNAUTHORIZED");
+    }
+
+    @Test
+    void handleInvalidLoginException_ShouldCarryTheSingleLoginRejection() {
+        // Toda recusa do login (B1) sai por aqui: 401, UNAUTHORIZED e a mensagem unica.
+        InvalidLoginException ex = new InvalidLoginException(INVALID_CREDENTIALS_MESSAGE);
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleBadCredentialsException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("UNAUTHORIZED");
+        assertThat(response.getBody().message()).isEqualTo(
+                "E-mail ou senha incorretos. Se você recebeu um convite e ainda não definiu "
+                        + "sua senha, use 'Esqueci minha senha'.");
     }
 
     @Test

@@ -67,32 +67,12 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * Mesmo status de InvalidLoginException, mas com "error" proprio: o ErrorResponse
-     * so carrega status, error, message e path, entao o campo error e a unica forma de
-     * o frontend distinguir "ative sua conta" de "senha errada" programaticamente.
-     * Precedente: CoordinatesNotFoundException, que tambem foge do nome do status.
-     */
-    @ExceptionHandler(PasswordNotSetException.class)
-    public ResponseEntity<ErrorResponse> handlePasswordNotSetException(
-            PasswordNotSetException ex, WebRequest request) {
-
-        ErrorResponse error = ErrorResponse.of(
-                HttpStatus.UNAUTHORIZED.value(),
-                "PASSWORD_NOT_SET",
-                ex.getMessage(),
-                request.getDescription(false)
-        );
-
-        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
-    }
-
-    /**
      * 410 Gone, e nao 400: o caso predominante nao e uma requisicao malformada, e um
      * token que existiu e nao vale mais -- consumido, expirado ou substituido por um
      * reenvio. O status comunica isso melhor.
      *
      * <p>O "error" foge do nome do status pelo mesmo motivo de
-     * {@link #handlePasswordNotSetException}: o ErrorResponse so carrega status, error,
+     * {@link #handleCoordinatesNotFoundException}: o ErrorResponse so carrega status, error,
      * message e path, entao esse campo e o unico discriminador programatico que o
      * frontend tem para diferenciar "link expirado, peca outro" de qualquer outro 410.
      *
@@ -426,7 +406,7 @@ public class GlobalExceptionHandler {
      * mapeia falha de servico externo para BAD_GATEWAY.
      *
      * <p>O "error" proprio segue a razao registrada em
-     * {@link #handlePasswordNotSetException}: o ErrorResponse so carrega status, error,
+     * {@link #handleTokenInvalidoException}: o ErrorResponse so carrega status, error,
      * message e path, entao esse campo e o unico discriminador programatico que o
      * frontend tem para diferenciar "o convite nao saiu, tente de novo" de qualquer
      * outro 502.

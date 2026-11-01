@@ -716,16 +716,33 @@ antes de pedir a senha.
 o token da sonda em query string é exceção consciente, porque ela não consome nada e é o
 que o navegador entrega ao abrir o link.
 
-**Erros do login.** Três rejeições distintas, todas com `error` próprio para o
-frontend poder diferenciá-las — o `ErrorResponse` só carrega `status`, `error`,
-`message` e `path`, então o campo `error` é o único discriminador programático:
+**Erros do login: uma recusa só, desde o B1.** E-mail não cadastrado, senha errada,
+usuário inativo e senha ainda não definida (ou `password` nulo) respondem **401
+`UNAUTHORIZED`** com a mesma mensagem, `AuthConstants.INVALID_CREDENTIALS_MESSAGE`:
 
-| Situação | HTTP | `error` |
+> E-mail ou senha incorretos. Se você recebeu um convite e ainda não definiu sua senha, use 'Esqueci minha senha'.
+
+A orientação ao convidado mora no texto único, e não num caso à parte, de propósito: ela
+aparece para qualquer recusa e não revela nada. "Esqueci minha senha" entrega o link de
+**ativação** a quem nunca definiu a senha (§6, item 35).
+
+| Situação | Antes do B1 | Desde o B1 |
 |---|---|---|
-| email não cadastrado | 404 | `NOT_FOUND` |
-| usuário inativo | 401 | `UNAUTHORIZED` |
-| senha ainda não definida | 401 | `PASSWORD_NOT_SET` |
-| credencial inválida | 401 | `UNAUTHORIZED` |
+| e-mail não cadastrado | 404 `NOT_FOUND` "Usuário não encontrado…" | 401 `UNAUTHORIZED`, mensagem única |
+| usuário inativo | 401 `UNAUTHORIZED` "Usuário inativo…" | idem |
+| senha ainda não definida | 401 `PASSWORD_NOT_SET` "…ative sua conta" | idem |
+| senha errada | 401 `UNAUTHORIZED` "Email ou senha incorretos" | idem |
+
+Antes, o login era um oráculo de existência de conta, e por dois canais: o status ou
+mensagem, e o **tempo**. Só a senha errada pagava BCrypt (medido: inexistente 15–50 ms,
+senha errada 170–200 ms). Hoje os três casos recusados antes do `AuthenticationManager`
+rodam `passwordEncoder.matches` contra um hash fictício (`AuthService.hashFicticio`), e
+cada caminho paga um BCrypt. Medido na API local, 10 chamadas cada, em mediana:
+inexistente 234 ms, senha errada 249 ms, inativo com a senha certa 240 ms, convidado
+224 ms, sucesso 268–324 ms. **Não "corrija" voltando a distinguir os casos**:
+`PasswordNotSetException`, o handler `PASSWORD_NOT_SET` e as mensagens de inativo e de
+inexistente foram removidos pelo B1 justamente para não serem reaproveitados. O frontend
+não ramificava por esses códigos (`Login.vue` exibe `message`), então nada mudou lá.
 
 `InvalidUserDataException` (matrícula ou telefone fora do formato) responde 400 com
 `error = "BAD_REQUEST"`, mas ainda não é alcançável por endpoint nenhum. Ver §6.
@@ -1266,8 +1283,9 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
      é deliberada. O `getCoordinates(String)` foi removido junto com o
      `GasStationConstants.ADDRESS_FORMAT`.
 3. **CNPJ é único** e verificado tanto na criação quanto na atualização.
-4. **Login rejeita usuário inativo** com mensagem específica, distinta de
-   credencial inválida.
+4. **Login rejeita usuário inativo com a mesma resposta de credencial inválida**, desde o
+   B1. Até então a mensagem era específica ("Usuário inativo, por favor, contate o
+   suporte"), e isso confirmava a existência da conta. Ver "Erros do login" na §5.
 5. Exclusões são **lógicas** (`is_active` / `active` em `false`), não físicas. Há
    exceções dedicadas para "já excluído" (`UserAlreadyDeletedException`,
    `CarAlreadyDeletedException`).
@@ -1300,12 +1318,23 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
      `ApplicationReadyEvent`. **O valor rejeitado nunca entra no log** — se alguém colou
      a senha em texto plano por engano, logá-la transformaria erro de configuração em
      vazamento.
-7. **Login rejeita usuário sem senha definida antes de tocar no `PasswordEncoder`.**
-   `AuthService.validateSenhaDefinida` roda entre a checagem de inativo e o
-   `authenticationManager.authenticate`, e lança `PasswordNotSetException` (401,
-   `error = "PASSWORD_NOT_SET"`). A condição é dupla — `senhaDefinida == false`
-   **ou** `password == null` — para que uma linha inconsistente, criada por `UPDATE`
-   manual, também seja barrada em vez de falhar mais adiante.
+7. **Login rejeita usuário sem senha definida antes de tocar no `AuthenticationManager`,
+   mas não sem BCrypt.** `AuthService.podeAutenticar` recusa inexistente, inativo e sem
+   senha. A condição de senha é dupla — `senhaDefinida == false` **ou**
+   `password == null` — para que uma linha inconsistente, criada por `UPDATE` manual,
+   também seja barrada em vez de falhar mais adiante. Desde o B1 a recusa é a genérica
+   (401 `UNAUTHORIZED`) e paga um `passwordEncoder.matches` contra o hash fictício.
+   Deixar o caso seguir até o `AuthenticationManager` não resolveria o tempo: o
+   `toUserDetails` troca a senha nula por `""`, e o `BCryptPasswordEncoder` devolve
+   `false` contra hash vazio **sem calcular nada**.
+
+   O hash fictício é gerado **sob demanda**, pelo `PasswordEncoder` injetado (mesmo custo
+   dos hashes reais), uma vez por instância, como o
+   `DaoAuthenticationProvider.prepareTimingAttackProtection`. Não é gerado no construtor
+   porque o `AuthServiceTest` exige `verifyNoInteractions(passwordEncoder)` nos fluxos de
+   ativação e recuperação. Consequência: a primeira recusa depois da subida paga um
+   `encode` a mais. O caminho de quem pode autenticar não toca no hash fictício: o BCrypt
+   dele é o do `DaoAuthenticationProvider`, e pagar os dois faria o tempo divergir de novo.
 8. **Definir senha liga `senha_definida`.** `UserService.updatePasswordIfProvided`
    seta a flag junto com o hash, mantendo o invariante
    `password != null ⟺ senhaDefinida`. Sem isso um usuário criado sem senha
@@ -1911,7 +1940,7 @@ Problemas reais já encontrados. Consultar antes de investigar comportamento est
     origem provável de divergência futura.
 
 13. **Não existe `@ExceptionHandler` genérico, e senha nula quebra o `UserDetails`.**
-    O `GlobalExceptionHandler` registra doze exceções nominalmente e **nenhum
+    O `GlobalExceptionHandler` registra cada exceção nominalmente (32 handlers desde o B1) e **nenhum
     fallback** (`Exception.class` / `RuntimeException.class`), então qualquer exceção
     não registrada escapa para o `BasicErrorController` e vira um 500 cru, sem
     `ErrorResponse`. Isso importa desde que `password` virou nullable: o construtor
@@ -1940,8 +1969,9 @@ Problemas reais já encontrados. Consultar antes de investigar comportamento est
       quem foi desativado, que é pior que o bug original.
 
     Resultado: requisição autenticada de usuário desativado responde **403**, igual a
-    qualquer requisição sem token (ver §5 sobre 403 x 401). O login não mudou — continua
-    respondendo 401 com `USER_INACTIVE_MESSAGE`, porque `AuthService.login` barra antes.
+    qualquer requisição sem token (ver §5 sobre 403 x 401). No login, quem responde é o
+    `AuthService.login`, que barra antes com a recusa genérica do B1 (401 `UNAUTHORIZED`,
+    a mesma de senha errada).
 
     Como o JWT não é revogável, **desativar o usuário é hoje o único corte imediato de
     sessão que existe**.
@@ -2171,7 +2201,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **631 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **679 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -2185,7 +2215,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   handler global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 631, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 679, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa
