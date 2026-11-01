@@ -6,9 +6,11 @@ import com.github.api_abastecefacil.dto.gasStation.UpdateGasStationRequest;
 import com.github.api_abastecefacil.exception.CoordinatesNotFoundException;
 import com.github.api_abastecefacil.exception.GasStationAlreadyExistsException;
 import com.github.api_abastecefacil.exception.NotFoundException;
+import com.github.api_abastecefacil.exception.PostoComVinculoNeoException;
 import com.github.api_abastecefacil.mapper.GasStationMapper;
 import com.github.api_abastecefacil.model.GasStation;
 import com.github.api_abastecefacil.repository.GasStationRepository;
+import com.github.api_abastecefacil.repository.NotificacaoNeoRepository;
 import com.github.api_abastecefacil.service.OpenStreetMapService.Coordinates;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -30,17 +32,20 @@ public class GasStationService {
     private final OpenStreetMapService openStreetMapService;
     private final GasStationMapper gasStationMapper;
     private final AutorizacaoOperacional autorizacaoOperacional;
+    private final NotificacaoNeoRepository notificacaoNeoRepository;
 
     public GasStationService(
             GasStationRepository gasStationRepository,
             OpenStreetMapService openStreetMapService,
             GasStationMapper gasStationMapper,
-            AutorizacaoOperacional autorizacaoOperacional
+            AutorizacaoOperacional autorizacaoOperacional,
+            NotificacaoNeoRepository notificacaoNeoRepository
     ) {
         this.gasStationRepository = gasStationRepository;
         this.openStreetMapService = openStreetMapService;
         this.gasStationMapper = gasStationMapper;
         this.autorizacaoOperacional = autorizacaoOperacional;
+        this.notificacaoNeoRepository = notificacaoNeoRepository;
     }
 
     /**
@@ -84,10 +89,17 @@ public class GasStationService {
         return gasStationMapper.toResponse(updatedGasStation);
     }
 
+    /**
+     * Exclusão física. Posto com avaliação ou notificação do Cartão Neo é recusado com 409: as
+     * FKs de {@code avaliacoes_neo} e {@code notificacoes_neo} não têm {@code ON DELETE}, e
+     * esses dados são preservados — o caminho para tirar o posto de circulação é inativá-lo.
+     * A {@code DataIntegrityViolationException} do handler global é só rede de segurança.
+     */
     @Transactional
     public void deleteGasStation(Long id) {
         autorizacaoOperacional.autorizarEscrita();
         GasStation gasStation = findGasStationByIdOrThrow(id);
+        validateSemVinculoNeo(id);
         gasStationRepository.delete(gasStation);
     }
 
@@ -111,6 +123,12 @@ public class GasStationService {
     private GasStation findGasStationByIdOrThrow(Long id) {
         return gasStationRepository.findById(id)
                 .orElseThrow(() -> new NotFoundException(GAS_STATION_NOT_FOUND_MESSAGE));
+    }
+
+    private void validateSemVinculoNeo(Long id) {
+        if (gasStationRepository.existeAvaliacaoNeo(id) || notificacaoNeoRepository.existsByPostoId(id)) {
+            throw new PostoComVinculoNeoException(POSTO_COM_VINCULO_NEO_MESSAGE);
+        }
     }
 
     private void validateCnpjDoesNotExist(String cnpj) {

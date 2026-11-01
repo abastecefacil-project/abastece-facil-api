@@ -8,8 +8,6 @@ import com.github.api_abastecefacil.dto.auth.RecuperacaoResponse;
 import com.github.api_abastecefacil.dto.auth.TokenValidacaoResponse;
 import com.github.api_abastecefacil.exception.InvalidLoginException;
 import com.github.api_abastecefacil.exception.LimiteSolicitacoesExcedidoException;
-import com.github.api_abastecefacil.exception.NotFoundException;
-import com.github.api_abastecefacil.exception.PasswordNotSetException;
 import com.github.api_abastecefacil.exception.TokenInvalidoException;
 import com.github.api_abastecefacil.model.FinalidadeToken;
 import com.github.api_abastecefacil.model.Perfil;
@@ -27,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 
 import static com.github.api_abastecefacil.constants.AuthConstants.*;
 import static com.github.api_abastecefacil.constants.RateLimitConstants.*;
@@ -46,6 +45,9 @@ public class AuthService {
     private final RecuperacaoSenhaService recuperacaoSenhaService;
     private final long jwtExpiration;
     private final long jwtExpirationColaborador;
+
+    /** Ver {@link #hashFicticio()}. */
+    private volatile String hashFicticio;
 
     public AuthService(
             UserRepository userRepository,
@@ -71,10 +73,27 @@ public class AuthService {
         this.jwtExpirationColaborador = jwtExpirationColaborador;
     }
 
+    /**
+     * Autentica e devolve o JWT. <b>Toda recusa é a mesma</b>: e-mail inexistente, senha
+     * errada, usuário inativo e usuário sem senha definida saem todos como
+     * {@link InvalidLoginException} com {@code INVALID_CREDENTIALS_MESSAGE} — 401
+     * {@code UNAUTHORIZED}. Respostas distintas diriam a quem tenta se o e-mail tem conta.
+     *
+     * <p><b>O tempo também é o mesmo, e é por isso que o hash fictício existe.</b> Os três
+     * primeiros casos são recusados aqui, antes do {@code AuthenticationManager}, e sem
+     * nada a mais sairiam sem BCrypt — uns 150 ms mais rápidos que a senha errada, medido.
+     * Rodar o {@code matches} contra {@link #hashFicticio} faz cada caminho custar um
+     * BCrypt. O {@code DaoAuthenticationProvider} tem a mesma proteção, mas só quando a
+     * chamada chega até ele.
+     *
+     * <p>Recusar sem senha antes do {@code AuthenticationManager} continua proposital: o
+     * {@code toUserDetails} trocaria a senha nula por {@code ""}, e o BCrypt devolve
+     * {@code false} contra hash vazio sem calcular nada — o mesmo vazamento de tempo.
+     */
     public AuthResponse login(LoginRequest request) {
-        User user = findUserByEmailOrThrow(request.email());
-        validateUserIsActive(user);
-        validateSenhaDefinida(user);
+        User user = userRepository.findByEmail(request.email())
+                .filter(this::podeAutenticar)
+                .orElseThrow(() -> recusarComCustoDeHash(request.password()));
         authenticateUser(request.email(), request.password());
         String token = generateTokenFor(user);
         return createAuthResponse(token, LOGIN_SUCCESS_MESSAGE, user);
@@ -249,27 +268,39 @@ public class AuthService {
         rateLimitService.registrar(chaveIp);
     }
 
-    private User findUserByEmailOrThrow(String email) {
-        return userRepository.findByEmail(email)
-                .orElseThrow(() -> new NotFoundException(USER_NOT_FOUND_MESSAGE));
-    }
-
-    private void validateUserIsActive(User user) {
-        if (Boolean.FALSE.equals(user.getActive())) {
-            throw new InvalidLoginException(USER_INACTIVE_MESSAGE);
-        }
+    /**
+     * Ativo e com senha. As duas condicoes de senha sao propositais: uma linha
+     * inconsistente (senha_definida = true com password nulo, possivel por UPDATE manual)
+     * tambem e recusada aqui, em vez de virar erro mais adiante.
+     */
+    private boolean podeAutenticar(User user) {
+        return !Boolean.FALSE.equals(user.getActive())
+                && !Boolean.FALSE.equals(user.getSenhaDefinida())
+                && user.getPassword() != null;
     }
 
     /**
-     * Roda ANTES de authenticateUser, ou seja, antes de o AuthenticationManager e
-     * portanto o PasswordEncoder serem tocados. As duas condicoes sao propositais: uma
-     * linha inconsistente (senha_definida = true com password nulo, possivel por UPDATE
-     * manual) tambem e barrada aqui, em vez de virar erro mais adiante.
+     * Paga o BCrypt que a senha errada pagaria e devolve a recusa unica do login. O
+     * resultado do matches e descartado: o que importa e o custo, nao a resposta.
      */
-    private void validateSenhaDefinida(User user) {
-        if (Boolean.FALSE.equals(user.getSenhaDefinida()) || user.getPassword() == null) {
-            throw new PasswordNotSetException(PASSWORD_NOT_SET_MESSAGE);
+    private InvalidLoginException recusarComCustoDeHash(String senhaRecebida) {
+        passwordEncoder.matches(senhaRecebida, hashFicticio());
+        return new InvalidLoginException(INVALID_CREDENTIALS_MESSAGE);
+    }
+
+    /**
+     * Hash BCrypt de um valor aleatorio, gerado pelo proprio PasswordEncoder para ter o
+     * mesmo custo dos hashes reais. Sob demanda, e nao no construtor, como no
+     * DaoAuthenticationProvider: so as recusas precisam dele. A corrida na primeira
+     * chamada e inofensiva -- no pior caso dois hashes sao gerados e um vence.
+     */
+    private String hashFicticio() {
+        String hash = hashFicticio;
+        if (hash == null) {
+            hash = passwordEncoder.encode(UUID.randomUUID().toString());
+            hashFicticio = hash;
         }
+        return hash;
     }
 
     private void authenticateUser(String email, String password) {

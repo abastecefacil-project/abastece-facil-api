@@ -29,8 +29,8 @@ class SecurityConfigTest {
 
     @Test
     void exigeLoginParaPostosEOcorrencias() throws Exception {
-        mvc.perform(get("/api/public/gas-stations/filter")).andExpect(status().isForbidden());
-        mvc.perform(post("/api/public/incident")).andExpect(status().isForbidden());
+        mvc.perform(get("/api/public/gas-stations/filter")).andExpect(status().isUnauthorized());
+        mvc.perform(post("/api/public/incident")).andExpect(status().isUnauthorized());
         mvc.perform(get("/api/public/gas-stations/filter").with(user("colaborador")))
                 .andExpect(status().isOk());
         mvc.perform(post("/api/public/incident").with(user("colaborador")))

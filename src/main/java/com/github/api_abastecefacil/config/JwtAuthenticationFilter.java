@@ -23,6 +23,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
     private final UserDetailsService userDetailsService;
+    private final NaoAutenticadoEntryPoint naoAutenticado = new NaoAutenticadoEntryPoint();
 
     public JwtAuthenticationFilter(JwtService jwtService, UserDetailsService userDetailsService) {
         this.jwtService = jwtService;
@@ -46,7 +47,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             userEmail = jwtService.extractUsername(jwt);
         } catch (JwtException | IllegalArgumentException e) {
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            // Vencido, malformado ou com assinatura invalida: mesmo 401 e mesmo corpo da
+            // requisicao sem token, que sai do NaoAutenticadoEntryPoint.
+            naoAutenticado.escrever(request, response);
             return;
         }
         if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
@@ -60,8 +63,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 // desativado -- pior que o bug original, que ao menos respondia.
                 //
                 // Seguir sem autenticar deixa a requisicao anonima, e o Spring Security
-                // responde como responde a qualquer requisicao sem token: 403. Nao e 401
-                // porque a aplicacao nunca usou 401 para isso. Ver §5 do CLAUDE.md.
+                // responde como responde a qualquer requisicao sem token: 401
+                // NAO_AUTENTICADO, pelo NaoAutenticadoEntryPoint. Ver §5 do CLAUDE.md.
                 filterChain.doFilter(request, response);
                 return;
             }

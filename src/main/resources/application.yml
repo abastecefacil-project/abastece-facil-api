@@ -64,6 +64,13 @@ spring:
 
 server:
   port: 8081
+  # Corpo das respostas que passam pelo /error (4xx do Spring MVC, exceção lançada num
+  # filtro). "never" já é o default do Spring Boot, mas o devtools troca os dois para
+  # "always" no spring-boot:run, e o stack trace sairia na resposta. Explícito para o
+  # desenvolvimento local se comportar como produção.
+  error:
+    include-stacktrace: never
+    include-message: never
 
 jwt:
   # Segredo de desenvolvimento, versionado desde o início do projeto. Em produção,

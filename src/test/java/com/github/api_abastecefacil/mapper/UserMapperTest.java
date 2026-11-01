@@ -130,7 +130,7 @@ class UserMapperTest {
     @Test
     void toEntityFromCreateUserRequest_ShouldCreateActiveUser() {
         // Ativo, apenas sem senha. Quem barra o login nesse intervalo e o
-        // AuthService.validateSenhaDefinida, com 401 PASSWORD_NOT_SET.
+        // AuthService.login, com a recusa generica de credencial (401 UNAUTHORIZED).
         User entity = userMapper.toEntity(pedido(Perfil.COLABORADOR), regional);
 
         assertThat(entity.getActive()).isTrue();

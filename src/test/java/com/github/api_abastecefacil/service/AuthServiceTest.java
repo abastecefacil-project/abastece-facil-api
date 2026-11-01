@@ -8,8 +8,6 @@ import com.github.api_abastecefacil.dto.auth.RecuperacaoRequest;
 import com.github.api_abastecefacil.dto.auth.RecuperacaoResponse;
 import com.github.api_abastecefacil.exception.InvalidLoginException;
 import com.github.api_abastecefacil.exception.LimiteSolicitacoesExcedidoException;
-import com.github.api_abastecefacil.exception.NotFoundException;
-import com.github.api_abastecefacil.exception.PasswordNotSetException;
 import com.github.api_abastecefacil.exception.SenhaFracaException;
 import com.github.api_abastecefacil.exception.TokenInvalidoException;
 import com.github.api_abastecefacil.model.FinalidadeToken;
@@ -148,54 +146,175 @@ class AuthServiceTest {
         assertThat(claimsCaptor.getValue()).containsEntry("perfil", "ADMINISTRADOR");
     }
 
-    @Test
-    void login_ShouldThrowNotFoundException_WhenUserDoesNotExist() {
-        LoginRequest request = new LoginRequest("unknown@test.com", "password123");
-        when(userRepository.findByEmail("unknown@test.com")).thenReturn(Optional.empty());
+    // ------------------------------------------------- login: recusa unica (B1)
+    //
+    // Inexistente, senha errada, inativo e sem senha precisam ser indistinguiveis pela
+    // resposta e pelo tempo. Os testes de tempo provam a causa, nao o cronometro: os
+    // tres casos recusados antes do AuthenticationManager pagam um BCrypt (matches contra
+    // o hash ficticio), como a senha errada paga dentro do DaoAuthenticationProvider.
 
-        assertThrows(NotFoundException.class, () -> authService.login(request));
+    private static final String SENHA_TENTADA = "qualquerSenha123";
+    private static final String MENSAGEM_RECUSA =
+            "E-mail ou senha incorretos. Se você recebeu um convite e ainda não definiu "
+                    + "sua senha, use 'Esqueci minha senha'.";
+
+    private InvalidLoginException recusaDoLogin(String email) {
+        return assertThrows(InvalidLoginException.class,
+                () -> authService.login(new LoginRequest(email, SENHA_TENTADA)));
     }
 
-    @Test
-    void login_ShouldThrowInvalidLoginException_WhenUserIsInactive() {
-        user.setActive(false);
-        LoginRequest request = new LoginRequest("user@test.com", "password123");
+    private InvalidLoginException recusaDeUsuarioExistente() {
         when(userRepository.findByEmail("user@test.com")).thenReturn(Optional.of(user));
-
-        assertThrows(InvalidLoginException.class, () -> authService.login(request));
+        return recusaDoLogin("user@test.com");
     }
 
-    @Test
-    void login_ShouldThrowPasswordNotSetException_WhenSenhaNaoDefinida() {
-        user.setSenhaDefinida(false);
-        LoginRequest request = new LoginRequest("user@test.com", "qualquerSenha123");
-        when(userRepository.findByEmail("user@test.com")).thenReturn(Optional.of(user));
-
-        assertThrows(PasswordNotSetException.class, () -> authService.login(request));
-
-        // A restricao central do S1: rejeitar antes de qualquer chamada ao PasswordEncoder.
+    private void verificarQuePagouOHashSemAutenticar() {
+        verify(passwordEncoder).matches(eq(SENHA_TENTADA), any());
         verify(authenticationManager, never()).authenticate(any());
         verify(jwtService, never()).generateToken(anyMap(), any(UserDetails.class), anyLong());
     }
 
     @Test
-    void login_ShouldThrowPasswordNotSetException_WhenPasswordIsNull() {
-        user.setPassword(null).setSenhaDefinida(true);
-        LoginRequest request = new LoginRequest("user@test.com", "qualquerSenha123");
-        when(userRepository.findByEmail("user@test.com")).thenReturn(Optional.of(user));
+    void login_ShouldRejectWithTheGenericMessage_WhenUserDoesNotExist() {
+        when(userRepository.findByEmail("unknown@test.com")).thenReturn(Optional.empty());
 
-        assertThrows(PasswordNotSetException.class, () -> authService.login(request));
+        InvalidLoginException ex = recusaDoLogin("unknown@test.com");
+
+        // Antes do B1: 404 NOT_FOUND "Usuario nao encontrado" -- confirmava quem nao tem conta.
+        assertThat(ex.getMessage()).isEqualTo(MENSAGEM_RECUSA);
+    }
+
+    @Test
+    void login_ShouldRejectWithTheGenericMessage_WhenUserIsInactive() {
+        user.setActive(false);
+
+        assertThat(recusaDeUsuarioExistente().getMessage()).isEqualTo(MENSAGEM_RECUSA);
+    }
+
+    @Test
+    void login_ShouldRejectWithTheGenericMessage_WhenSenhaNaoDefinida() {
+        user.setSenhaDefinida(false);
+
+        assertThat(recusaDeUsuarioExistente().getMessage()).isEqualTo(MENSAGEM_RECUSA);
+
+        // Continua valendo a restricao do S1: o AuthenticationManager nao e tocado.
+        verify(authenticationManager, never()).authenticate(any());
+        verify(jwtService, never()).generateToken(anyMap(), any(UserDetails.class), anyLong());
+    }
+
+    @Test
+    void login_ShouldRejectWithTheGenericMessage_WhenPasswordIsNull() {
+        user.setPassword(null).setSenhaDefinida(true);
+
+        assertThat(recusaDeUsuarioExistente().getMessage()).isEqualTo(MENSAGEM_RECUSA);
 
         verify(authenticationManager, never()).authenticate(any());
     }
 
     @Test
-    void login_ShouldThrowInvalidLoginException_WhenCredentialsAreInvalid() {
-        LoginRequest request = new LoginRequest("user@test.com", "wrongpassword");
-        when(userRepository.findByEmail("user@test.com")).thenReturn(Optional.of(user));
+    void login_ShouldRejectWithTheGenericMessage_WhenCredentialsAreInvalid() {
         when(authenticationManager.authenticate(any())).thenThrow(new BadCredentialsException("Bad credentials"));
 
-        assertThrows(InvalidLoginException.class, () -> authService.login(request));
+        assertThat(recusaDeUsuarioExistente().getMessage()).isEqualTo(MENSAGEM_RECUSA);
+    }
+
+    @Test
+    void login_ShouldAnswerIdentically_ForEveryRejection() {
+        when(userRepository.findByEmail("unknown@test.com")).thenReturn(Optional.empty());
+        InvalidLoginException inexistente = recusaDoLogin("unknown@test.com");
+
+        when(userRepository.findByEmail("inativo@test.com"))
+                .thenReturn(Optional.of(new User().setEmail("inativo@test.com").setActive(false)
+                        .setPassword("hash").setSenhaDefinida(true).setPerfil(Perfil.COLABORADOR)));
+        InvalidLoginException inativo = recusaDoLogin("inativo@test.com");
+
+        when(userRepository.findByEmail("convidado@test.com"))
+                .thenReturn(Optional.of(new User().setEmail("convidado@test.com").setActive(true)
+                        .setPassword(null).setSenhaDefinida(false).setPerfil(Perfil.COLABORADOR)));
+        InvalidLoginException convidado = recusaDoLogin("convidado@test.com");
+
+        when(authenticationManager.authenticate(any())).thenThrow(new BadCredentialsException("Bad credentials"));
+        InvalidLoginException senhaErrada = recusaDeUsuarioExistente();
+
+        // Mesma classe -> mesmo handler -> mesmo status e mesmo "error" (401 UNAUTHORIZED).
+        for (InvalidLoginException ex : List.of(inativo, convidado, senhaErrada)) {
+            assertThat(ex).hasSameClassAs(inexistente);
+            assertThat(ex.getMessage()).isEqualTo(inexistente.getMessage());
+        }
+    }
+
+    @Test
+    void login_ShouldPayTheHashCost_WhenUserDoesNotExist() {
+        when(userRepository.findByEmail("unknown@test.com")).thenReturn(Optional.empty());
+
+        recusaDoLogin("unknown@test.com");
+
+        verificarQuePagouOHashSemAutenticar();
+    }
+
+    @Test
+    void login_ShouldPayTheHashCost_WhenUserIsInactive() {
+        user.setActive(false);
+
+        recusaDeUsuarioExistente();
+
+        verificarQuePagouOHashSemAutenticar();
+    }
+
+    @Test
+    void login_ShouldPayTheHashCost_WhenSenhaNaoDefinida() {
+        user.setPassword(null).setSenhaDefinida(false);
+
+        recusaDeUsuarioExistente();
+
+        verificarQuePagouOHashSemAutenticar();
+    }
+
+    @Test
+    void login_ShouldCompareAgainstTheDummyHash_GeneratedByTheConfiguredEncoder() {
+        // O hash ficticio sai do proprio PasswordEncoder, para ter o custo dos hashes reais.
+        when(passwordEncoder.encode(anyString())).thenReturn("hash-ficticio");
+        when(userRepository.findByEmail("unknown@test.com")).thenReturn(Optional.empty());
+
+        recusaDoLogin("unknown@test.com");
+
+        verify(passwordEncoder).matches(SENHA_TENTADA, "hash-ficticio");
+    }
+
+    @Test
+    void login_ShouldGenerateTheDummyHashOnlyOnce() {
+        when(passwordEncoder.encode(anyString())).thenReturn("hash-ficticio");
+        when(userRepository.findByEmail("unknown@test.com")).thenReturn(Optional.empty());
+
+        recusaDoLogin("unknown@test.com");
+        recusaDoLogin("unknown@test.com");
+
+        // Gerar a cada recusa pagaria dois BCrypt, e o inexistente ficaria mais lento.
+        verify(passwordEncoder, times(1)).encode(anyString());
+        verify(passwordEncoder, times(2)).matches(SENHA_TENTADA, "hash-ficticio");
+    }
+
+    @Test
+    void login_ShouldLeaveTheHashToTheAuthenticationManager_WhenTheUserCanAuthenticate() {
+        // Senha errada: o BCrypt e o do DaoAuthenticationProvider. Pagar o ficticio tambem
+        // daria dois hashes a este caminho, e o tempo voltaria a divergir.
+        when(authenticationManager.authenticate(any())).thenThrow(new BadCredentialsException("Bad credentials"));
+
+        recusaDeUsuarioExistente();
+
+        verify(authenticationManager).authenticate(any(UsernamePasswordAuthenticationToken.class));
+        verifyNoInteractions(passwordEncoder);
+    }
+
+    @Test
+    void login_ShouldNotTouchTheDummyHash_OnSuccess() {
+        when(userRepository.findByEmail("user@test.com")).thenReturn(Optional.of(user));
+        when(customUserDetailsService.toUserDetails(user)).thenReturn(userDetails);
+        when(jwtService.generateToken(anyMap(), any(UserDetails.class), anyLong())).thenReturn("jwt-token");
+
+        authService.login(new LoginRequest("user@test.com", "password123"));
+
+        verifyNoInteractions(passwordEncoder);
     }
 
     // ------------------------------------------------ expiracao do JWT por perfil

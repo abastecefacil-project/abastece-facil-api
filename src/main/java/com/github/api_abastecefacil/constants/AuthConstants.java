@@ -18,11 +18,21 @@ public final class AuthConstants {
     /** Nome do claim de perfil dentro do JWT. */
     public static final String PERFIL_CLAIM = "perfil";
 
-    public static final String USER_NOT_FOUND_MESSAGE = "Usuário não encontrado, por favor, verifique se o email está correto";
     public static final String USER_NOT_FOUND_BY_EMAIL_MESSAGE = "Usuário não encontrado com email: ";
-    public static final String USER_INACTIVE_MESSAGE = "Usuário inativo, por favor, contate o suporte";
-    public static final String INVALID_CREDENTIALS_MESSAGE = "Email ou senha incorretos";
-    public static final String PASSWORD_NOT_SET_MESSAGE = "Usuário ainda não definiu uma senha, por favor, ative sua conta";
+
+    /**
+     * Resposta única de toda recusa do login: e-mail inexistente, senha errada, usuário
+     * inativo e usuário que ainda não definiu a senha.
+     *
+     * <p><b>Uma mensagem só é a própria regra de segurança</b>, como a da recuperação logo
+     * abaixo. Mensagens distintas diriam a quem digitou um endereço qualquer se ele tem
+     * conta, e em que estado ela está. A orientação ao convidado vai no mesmo texto,
+     * condicional ("se você recebeu um convite"), justamente para não depender do caso:
+     * "Esqueci minha senha" entrega o link de ativação a quem nunca definiu a senha.
+     */
+    public static final String INVALID_CREDENTIALS_MESSAGE =
+            "E-mail ou senha incorretos. Se você recebeu um convite e ainda não definiu "
+                    + "sua senha, use 'Esqueci minha senha'.";
 
     public static final String LOGIN_SUCCESS_MESSAGE = "Login realizado com sucesso";
     public static final String ATIVACAO_SUCCESS_MESSAGE = "Conta ativada com sucesso";

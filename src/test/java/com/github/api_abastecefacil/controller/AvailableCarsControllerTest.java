@@ -30,7 +30,7 @@ class AvailableCarsControllerTest {
 
     @Test
     void consultaExigeLogin() throws Exception {
-        mvc.perform(get("/api/cars/available")).andExpect(status().isForbidden());
+        mvc.perform(get("/api/cars/available")).andExpect(status().isUnauthorized());
         verifyNoInteractions(service);
     }
 

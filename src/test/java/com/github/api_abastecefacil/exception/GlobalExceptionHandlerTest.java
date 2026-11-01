@@ -6,6 +6,17 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.MethodParameter;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpInputMessage;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.context.request.WebRequest;
@@ -13,10 +24,14 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
+import static com.github.api_abastecefacil.constants.AuthConstants.INVALID_CREDENTIALS_MESSAGE;
 import static com.github.api_abastecefacil.constants.AuthConstants.LIMITE_SOLICITACOES_EXCEDIDO_MESSAGE;
+import static com.github.api_abastecefacil.constants.GasStationConstants.POSTO_COM_VINCULO_NEO_MESSAGE;
 import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.ARQUIVO_MUITO_GRANDE_SEM_LIMITE_MESSAGE;
 import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.ARQUIVO_OBRIGATORIO_MESSAGE;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -30,7 +45,8 @@ class GlobalExceptionHandlerTest {
     @BeforeEach
     void setUp() {
         exceptionHandler = new GlobalExceptionHandler();
-        when(webRequest.getDescription(false)).thenReturn("uri=/test");
+        // lenient: os testes de repasse do handler genérico relançam antes de ler o path.
+        lenient().when(webRequest.getDescription(false)).thenReturn("uri=/test");
     }
 
     @Test
@@ -43,6 +59,37 @@ class GlobalExceptionHandlerTest {
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().message()).isEqualTo("Usuário já existe");
         assertThat(response.getBody().error()).isEqualTo("CONFLICT");
+    }
+
+    @Test
+    void handlePostoComVinculoNeoException_ShouldReturn409WithOwnErrorCode() {
+        PostoComVinculoNeoException ex = new PostoComVinculoNeoException(POSTO_COM_VINCULO_NEO_MESSAGE);
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handlePostoComVinculoNeoException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("POSTO_COM_VINCULO_NEO");
+        assertThat(response.getBody().message()).isEqualTo(
+                "Este posto tem avaliações ou notificações do Cartão Neo e não pode ser excluído. Inative-o pela edição.");
+    }
+
+    @Test
+    void handleDataIntegrityViolationException_ShouldReturn409WithFixedMessage_WithoutDriverDetails() {
+        DataIntegrityViolationException ex = new DataIntegrityViolationException(
+                "could not execute statement",
+                new RuntimeException("ERROR: update or delete on table \"gas_stations\" violates foreign key "
+                        + "constraint \"fk_avaliacoes_neo_posto\" on table \"avaliacoes_neo\""));
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleDataIntegrityViolationException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("VIOLACAO_INTEGRIDADE");
+        assertThat(response.getBody().message())
+                .isEqualTo(GlobalExceptionHandler.VIOLACAO_INTEGRIDADE_MESSAGE)
+                .doesNotContain("gas_stations", "avaliacoes_neo", "fk_", "could not execute");
+        assertThat(response.getBody().path()).isEqualTo("uri=/test");
     }
 
     @Test
@@ -65,6 +112,21 @@ class GlobalExceptionHandlerTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().error()).isEqualTo("UNAUTHORIZED");
+    }
+
+    @Test
+    void handleInvalidLoginException_ShouldCarryTheSingleLoginRejection() {
+        // Toda recusa do login (B1) sai por aqui: 401, UNAUTHORIZED e a mensagem unica.
+        InvalidLoginException ex = new InvalidLoginException(INVALID_CREDENTIALS_MESSAGE);
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleBadCredentialsException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("UNAUTHORIZED");
+        assertThat(response.getBody().message()).isEqualTo(
+                "E-mail ou senha incorretos. Se você recebeu um convite e ainda não definiu "
+                        + "sua senha, use 'Esqueci minha senha'.");
     }
 
     @Test
@@ -435,5 +497,58 @@ class GlobalExceptionHandlerTest {
 
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().message()).contains("1500 bytes");
+    }
+
+    @Test
+    void handleUnexpectedException_ShouldReturn500WithFixedMessage() throws Exception {
+        IllegalStateException ex = new IllegalStateException("detalhe interno: tabela cars, coluna x");
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleUnexpectedException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().status()).isEqualTo(500);
+        assertThat(response.getBody().error()).isEqualTo("ERRO_INTERNO");
+        assertThat(response.getBody().message())
+                .isEqualTo("Ocorreu um erro inesperado. Tente novamente em instantes.")
+                .doesNotContain("detalhe interno");
+        assertThat(response.getBody().path()).isEqualTo("uri=/test");
+    }
+
+    @Test
+    void handleUnexpectedException_ShouldRethrowSpringSecurityExceptions() {
+        AccessDeniedException negado = new AccessDeniedException("negado");
+        BadCredentialsException credenciais = new BadCredentialsException("credenciais");
+
+        assertThatThrownBy(() -> exceptionHandler.handleUnexpectedException(negado, webRequest)).isSameAs(negado);
+        assertThatThrownBy(() -> exceptionHandler.handleUnexpectedException(credenciais, webRequest)).isSameAs(credenciais);
+    }
+
+    /** Rota inexistente, método não suportado, id não numérico e JSON malformado mantêm o 4xx do Spring MVC. */
+    @Test
+    void handleUnexpectedException_ShouldRethrowSpringMvcExceptionsWithOwnStatus() throws Exception {
+        NoResourceFoundException rotaInexistente = new NoResourceFoundException(HttpMethod.GET, "/api/nada");
+        HttpRequestMethodNotSupportedException metodo = new HttpRequestMethodNotSupportedException("DELETE");
+        MethodArgumentTypeMismatchException idNaoNumerico = new MethodArgumentTypeMismatchException(
+                "xyz", Long.class, "userId",
+                new MethodParameter(Object.class.getMethod("equals", Object.class), 0), null);
+        HttpMessageNotReadableException jsonMalformado = new HttpMessageNotReadableException(
+                "JSON malformado", (HttpInputMessage) null);
+
+        assertThatThrownBy(() -> exceptionHandler.handleUnexpectedException(rotaInexistente, webRequest)).isSameAs(rotaInexistente);
+        assertThatThrownBy(() -> exceptionHandler.handleUnexpectedException(metodo, webRequest)).isSameAs(metodo);
+        assertThatThrownBy(() -> exceptionHandler.handleUnexpectedException(idNaoNumerico, webRequest)).isSameAs(idNaoNumerico);
+        assertThatThrownBy(() -> exceptionHandler.handleUnexpectedException(jsonMalformado, webRequest)).isSameAs(jsonMalformado);
+    }
+
+    @Test
+    void handleUnexpectedException_ShouldRethrowExceptionsAnnotatedWithResponseStatus() {
+        ExcecaoComStatus ex = new ExcecaoComStatus();
+
+        assertThatThrownBy(() -> exceptionHandler.handleUnexpectedException(ex, webRequest)).isSameAs(ex);
+    }
+
+    @ResponseStatus(HttpStatus.I_AM_A_TEAPOT)
+    static class ExcecaoComStatus extends RuntimeException {
     }
 }

@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 public interface NotificacaoNeoRepository extends JpaRepository<NotificacaoNeo, Long> {
     Page<NotificacaoNeo> findByAdministradorIdOrderByCriadoEmDescIdDesc(Long administradorId, Pageable pageable);
     long countByAdministradorIdAndLidaFalse(Long administradorId);
+    boolean existsByPostoId(Long postoId);
 
     @Modifying
     @Query(value = """

@@ -28,8 +28,8 @@ public class UserMapper {
      * <p>Não há senha a codificar, e desde o S8 <b>o mapper nem recebe mais o
      * {@code PasswordEncoder}</b>: ele existia aqui só para o registro público, removido
      * junto com o endpoint. O usuário nasce sem senha e sem meio de entrar, até o convite
-     * do S2b1; o {@code AuthService.validateSenhaDefinida} é quem barra o login nesse
-     * intervalo, com 401 {@code PASSWORD_NOT_SET}.
+     * do S2b1; o {@code AuthService.login} é quem barra o login nesse intervalo, com a
+     * mesma recusa genérica de credencial inválida (401 {@code UNAUTHORIZED}).
      *
      * <p>{@code active = true} é redundante com o {@code @PrePersist} da entidade, e está
      * explícito por ser regra do fluxo, não detalhe de persistência: o usuário é criado

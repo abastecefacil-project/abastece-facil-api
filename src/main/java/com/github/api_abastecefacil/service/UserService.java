@@ -69,8 +69,8 @@ public class UserService {
     /**
      * Cadastro administrativo. Cria o usuário <b>sem senha</b>, com
      * {@code senhaDefinida = false} e ativo — ele não consegue entrar até o convite do
-     * S2b1, e o {@code AuthService} o barra com 401 {@code PASSWORD_NOT_SET} nesse
-     * intervalo.
+     * S2b1, e o {@code AuthService} o barra nesse intervalo com a recusa genérica do
+     * login (401 {@code UNAUTHORIZED}).
      *
      * <p>A ordem das etapas é deliberada: <b>autorizar antes de validar</b>. Quem não pode
      * criar o usuário não deve receber pistas sobre o payload — um gestor tentando criar
