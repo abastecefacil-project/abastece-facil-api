@@ -4,13 +4,19 @@ import com.github.api_abastecefacil.dto.handler.ErrorResponse;
 import feign.FeignException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.TypeMismatchException;
+import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.util.unit.DataSize;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
@@ -35,6 +41,10 @@ public class GlobalExceptionHandler {
      */
     static final String VIOLACAO_INTEGRIDADE_MESSAGE =
             "A operação conflita com dados relacionados e não foi concluída.";
+
+    /** Texto fixo de propósito: tipo, mensagem e stack trace da exceção só vão para o log. */
+    static final String ERRO_INTERNO_MESSAGE =
+            "Ocorreu um erro inesperado. Tente novamente em instantes.";
 
     @ExceptionHandler(UserAlreadyExistsException.class)
     public ResponseEntity<ErrorResponse> handleUserAlreadyExistsException(
@@ -395,8 +405,8 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * Rede de segurança, não regra de negócio: sem este handler a violação escapava sem
-     * {@code ErrorResponse} e o cliente recebia o 403 vazio do {@code /error}. Os casos
+     * Rede de segurança, não regra de negócio: sem este handler a violação cairia no 500
+     * {@code ERRO_INTERNO} genérico (antes dele, no 403 vazio do {@code /error}). Os casos
      * conhecidos têm verificação explícita e {@code error} próprio (ex.:
      * {@code POSTO_COM_VINCULO_NEO}), e os serviços que já capturam a exceção
      * ({@code UserService.salvarComBackstop}, importação de postos) não chegam aqui.
@@ -472,8 +482,9 @@ public class GlobalExceptionHandler {
      * no {@code EnvioAcessoService}: o cadastro sinaliza a falha no campo
      * {@code conviteEnviado} em vez de derrubar a criacao (§6, item 24), e a recuperacao
      * ja respondeu ao cliente antes de o envio comecar. Este handler existe como rede de
-     * seguranca -- sem ele, um caminho futuro que deixasse a excecao escapar viraria 500
-     * cru, porque nao ha fallback Exception.class.
+     * seguranca -- sem ele, um caminho futuro que deixasse a excecao escapar cairia no
+     * 500 ERRO_INTERNO generico de {@link #handleUnexpectedException}, sem dizer que o
+     * que falhou foi o envio.
      */
     @ExceptionHandler(EnvioEmailException.class)
     public ResponseEntity<ErrorResponse> handleEnvioEmailException(
@@ -651,8 +662,8 @@ public class GlobalExceptionHandler {
 
     /**
      * 400: a requisicao nem e multipart -- por exemplo, JSON em /api/gas-stations/import. Sem
-     * este handler a MultipartException nao teria tratamento e sairia como o 403 de corpo
-     * vazio do /error (ver §5 do CLAUDE.md), indistinguivel de "nao autenticado".
+     * este handler a MultipartException cairia no 500 ERRO_INTERNO generico; antes dele,
+     * saia como o 403 de corpo vazio do /error, indistinguivel de "nao autenticado".
      *
      * <p>Mesmo "error" do caso acima, porque a acao corretiva e a mesma: enviar o arquivo na
      * parte "arquivo". O estouro de tamanho tambem e MultipartException, mas tem handler
@@ -736,6 +747,56 @@ public class GlobalExceptionHandler {
         );
 
         return ResponseEntity.status(status).body(error);
+    }
+
+
+    /**
+     * Rede de segurança para o que não tem handler: 500 {@code ERRO_INTERNO}, mensagem fixa e
+     * detalhe só no log. Antes dele, a exceção ia para {@code /error}, que reentrava na cadeia
+     * de filtros sem o JWT e saía como 403 vazio -- indistinguível de falta de permissão.
+     *
+     * <p>Os handlers específicos acima continuam ganhando: o Spring escolhe o tipo mais
+     * próximo da exceção lançada. Custo conhecido: com um handler para {@code Exception}, o
+     * Spring deixa de procurar handler pela causa encadeada, então uma exceção que embrulhe
+     * outra com handler próprio passa a sair 500.
+     *
+     * <p><b>Relançar é deliberado</b>, e é o mecanismo documentado para devolver a exceção aos
+     * resolvedores seguintes, como se este método não existisse. Vale para dois grupos:
+     * <ul>
+     *   <li>as do Spring Security, que o {@code ExceptionTranslationFilter} traduz para 401 e
+     *       403;</li>
+     *   <li>as do próprio Spring MVC que já têm status 4xx -- rota inexistente, método não
+     *       suportado, id não numérico, JSON malformado. Este advice roda antes do
+     *       {@code DefaultHandlerExceptionResolver}; sem o repasse, elas virariam 500.</li>
+     * </ul>
+     */
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ErrorResponse> handleUnexpectedException(
+            Exception ex, WebRequest request) throws Exception {
+
+        if (temTratamentoProprio(ex)) {
+            throw ex;
+        }
+
+        log.error("Erro inesperado sem handler em {}", request.getDescription(false), ex);
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.INTERNAL_SERVER_ERROR.value(),
+                "ERRO_INTERNO",
+                ERRO_INTERNO_MESSAGE,
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
+    }
+
+    private static boolean temTratamentoProprio(Exception ex) {
+        return ex instanceof AccessDeniedException
+                || ex instanceof AuthenticationException
+                || ex instanceof org.springframework.web.ErrorResponse
+                || ex instanceof TypeMismatchException
+                || ex instanceof HttpMessageNotReadableException
+                || AnnotatedElementUtils.hasAnnotation(ex.getClass(), ResponseStatus.class);
     }
 
 }

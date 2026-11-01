@@ -28,7 +28,7 @@ class UserStatusControllerTest {
 
     @Test
     void contatosDosGestoresExigemLogin() throws Exception {
-        mvc.perform(get("/api/users/me/gestores-frota")).andExpect(status().isForbidden());
+        mvc.perform(get("/api/users/me/gestores-frota")).andExpect(status().isUnauthorized());
         verifyNoInteractions(service);
     }
 
@@ -42,7 +42,7 @@ class UserStatusControllerTest {
 
     @Test
     void reativacaoExigeLogin() throws Exception {
-        mvc.perform(post("/api/users/7/reativar")).andExpect(status().isForbidden());
+        mvc.perform(post("/api/users/7/reativar")).andExpect(status().isUnauthorized());
         verifyNoInteractions(service);
     }
 

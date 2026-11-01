@@ -1,5 +1,6 @@
 package com.github.api_abastecefacil.config;
 
+import jakarta.servlet.DispatcherType;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -40,9 +41,17 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // So o despacho interno de erro, nao a rota: GET /error vindo do
+                        // cliente continua exigindo autenticacao. Sem isto, toda resposta
+                        // que passa pelo /error (excecao sem handler, sendError do Spring
+                        // MVC) reentrava na cadeia sem o JWT -- o filtro e
+                        // OncePerRequestFilter e nao roda no despacho de erro -- e saia
+                        // como 403 vazio. Ver §9, item 13 do CLAUDE.md.
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
                         .anyRequest().authenticated()
                 )
+                .exceptionHandling(ex -> ex.authenticationEntryPoint(new NaoAutenticadoEntryPoint()))
                 .authenticationProvider(authenticationProvider())
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 

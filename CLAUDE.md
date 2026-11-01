@@ -185,6 +185,8 @@ que a forma canônica, não porque fosse necessário.
 | `spring.servlet.multipart.max-file-size` | `10MB` | — | `SPRING_SERVLET_MULTIPART_MAX_FILE_SIZE` | não |
 | `spring.servlet.multipart.max-request-size` | `10MB` | — | `SPRING_SERVLET_MULTIPART_MAX_REQUEST_SIZE` | não |
 | `server.port` | `8081` | — | `SERVER_PORT` | não |
+| `server.error.include-stacktrace` | `never` | — | `SERVER_ERROR_INCLUDE_STACKTRACE` | não — nunca mudar |
+| `server.error.include-message` | `never` | — | `SERVER_ERROR_INCLUDE_MESSAGE` | não — nunca mudar |
 | `jwt.secret` | segredo de dev, versionado | — | `JWT_SECRET` | **sim** |
 | `jwt.expiration` | `86400000` (24h) — GESTOR_FROTA e ADMINISTRADOR | — | `JWT_EXPIRATION` | não |
 | `jwt.expiration-colaborador` | `2592000000` (30 dias) — só COLABORADOR | — | `JWT_EXPIRATION_COLABORADOR` | não |
@@ -422,10 +424,22 @@ Prefixo geral: `/api`.
 ### Regra de autorização (`SecurityConfig`)
 
 ```
+despacho ERROR  → liberado (só o despacho interno para /error, não a rota)
 /api/auth/**    → público
-/api/public/**  → público
-qualquer outro  → exige JWT válido
+qualquer outro  → exige JWT válido — inclusive /api/public/**
 ```
+
+**`/api/public/**` exige login**, apesar do nome. O `SecurityConfig` só libera
+`/api/auth/**`, e o `SecurityConfigTest` (`exigeLoginParaPostosEOcorrencias`) prova isso:
+sem token, `GET /api/public/gas-stations/filter` e `POST /api/public/incident` recusam; com
+qualquer perfil autenticado, passam. O prefixo ficou do tempo em que eram públicas. Dentro
+do serviço elas continuam **sem guarda de perfil** — qualquer autenticado, COLABORADOR
+inclusive (ver "O que continua sem guarda de perfil", adiante).
+
+**O despacho de erro é liberado por `dispatcherTypeMatchers(DispatcherType.ERROR)`.** Sem
+isso, toda resposta que passava pelo `/error` reentrava na cadeia de filtros sem o JWT e saía
+como 403 vazio. `GET /error` feito pelo cliente continua exigindo autenticação. Ver §9,
+item 13.
 
 Sessão **stateless**, CSRF desabilitado. O token vai no header
 `Authorization: Bearer <token>`.
@@ -444,19 +458,45 @@ o `JwtService` continua sem conhecer `Perfil`.
 > mês. O único corte imediato disponível hoje é desativar o usuário
 > (`is_active = false`), que passa a barrar na hora desde o S3 — ver §9, item 14.
 
-**A aplicação responde 403, e não 401, para requisição não autenticada.** Vale para token
-ausente, token inválido e usuário desativado. Contraria a convenção HTTP, onde 401 é "não
-autenticado" e 403 é "autenticado sem permissão", mas é o comportamento desde o início do
-projeto e o frontend já o trata assim. Mudar para 401 é **alteração de contrato global**,
-a ser decidida junto com o frontend — não "corrija" pontualmente.
+**Requisição sem autenticação válida responde 401 `NAO_AUTENTICADO`; 403 é só para
+autenticado sem permissão.** Vale para token ausente, vencido, malformado, com assinatura
+inválida, e para usuário desativado depois da emissão do token. Corpo no padrão do
+`ErrorResponse`, mensagem fixa "Sessão expirada ou inexistente. Entre novamente.":
+
+```json
+{ "timestamp": "2026-11-01 11:41:25", "status": 401, "error": "NAO_AUTENTICADO",
+  "message": "Sessão expirada ou inexistente. Entre novamente.", "path": "uri=/api/cars/filter" }
+```
+
+Quem escreve é `config/NaoAutenticadoEntryPoint`, em dois pontos: como
+`authenticationEntryPoint` do `SecurityConfig` (sem token, usuário desativado) e chamado pelo
+`JwtAuthenticationFilter` quando o token não decodifica. O corpo é escrito direto, sem
+`sendError`, senão o `BasicErrorController` o trocaria pelo formato do Spring Boot. A classe
+**não é bean**, de propósito: os `@WebMvcTest` importam `SecurityConfig` e
+`JwtAuthenticationFilter` por lista explícita.
+
+| Situação | Até aqui | Agora |
+|---|---|---|
+| sem token | 403, corpo vazio | 401 `NAO_AUTENTICADO` |
+| token vencido | 401, corpo vazio | 401 `NAO_AUTENTICADO` |
+| token malformado | 401, corpo vazio | 401 `NAO_AUTENTICADO` |
+| token com assinatura inválida | 401, corpo vazio | 401 `NAO_AUTENTICADO` |
+| usuário desativado com token válido | 403, corpo vazio | 401 `NAO_AUTENTICADO` |
+| autenticado sem permissão (`PERFIL_NAO_PERMITIDO` etc.) | 403 com `ErrorResponse` | igual |
+
+Foi **mudança de contrato deliberada**, para o frontend distinguir "sessão expirada, vá para o
+login" de "sem permissão". Conferido antes no `abastece-facil-web`: nada dependia do 403 sem
+token — o interceptor de resposta do `apiPrivate` já tratava **401** como fim de sessão
+(`limparSessao()` e `/login`), e nem ele, nem o store, nem o guard ramificam por 403.
 
 A autorização **na camada HTTP** é binária: autenticado ou não. Não há
 `@EnableMethodSecurity` nem `@PreAuthorize` em lugar nenhum, e a authority
 `ROLE_<PERFIL>` não é consumida por nenhuma regra de rota.
 
 A partir do S2a existe autorização por perfil, mas ela mora **no serviço**, não em
-anotação. Os motivos estão na §6, item 19; o resumo é que o 403 do Spring Security não
-passa pelo `GlobalExceptionHandler` e sairia sem `ErrorResponse`. **Isso substituiu o
+anotação. Os motivos estão na §6, item 19 (o argumento original, de que o 403 do Spring
+Security não passaria pelo `GlobalExceptionHandler`, foi corrigido pelo P0.4 — o que
+sustenta a decisão hoje são os outros dois). **Isso substituiu o
 desenho previsto para o P0.4**, que assumia `@EnableMethodSecurity`.
 
 O **P0.4c** estendeu essa autorização a todo o CRUD de usuário — leitura, listagem,
@@ -477,9 +517,9 @@ resultado por outro caminho.
 | POST | `/api/auth/recuperacao` | público — **com rate limit** |
 | GET | `/api/auth/recuperacao/validar?token=` | público |
 | POST | `/api/auth/recuperacao/confirmar` | público |
-| GET | `/api/public/gas-stations/filter` | público |
-| GET | `/api/public/gas-stations/{id}` | público |
-| POST | `/api/public/incident` | público |
+| GET | `/api/public/gas-stations/filter` | autenticado, qualquer perfil |
+| GET | `/api/public/gas-stations/{id}` | autenticado, qualquer perfil |
+| POST | `/api/public/incident` | autenticado, qualquer perfil |
 | POST | `/api/gas-stations` | **gestão** |
 | PUT | `/api/gas-stations/{id}` | **gestão** |
 | DELETE | `/api/gas-stations/{id}` | **gestão** |
@@ -515,8 +555,9 @@ COLABORADOR recebe 403. Detalhe na subseção "Autorização do cadastro operaci
 A importação de postos é a exceção sob `/api/gas-stations/**`: **só `ADMINISTRADOR`**,
 porque reescreve e desativa o cadastro inteiro de uma vez. Ver "Importação de postos".
 
-**Note a assimetria:** consultar postos e criar ocorrência são públicos; todo o
-resto exige token. É proposital — o usuário final não faz login.
+**Note a assimetria:** consultar postos e criar ocorrência valem para **qualquer
+perfil autenticado**, COLABORADOR inclusive; o resto do cadastro operacional é de gestão. Só
+`/api/auth/**` dispensa token — apesar do nome, `/api/public/**` exige login.
 
 ### Paginação
 
@@ -603,7 +644,8 @@ da recusa.
 
 Antes da verificação, o `DELETE` de posto com vínculo respondia **403 com corpo vazio**, e não
 500 — medido: a `DataIntegrityViolationException` do commit não tinha handler, ia para `/error`,
-e o `/error` reentra na cadeia de filtros sem o JWT (o mesmo mecanismo da rota inexistente).
+e o `/error` reentrava na cadeia de filtros sem o JWT (o mesmo mecanismo da rota inexistente,
+corrigido depois — §9, item 13).
 
 **Rede de segurança: `DataIntegrityViolationException` tem handler global desde então** —
 409 `VIOLACAO_INTEGRIDADE`, mensagem fixa "A operação conflita com dados relacionados e não foi
@@ -680,16 +722,16 @@ sem gestor, sem regional, sem matrícula e escolhendo a senha **sem passar pela 
 S3** — o `RegisterRequest` só tinha `@Size(min = 6)`. O frontend nunca o consumiu:
 `grep -rni register front-.../src` não devolvia nada no dia da remoção.
 
-**A rota removida responde 403, não 404 nem 405** — medido, e vale a pena saber por quê,
-porque contraria a expectativa. Sem handler, o Spring encaminha para `/error`; esse
-encaminhamento reentra na cadeia de filtros **sem** passar pelo `JwtAuthenticationFilter`,
-o contexto de segurança fica vazio, e como `/error` não casa com `/api/auth/**` nem com
-`/api/public/**`, o `anyRequest().authenticated()` recusa. O corpo vem vazio. **Não é
-específico da rota removida:** qualquer caminho inexistente responde igual
-(`POST /api/auth/rota-que-nunca-existiu` → 403), e é o mesmo mecanismo que faz
-`GET /api/users/xyz` responder 403 em vez de 400. Mudar isso é alteração global de
-tratamento de erro — mexeria em toda rota inexistente e em toda exceção sem handler —, e
-por isso ficou fora do S8.
+**A rota removida responde 404**, com o corpo padrão do Spring Boot
+(`{"timestamp","status":404,"error":"Not Found","path"}`), mesmo sem token: está sob
+`/api/auth/**`, que é `permitAll()`. Qualquer caminho inexistente sob `/api/auth/` responde
+igual (`POST /api/auth/rota-que-nunca-existiu` → 404, medido). Fora de `/api/auth/`, rota
+inexistente responde **401** sem token (a cadeia recusa antes de o Spring MVC procurar a
+rota) e **404** com token.
+
+Até a liberação do despacho de erro (§9, item 13), ela respondia **403 com corpo vazio**,
+como toda rota inexistente e todo `GET /api/users/xyz`: o `/error` reentrava na cadeia de
+filtros sem o JWT e o `anyRequest().authenticated()` recusava.
 
 **`conviteEnviado`, acrescentado ao `UserResponse` pelo S2b1.** É o resultado do envio do
 convite, e **não** um atributo do usuário:
@@ -925,8 +967,9 @@ autenticado: o `SecurityConfig` **não mudou**, e não há rota pública de impo
 - **`/atual` vence `/{id}`** porque o `PathPattern` ordena segmento literal acima de variável,
   o mesmo mecanismo de `/api/users/me`.
 - **O `{id}` é recebido como `String`.** Valor que não é UUID responde 404
-  `IMPORTACAO_NAO_ENCONTRADA`, como um id inexistente, em vez de virar erro de conversão sem
-  handler — que sairia como o 403 vazio do `/error`.
+  `IMPORTACAO_NAO_ENCONTRADA`, como um id inexistente (medido), em vez de virar erro de
+  conversão — que hoje sairia 400 com o corpo padrão do Spring Boot, e antes da §9, item 13,
+  como 403 vazio.
 - **`PreviaImportacaoResponse` não expõe o `PlanoImportacao`.** Os itens não trazem `dados`
   (a linha da planilha): só `id`, `cnpj`, `nome`, `nomeFantasia`, `cidade`, `camposAlterados`
   e `requerGeocodificacao`. Na primeira carga são ~1.200 itens, e a execução não usa a prévia.
@@ -946,8 +989,10 @@ autenticado: o `SecurityConfig` **não mudou**, e não há rota pública de impo
   nos dois lados — e não cai para a razão social: o frontend decide o que exibir. Quem
   calcula é `PlanejadorImportacaoPostos.nomeFantasiaFinal`.
 - **As rotas não declaram `consumes`, de propósito.** Com `consumes = multipart/form-data`,
-  JSON seria recusado com `HttpMediaTypeNotSupportedException`, sem handler, e cairia no 403
-  vazio. Sem ele, o `@RequestPart` lança `MultipartException`, que tem handler.
+  JSON seria recusado com `HttpMediaTypeNotSupportedException`, sem handler próprio, e sairia
+  415 com o corpo padrão do Spring Boot (antes da §9, item 13, 403 vazio). Sem ele, o
+  `@RequestPart` lança `MultipartException`, que tem handler: JSON em `/preview` responde 400
+  `ARQUIVO_OBRIGATORIO` (medido).
 - `ImportacaoPostosStatus`: `id`, `status` (`EM_ANDAMENTO`/`CONCLUIDA`/`FALHOU`/`CANCELADA`), `total`,
   `processados`, `iniciadaEm`, `concluidaEm`, `mensagem` e `resumo` — os três últimos `null`
   enquanto em andamento.
@@ -1101,17 +1146,15 @@ ao handler.
 ordena segmento **literal** acima de segmento com variável, então `/me` vence
 independentemente da ordem de declaração — é o que já acontecia com `/dashboard` desde
 antes. O método fica declarado antes do `/{userId}` mesmo assim, por legibilidade. No
-`SecurityConfig` não há matcher que capture `/me`: os dois `permitAll` são prefixos
-literais (`/api/auth/**`, `/api/public/**`) e todo o resto cai em
-`anyRequest().authenticated()`.
+`SecurityConfig` não há matcher que capture `/me`: o único `permitAll` de rota é o prefixo
+literal `/api/auth/**` e todo o resto cai em `anyRequest().authenticated()`.
 
-Vale registrar o que aconteceria **sem** a rota, porque foi medido: `/me` cairia em
-`/{userId}`, `"me"` não converteria para `Long` e a `MethodArgumentTypeMismatchException`
-sairia como **403 com corpo vazio** — não 400 e não 500. O encaminhamento para `/error`
-reentra na cadeia de filtros sem o `JwtAuthenticationFilter`, então o contexto de
-segurança está vazio e o Spring Security recusa. Vale para qualquer id não numérico
-(`GET /api/users/xyz` responde o mesmo hoje). É indistinguível de "não autenticado", que
-é o pior desfecho possível para quem estiver depurando o frontend.
+Vale registrar o que aconteceria **sem** a rota: `/me` cairia em `/{userId}`, `"me"` não
+converteria para `Long` e a `MethodArgumentTypeMismatchException` sairia **400**, com o corpo
+padrão do Spring Boot. É o que qualquer id não numérico responde hoje (`GET /api/users/xyz`,
+e também `DELETE /api/users/me`, que não tem rota própria e cai em `DELETE /{userId}` —
+medidos). Até a §9, item 13, saía como **403 com corpo vazio**, indistinguível de "não
+autenticado".
 
 ### Autorização do cadastro operacional (P0.4)
 
@@ -1149,12 +1192,13 @@ Erros — um só, porque a ação corretiva é uma só:
 As mensagens são duas (`AutorizacaoConstants`), uma para escrita e uma para consulta, pelo
 mesmo motivo do P0.4c: o `error` diz o que fazer, a mensagem diz o que foi recusado.
 
-**O que continua público** e passa pelos **mesmos métodos de serviço**, sem guarda:
+**O que continua sem guarda de perfil** e passa pelos **mesmos métodos de serviço**:
 `GasStationService.findById` e `getGasStationsByFilters`
 (`GET /api/public/gas-stations/{id}` e `/filter`) e `IncidentService.createIncident`
-(`POST /api/public/incident`). Os três têm javadoc dizendo isso, e um teste em cada
+(`POST /api/public/incident`). As rotas exigem login (ver "Regra de autorização"), mas
+qualquer perfil passa. Os três têm javadoc dizendo isso, e um teste em cada
 `ServiceTest` com `verifyNoInteractions(autorizacaoOperacional)` — pôr guarda ali
-derrubaria a lista e o mapa da área pública, que é o produto para o usuário final.
+derrubaria a lista e o mapa da área do colaborador, que é o produto para o usuário final.
 
 **Fora do escopo do P0.4, e conhecido:** `GET /api/cep/info` e `GET /api/regionais`
 continuam abertos a qualquer autenticado. O primeiro é proxy do ViaCEP e só o formulário
@@ -1180,14 +1224,16 @@ lançado dentro do dispatch e o `HandlerExceptionResolver` o vê antes do
 `ExceptionTranslationFilter`. O que o item 19 descreve corretamente é o 403 da **cadeia de
 filtros** (`authorizeHttpRequests`, requisição sem token) — esse continua fora do advice, e
 foi confirmado no mesmo experimento: com o handler registrado, a requisição sem token
-seguiu respondendo 403 vazio.
+seguiu respondendo 403 vazio. Hoje essa recusa sai pelo `NaoAutenticadoEntryPoint`, como 401
+`NAO_AUTENTICADO` com `ErrorResponse`, também sem passar pelo advice.
 
 **Mesmo assim a decisão foi manter no serviço**, por três motivos que a medição não muda:
 
-- **Nenhum teste do projeto sobe contexto Spring.** Um `hasRole` escrito errado — e o §9,
+- **Nenhum teste do projeto subia contexto Spring.** Um `hasRole` escrito errado — e o §9,
   item 12 já registra que `hasAuthority("ADMINISTRADOR")` falha silenciosamente neste
   projeto — compila, passa na suíte inteira e abre a rota. Autorização sem teste é o
-  oposto do que o P0.4 existe para fazer.
+  oposto do que o P0.4 existe para fazer. (Desde então existem `@WebMvcTest` — ver §10 —,
+  mas cobrem a cadeia de filtros e alguns controllers, não as regras de perfil e regional.)
 - **`/api/users/**` continua no serviço**, porque tem lógica de dono e regional que não
   cabe em SpEL. Anotar o resto não unificaria: criaria os dois lugares decidindo
   autorização que o S2a quis evitar.
@@ -1317,10 +1363,15 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
 4. **Login rejeita usuário inativo com a mesma resposta de credencial inválida**, desde o
    B1. Até então a mensagem era específica ("Usuário inativo, por favor, contate o
    suporte"), e isso confirmava a existência da conta. Ver "Erros do login" na §5.
-5. Exclusões são **lógicas** (`is_active` / `active` em `false`), não físicas. Há
-   exceções dedicadas para "já excluído" (`UserAlreadyDeletedException`,
-   `CarAlreadyDeletedException`). **A exceção é o posto**, cujo `DELETE` é físico e por isso
-   recusa posto com avaliação ou notificação do Cartão Neo (409 `POSTO_COM_VINCULO_NEO`, §5).
+5. A exclusão de **usuário** é **lógica** (`is_active = false`), com exceção dedicada para
+   "já excluído" (`UserAlreadyDeletedException`). **Posto e veículo são exclusão física.** O
+   `DELETE` de posto recusa posto com avaliação ou notificação do Cartão Neo (409
+   `POSTO_COM_VINCULO_NEO`, §5). O de veículo, `CarService.deleteCar`, chama
+   `carRepository.delete` — a linha some de `cars`; a inativação de veículo é pelo `PATCH`
+   com `isActive`. `CarAlreadyDeletedException` **existe e tem handler (400), mas nada a
+   lança** (`grep` no `src/main` só a encontra no próprio arquivo e no handler). Como `incidents` liga ao
+   veículo pela string da placa, sem FK, excluir um veículo não apaga nem recusa as
+   ocorrências dele.
 6. **Todo usuário nasce `COLABORADOR` com regional nula**, e não existe endpoint
    que altere isso. `UserMapper.toEntity` fixa o perfil na criação; o `prePersist`
    da entidade é a rede de segurança. A escrita administrativa de perfil e regional
@@ -1693,7 +1744,8 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
     **`EnvioEmailException` continua sem chegar ao cliente por rota nenhuma.** Os dois
     chamadores a capturam: o cadastro sinaliza no `conviteEnviado` (item 24) e a
     recuperação já respondeu antes de o envio começar. O handler 502 segue registrado como
-    rede de segurança, porque não há fallback `Exception.class`.
+    rede de segurança: sem ele, a exceção cairia no 500 `ERRO_INTERNO` genérico (§9, item
+    13), que não diz que o que falhou foi o envio.
 40. **A importação de postos roda em segundo plano, numa thread dedicada, e o estado é
     em memória.** A primeira carga tem ~1.200 inserções e o Nominatim aceita 1 req/s:
     uns vinte minutos, que não cabem numa requisição HTTP nem numa transação.
@@ -1845,7 +1897,8 @@ A raiz `/` redireciona para `/user/dashboardUser`.
 
 O guard em `router/index.js` protege apenas `/admin/*`, e a checagem é
 `!!store.token` — ou seja, **qualquer string em `localStorage.token` passa pelo
-guard**. A proteção real vem do backend, que rejeita o token inválido com 403.
+guard**. A proteção real vem do backend, que rejeita o token inválido com 401
+`NAO_AUTENTICADO`.
 
 `MapUser` e `MapAdmin` apontam para **a mesma view**, `views/admin/StationMap.vue`.
 
@@ -1972,18 +2025,82 @@ Problemas reais já encontrados. Consultar antes de investigar comportamento est
     duplicação foi eliminada de propósito: dois pontos produzindo authority são a
     origem provável de divergência futura.
 
-13. **Não existe `@ExceptionHandler` genérico, e senha nula quebra o `UserDetails`.**
-    O `GlobalExceptionHandler` registra cada exceção nominalmente (34 handlers desde a exclusão de posto com vínculo Neo) e **nenhum
-    fallback** (`Exception.class` / `RuntimeException.class`), então qualquer exceção
-    não registrada escapa para o `BasicErrorController` e vira um 500 cru, sem
-    `ErrorResponse`. Isso importa desde que `password` virou nullable: o construtor
+13. **Exceção sem handler responde 500 `ERRO_INTERNO`, e o despacho de erro é liberado na
+    cadeia de segurança.** Até aqui o `GlobalExceptionHandler` tinha 34 handlers nominais e
+    nenhum fallback, e esta seção dizia que o resto "virava um 500 cru". **Não virava —
+    medido:** saía **403 com corpo vazio**. A exceção ia para `/error`; o despacho de erro
+    reentrava na cadeia de filtros sem o JWT (o `JwtAuthenticationFilter` é
+    `OncePerRequestFilter` e não roda no despacho de erro, e a autenticação, gravada direto
+    no `SecurityContextHolder`, já tinha sido limpa); o `authorizeHttpRequests`, que no
+    Spring Security 6 vale para todos os tipos de despacho, recusava o anônimo; e o entry
+    point padrão (`Http403ForbiddenEntryPoint`) respondia 403. O mesmo valia para toda
+    resposta do Spring MVC que passa pelo `/error`: rota inexistente, id não numérico, JSON
+    malformado, método não suportado. Para o frontend, um erro do servidor parecia falta de
+    permissão.
+
+    Duas correções, que só funcionam juntas:
+
+    - **`SecurityConfig`**: `.dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()`,
+      antes das demais regras. Libera só o despacho interno; `GET /error` vindo do cliente
+      continua exigindo autenticação, e nenhuma rota foi aberta.
+    - **`GlobalExceptionHandler.handleUnexpectedException`** (`Exception.class`): 500,
+      `error = "ERRO_INTERNO"`, mensagem fixa "Ocorreu um erro inesperado. Tente novamente
+      em instantes.", e o detalhe (tipo, mensagem, stack trace) **só no `log.error`**. Os
+      handlers específicos continuam ganhando, porque o Spring escolhe o tipo mais
+      próximo. **Ele relança**, de propósito, dois grupos: as exceções do Spring Security
+      (`AccessDeniedException`, `AuthenticationException`), que o
+      `ExceptionTranslationFilter` traduz para 403/401; e as do Spring MVC que já têm
+      status 4xx (as que implementam `org.springframework.web.ErrorResponse`, mais
+      `TypeMismatchException`, `HttpMessageNotReadableException` e as anotadas com
+      `@ResponseStatus`). Relançar a mesma exceção devolve-a aos resolvedores seguintes; sem
+      isso, o advice — que roda antes do `DefaultHandlerExceptionResolver` — transformaria
+      404, 405 e 400 em 500.
+
+    | Caso (medido na API local) | Antes | Agora |
+    |---|---|---|
+    | exceção sem handler, autenticado (`GET /api/cars/filter?sort=naoExiste`) | 403 vazio | 500 `ERRO_INTERNO` |
+    | rota inexistente, autenticado | 403 vazio | 404, corpo do Spring Boot |
+    | `GET /api/users/xyz`, autenticado | 403 vazio | 400, corpo do Spring Boot |
+    | JSON malformado em `POST /api/cars`, autenticado | 403 vazio | 400, corpo do Spring Boot |
+    | `PUT /api/cars/1` (método não suportado), autenticado | — | 405, corpo do Spring Boot |
+    | sem token, qualquer rota protegida | 403 vazio | 401 `NAO_AUTENTICADO` (§5) |
+    | perfil sem permissão | 403 `PERFIL_NAO_PERMITIDO` | igual |
+
+    O "corpo do Spring Boot" é `{"timestamp","status","error","path"}`, **não** o
+    `ErrorResponse`: não tem `message`, o `error` é o nome do status, o `path` vem sem o
+    prefixo `uri=` e o `timestamp` tem outro formato. Converter esses 4xx para o
+    `ErrorResponse` é pendência. Exceção lançada **num filtro**, fora do dispatch (por
+    exemplo, banco fora do ar no `loadUserByUsername`), não passa pelo advice: sai 500 com
+    esse mesmo corpo do Spring Boot.
+
+    **`server.error.include-stacktrace` e `include-message` estão fixados em `never`** no
+    `application.yml`. É o default do Spring Boot, mas o **devtools os troca para `always`**
+    no `spring-boot:run`, e com o despacho de erro liberado o stack trace saía inteiro no
+    campo `trace` da resposta — medido, antes da fixação. Em produção o jar empacotado não
+    leva o devtools; a fixação existe para o desenvolvimento local não divergir.
+
+    **Custos conhecidos do handler genérico:**
+    - Com um handler para `Exception`, o Spring deixa de procurar handler pela **causa**
+      encadeada: uma exceção que embrulhe outra com handler próprio passa a sair 500.
+      Nenhum caminho do projeto depende disso hoje.
+    - `sort` com propriedade inexistente (`?sort=naoExiste` nas listagens paginadas) sai
+      500, embora seja erro do cliente. Pendência registrada: handler 400 próprio.
+    - Uma `AuthenticationException` que não seja `BadCredentialsException` no login (o
+      `AuthService.authenticateUser` só captura essa) é relançada e sai como 401
+      `NAO_AUTENTICADO` — por exemplo, `InternalAuthenticationServiceException` com o banco
+      fora do ar.
+
+    Ao criar exceção nova, **registre o handler junto** — o genérico é rede de segurança,
+    não resposta: ele não diz ao frontend o que corrigir.
+
+    **Senha nula quebra o `UserDetails`.** Isso importa desde que `password` virou nullable: o construtor
     de `org.springframework.security.core.userdetails.User` faz
     `Assert.isTrue(... password != null ...)` e lançaria `IllegalArgumentException`
     a cada requisição autenticada de um usuário sem senha, pelo
     `JwtAuthenticationFilter`. Daí a guarda em
     `CustomUserDetailsService.toUserDetails`, que passa `""` no lugar do nulo — o
     BCrypt não casa com senha nenhuma contra `""`, então o pior caso é 401, nunca
-    500 e nunca acesso. Ao criar exceção nova, **registre o handler junto**.
+    500 e nunca acesso.
 
 14. **`loadUserByUsername` filtra `is_active` — corrigido no S3.** Até então, usuário
     excluído logicamente continuava autenticando com um token já emitido: a checagem de
@@ -2001,8 +2118,8 @@ Problemas reais já encontrados. Consultar antes de investigar comportamento est
       a exceção escaparia da cadeia de filtros e viraria **500 em toda requisição** de
       quem foi desativado, que é pior que o bug original.
 
-    Resultado: requisição autenticada de usuário desativado responde **403**, igual a
-    qualquer requisição sem token (ver §5 sobre 403 x 401). No login, quem responde é o
+    Resultado: requisição autenticada de usuário desativado responde **401
+    `NAO_AUTENTICADO`**, igual a qualquer requisição sem token (ver §5). No login, quem responde é o
     `AuthService.login`, que barra antes com a recusa genérica do B1 (401 `UNAUTHORIZED`,
     a mesma de senha errada).
 
@@ -2234,7 +2351,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **684 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **695 testes no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -2245,10 +2362,11 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   `PlanejadorImportacaoPostos`, o `RegistroImportacoesPostos`, o `ExecucaoImportacaoPostos`,
   o `GravadorImportacaoPostos`, o `ExecutorImportacaoPostos`, o `ImportacaoPostosService`, o
   `PreviaImportacaoResponse`, o `DashboardService`, o `EscopoUsuarios` e o
-  handler global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
+  handler global de exceções. A maioria é Mockito puro; os `@WebMvcTest` (abaixo) sobem só a
+  fatia web. Nenhum sobe banco nem contexto completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 684, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 695, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa
@@ -2259,11 +2377,19 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   `UserServiceTest` para o `EnvioAcessoServiceTest` no S4, junto com o código que testam;
   o que sobrou no `UserServiceTest` é a delegação. Nenhum teste foi removido.
 
-  **Não existe teste de controller** — zero `MockMvc`, `@WebMvcTest` ou `@SpringBootTest`
-  no repositório. Foi exatamente por isso que o `@Valid` mal posicionado do `updateUser`
-  (no `@PathVariable` em vez do `@RequestBody`, corrigido no S2a) sobreviveu desde o
-  início: o `@Email` do `UpdateUserRequest` nunca rodava e nada acusou. Mudança de
-  contrato HTTP neste projeto **só é verificada à mão**.
+  **Testes `@WebMvcTest`: cinco**, todos com `MockMvc`, importando `SecurityConfig` e
+  `JwtAuthenticationFilter` e mockando `JwtService` e `UserDetailsService`:
+  `controller/AvailableCarsControllerTest`, `controller/AvaliacaoNeoControllerTest` e
+  `controller/UserStatusControllerTest` (controllers reais), mais
+  `config/SecurityConfigTest` e `config/TratamentoErrosSegurancaTest` (endpoints de teste
+  internos, para a cadeia de segurança e o handler global). Não há `@SpringBootTest`. O
+  resto dos controllers não tem teste: o `@Valid` mal posicionado do `updateUser` (no
+  `@PathVariable` em vez do `@RequestBody`, corrigido no S2a) sobreviveu desde o início por
+  isso. Mudança de contrato HTTP fora dessas rotas **só é verificada à mão**.
+
+  Limite do MockMvc: ele **não faz o despacho real para `/error`** (não há contêiner de
+  servlet). O `TratamentoErrosSegurancaTest` prova a liberação do `DispatcherType.ERROR`
+  simulando esse despacho; a prova de ponta a ponta é a chamada à API real.
 
   **Exceção parcial: `GasStationRequestValidationTest`**, o primeiro teste de Bean Validation.
   Cria o `Validator` com `Validation.buildDefaultValidatorFactory()`, sem contexto Spring, e

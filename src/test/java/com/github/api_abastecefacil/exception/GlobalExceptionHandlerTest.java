@@ -6,7 +6,17 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.MethodParameter;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpInputMessage;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.context.request.WebRequest;
@@ -20,6 +30,8 @@ import static com.github.api_abastecefacil.constants.GasStationConstants.POSTO_C
 import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.ARQUIVO_MUITO_GRANDE_SEM_LIMITE_MESSAGE;
 import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.ARQUIVO_OBRIGATORIO_MESSAGE;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -33,7 +45,8 @@ class GlobalExceptionHandlerTest {
     @BeforeEach
     void setUp() {
         exceptionHandler = new GlobalExceptionHandler();
-        when(webRequest.getDescription(false)).thenReturn("uri=/test");
+        // lenient: os testes de repasse do handler genérico relançam antes de ler o path.
+        lenient().when(webRequest.getDescription(false)).thenReturn("uri=/test");
     }
 
     @Test
@@ -484,5 +497,58 @@ class GlobalExceptionHandlerTest {
 
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().message()).contains("1500 bytes");
+    }
+
+    @Test
+    void handleUnexpectedException_ShouldReturn500WithFixedMessage() throws Exception {
+        IllegalStateException ex = new IllegalStateException("detalhe interno: tabela cars, coluna x");
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleUnexpectedException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().status()).isEqualTo(500);
+        assertThat(response.getBody().error()).isEqualTo("ERRO_INTERNO");
+        assertThat(response.getBody().message())
+                .isEqualTo("Ocorreu um erro inesperado. Tente novamente em instantes.")
+                .doesNotContain("detalhe interno");
+        assertThat(response.getBody().path()).isEqualTo("uri=/test");
+    }
+
+    @Test
+    void handleUnexpectedException_ShouldRethrowSpringSecurityExceptions() {
+        AccessDeniedException negado = new AccessDeniedException("negado");
+        BadCredentialsException credenciais = new BadCredentialsException("credenciais");
+
+        assertThatThrownBy(() -> exceptionHandler.handleUnexpectedException(negado, webRequest)).isSameAs(negado);
+        assertThatThrownBy(() -> exceptionHandler.handleUnexpectedException(credenciais, webRequest)).isSameAs(credenciais);
+    }
+
+    /** Rota inexistente, método não suportado, id não numérico e JSON malformado mantêm o 4xx do Spring MVC. */
+    @Test
+    void handleUnexpectedException_ShouldRethrowSpringMvcExceptionsWithOwnStatus() throws Exception {
+        NoResourceFoundException rotaInexistente = new NoResourceFoundException(HttpMethod.GET, "/api/nada");
+        HttpRequestMethodNotSupportedException metodo = new HttpRequestMethodNotSupportedException("DELETE");
+        MethodArgumentTypeMismatchException idNaoNumerico = new MethodArgumentTypeMismatchException(
+                "xyz", Long.class, "userId",
+                new MethodParameter(Object.class.getMethod("equals", Object.class), 0), null);
+        HttpMessageNotReadableException jsonMalformado = new HttpMessageNotReadableException(
+                "JSON malformado", (HttpInputMessage) null);
+
+        assertThatThrownBy(() -> exceptionHandler.handleUnexpectedException(rotaInexistente, webRequest)).isSameAs(rotaInexistente);
+        assertThatThrownBy(() -> exceptionHandler.handleUnexpectedException(metodo, webRequest)).isSameAs(metodo);
+        assertThatThrownBy(() -> exceptionHandler.handleUnexpectedException(idNaoNumerico, webRequest)).isSameAs(idNaoNumerico);
+        assertThatThrownBy(() -> exceptionHandler.handleUnexpectedException(jsonMalformado, webRequest)).isSameAs(jsonMalformado);
+    }
+
+    @Test
+    void handleUnexpectedException_ShouldRethrowExceptionsAnnotatedWithResponseStatus() {
+        ExcecaoComStatus ex = new ExcecaoComStatus();
+
+        assertThatThrownBy(() -> exceptionHandler.handleUnexpectedException(ex, webRequest)).isSameAs(ex);
+    }
+
+    @ResponseStatus(HttpStatus.I_AM_A_TEAPOT)
+    static class ExcecaoComStatus extends RuntimeException {
     }
 }

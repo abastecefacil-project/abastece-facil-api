@@ -30,10 +30,10 @@ class AvaliacaoNeoControllerTest {
 
     @Test
     void exigeLoginParaConsultarEResponder() throws Exception {
-        mvc.perform(get("/api/gas-stations/1/neo")).andExpect(status().isForbidden());
-        mvc.perform(delete("/api/gas-stations/1/neo")).andExpect(status().isForbidden());
+        mvc.perform(get("/api/gas-stations/1/neo")).andExpect(status().isUnauthorized());
+        mvc.perform(delete("/api/gas-stations/1/neo")).andExpect(status().isUnauthorized());
         mvc.perform(put("/api/gas-stations/1/neo").contentType(MediaType.APPLICATION_JSON)
-                .content("{\"passouNeo\":true}")).andExpect(status().isForbidden());
+                .content("{\"passouNeo\":true}")).andExpect(status().isUnauthorized());
         verifyNoInteractions(service);
     }
 
