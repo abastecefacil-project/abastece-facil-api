@@ -2,6 +2,9 @@ package com.github.api_abastecefacil.exception;
 
 import com.github.api_abastecefacil.dto.handler.ErrorResponse;
 import feign.FeignException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
@@ -23,6 +26,15 @@ import java.util.stream.Collectors;
 
 @ControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    /**
+     * Texto fixo de propósito: a mensagem do driver nomeia tabela, coluna e constraint, e isso
+     * só vai para o log.
+     */
+    static final String VIOLACAO_INTEGRIDADE_MESSAGE =
+            "A operação conflita com dados relacionados e não foi concluída.";
 
     @ExceptionHandler(UserAlreadyExistsException.class)
     public ResponseEntity<ErrorResponse> handleUserAlreadyExistsException(
@@ -362,6 +374,47 @@ public class GlobalExceptionHandler {
                 HttpStatus.CONFLICT.value(),
                 "CONFLICT",
                 ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
+    }
+
+    @ExceptionHandler(PostoComVinculoNeoException.class)
+    public ResponseEntity<ErrorResponse> handlePostoComVinculoNeoException(
+            PostoComVinculoNeoException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.CONFLICT.value(),
+                "POSTO_COM_VINCULO_NEO",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
+    }
+
+    /**
+     * Rede de segurança, não regra de negócio: sem este handler a violação escapava sem
+     * {@code ErrorResponse} e o cliente recebia o 403 vazio do {@code /error}. Os casos
+     * conhecidos têm verificação explícita e {@code error} próprio (ex.:
+     * {@code POSTO_COM_VINCULO_NEO}), e os serviços que já capturam a exceção
+     * ({@code UserService.salvarComBackstop}, importação de postos) não chegam aqui.
+     *
+     * <p>Log em {@code ERROR}: chegar aqui significa que falta uma validação explícita antes
+     * da gravação. O detalhe do driver fica só no log.
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ErrorResponse> handleDataIntegrityViolationException(
+            DataIntegrityViolationException ex, WebRequest request) {
+
+        log.error("Violação de integridade sem verificação explícita em {}: {}",
+                request.getDescription(false), ex.getMostSpecificCause().getMessage(), ex);
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.CONFLICT.value(),
+                "VIOLACAO_INTEGRIDADE",
+                VIOLACAO_INTEGRIDADE_MESSAGE,
                 request.getDescription(false)
         );
 

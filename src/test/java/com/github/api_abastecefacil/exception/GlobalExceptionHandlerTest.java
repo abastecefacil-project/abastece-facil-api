@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.context.request.WebRequest;
@@ -15,6 +16,7 @@ import org.springframework.web.multipart.support.MissingServletRequestPartExcept
 
 import static com.github.api_abastecefacil.constants.AuthConstants.INVALID_CREDENTIALS_MESSAGE;
 import static com.github.api_abastecefacil.constants.AuthConstants.LIMITE_SOLICITACOES_EXCEDIDO_MESSAGE;
+import static com.github.api_abastecefacil.constants.GasStationConstants.POSTO_COM_VINCULO_NEO_MESSAGE;
 import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.ARQUIVO_MUITO_GRANDE_SEM_LIMITE_MESSAGE;
 import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.ARQUIVO_OBRIGATORIO_MESSAGE;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -44,6 +46,37 @@ class GlobalExceptionHandlerTest {
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().message()).isEqualTo("Usuário já existe");
         assertThat(response.getBody().error()).isEqualTo("CONFLICT");
+    }
+
+    @Test
+    void handlePostoComVinculoNeoException_ShouldReturn409WithOwnErrorCode() {
+        PostoComVinculoNeoException ex = new PostoComVinculoNeoException(POSTO_COM_VINCULO_NEO_MESSAGE);
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handlePostoComVinculoNeoException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("POSTO_COM_VINCULO_NEO");
+        assertThat(response.getBody().message()).isEqualTo(
+                "Este posto tem avaliações ou notificações do Cartão Neo e não pode ser excluído. Inative-o pela edição.");
+    }
+
+    @Test
+    void handleDataIntegrityViolationException_ShouldReturn409WithFixedMessage_WithoutDriverDetails() {
+        DataIntegrityViolationException ex = new DataIntegrityViolationException(
+                "could not execute statement",
+                new RuntimeException("ERROR: update or delete on table \"gas_stations\" violates foreign key "
+                        + "constraint \"fk_avaliacoes_neo_posto\" on table \"avaliacoes_neo\""));
+
+        ResponseEntity<ErrorResponse> response = exceptionHandler.handleDataIntegrityViolationException(ex, webRequest);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().error()).isEqualTo("VIOLACAO_INTEGRIDADE");
+        assertThat(response.getBody().message())
+                .isEqualTo(GlobalExceptionHandler.VIOLACAO_INTEGRIDADE_MESSAGE)
+                .doesNotContain("gas_stations", "avaliacoes_neo", "fk_", "could not execute");
+        assertThat(response.getBody().path()).isEqualTo("uri=/test");
     }
 
     @Test

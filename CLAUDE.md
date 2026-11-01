@@ -584,6 +584,37 @@ Um posto legado gravado sem vírgula no endereço (`"Rua A"`) volta da tela de e
 `"Rua A, "` — ela desmonta e remonta por `split(',')` —, a chave muda e a edição geocodifica. É o
 comportamento de antes, não regressão, e o `save` já grava no formato novo.
 
+**Exclusão de posto (`DELETE /api/gas-stations/{id}`) é física**, ao contrário de usuário e
+veículo — e por isso é recusada quando o posto tem dado do Cartão Neo. `avaliacoes_neo.posto_id`
+e `notificacoes_neo.posto_id` têm FK para `gas_stations` **sem `ON DELETE`**, e esses dados são
+preservados: nada é apagado em cascata. `GasStationService.deleteGasStation` confere
+(`GasStationRepository.existeAvaliacaoNeo` e `NotificacaoNeoRepository.existsByPostoId`) **depois**
+da autorização e do 404, e antes do `delete`.
+
+| Situação | HTTP | `error` | `message` |
+|---|---|---|---|
+| posto sem avaliação nem notificação | 204 | — | — |
+| posto com avaliação **ou** notificação do Neo | 409 | `POSTO_COM_VINCULO_NEO` | "Este posto tem avaliações ou notificações do Cartão Neo e não pode ser excluído. Inative-o pela edição." |
+| posto inexistente | 404 | `NOT_FOUND` | "Posto não encontrado" |
+
+A mensagem é a mesma para os dois vínculos porque a ação corretiva é a mesma. Notificação sem
+avaliação existe de verdade: remover a avaliação (`removerAvaliacaoNeo`) não apaga a notificação
+da recusa.
+
+Antes da verificação, o `DELETE` de posto com vínculo respondia **403 com corpo vazio**, e não
+500 — medido: a `DataIntegrityViolationException` do commit não tinha handler, ia para `/error`,
+e o `/error` reentra na cadeia de filtros sem o JWT (o mesmo mecanismo da rota inexistente).
+
+**Rede de segurança: `DataIntegrityViolationException` tem handler global desde então** —
+409 `VIOLACAO_INTEGRIDADE`, mensagem fixa "A operação conflita com dados relacionados e não foi
+concluída.". O texto do driver (tabela, coluna, constraint) vai **só para o log, em `ERROR`**:
+chegar ali significa que falta uma validação explícita antes da gravação, e o caso deve ganhar
+verificação e `error` próprios, como o do Neo. Vale para **qualquer** rota — inclusive estouro de
+`varchar(255)`, que a falta de `@Size` nos DTOs deixa chegar ao banco (medido com um nome de 300
+caracteres no `PUT` de posto: era 403 vazio, agora 409 `VIOLACAO_INTEGRIDADE`). Quem já captura a
+exceção (`UserService.salvarComBackstop`, `ExecutorImportacaoPostos`,
+`AdministradorInicialInitializer`) continua decidindo antes do handler.
+
 `CreateIncidentRequest`:
 ```json
 {
@@ -1288,7 +1319,8 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
    suporte"), e isso confirmava a existência da conta. Ver "Erros do login" na §5.
 5. Exclusões são **lógicas** (`is_active` / `active` em `false`), não físicas. Há
    exceções dedicadas para "já excluído" (`UserAlreadyDeletedException`,
-   `CarAlreadyDeletedException`).
+   `CarAlreadyDeletedException`). **A exceção é o posto**, cujo `DELETE` é físico e por isso
+   recusa posto com avaliação ou notificação do Cartão Neo (409 `POSTO_COM_VINCULO_NEO`, §5).
 6. **Todo usuário nasce `COLABORADOR` com regional nula**, e não existe endpoint
    que altere isso. `UserMapper.toEntity` fixa o perfil na criação; o `prePersist`
    da entidade é a rede de segurança. A escrita administrativa de perfil e regional
@@ -1439,8 +1471,9 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
     `existsByMatricula` seguido de `save` tem janela de corrida, então o índice parcial
     `uk_users_matricula` é a garantia real — mesmo raciocínio do
     `AdministradorInicialInitializer` com o e-mail. `UserService.salvarComBackstop`
-    captura a `DataIntegrityViolationException` e traduz para 409; sem isso ela escaparia
-    como 500 cru, porque não há handler registrado nem fallback. A distinção entre
+    captura a `DataIntegrityViolationException` e traduz para 409 com `error` específico;
+    sem isso ela cairia no handler genérico (409 `VIOLACAO_INTEGRIDADE`, §5), que não
+    distingue matrícula de e-mail. A distinção entre
     matrícula e e-mail sai do **nome do índice na mensagem da exceção**, o que é frágil
     por depender de texto de driver — por isso o e-mail é o caso *default*. Errar a
     mensagem num 409 é aceitável; devolver 500 não.
@@ -1940,7 +1973,7 @@ Problemas reais já encontrados. Consultar antes de investigar comportamento est
     origem provável de divergência futura.
 
 13. **Não existe `@ExceptionHandler` genérico, e senha nula quebra o `UserDetails`.**
-    O `GlobalExceptionHandler` registra cada exceção nominalmente (32 handlers desde o B1) e **nenhum
+    O `GlobalExceptionHandler` registra cada exceção nominalmente (34 handlers desde a exclusão de posto com vínculo Neo) e **nenhum
     fallback** (`Exception.class` / `RuntimeException.class`), então qualquer exceção
     não registrada escapa para o `BasicErrorController` e vira um 500 cru, sem
     `ErrorResponse`. Isso importa desde que `password` virou nullable: o construtor
@@ -2201,7 +2234,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **679 testes unitários no backend, todos passando.** Cobrem `AuthService`,
+- **684 testes unitários no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -2215,7 +2248,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   handler global de exceções. São testes com mock, não sobem banco nem contexto Spring completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 679, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 684, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa

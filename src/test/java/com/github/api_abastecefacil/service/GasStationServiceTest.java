@@ -7,9 +7,11 @@ import com.github.api_abastecefacil.exception.CoordinatesNotFoundException;
 import com.github.api_abastecefacil.exception.GasStationAlreadyExistsException;
 import com.github.api_abastecefacil.exception.NotFoundException;
 import com.github.api_abastecefacil.exception.PerfilNaoPermitidoException;
+import com.github.api_abastecefacil.exception.PostoComVinculoNeoException;
 import com.github.api_abastecefacil.mapper.GasStationMapper;
 import com.github.api_abastecefacil.model.GasStation;
 import com.github.api_abastecefacil.repository.GasStationRepository;
+import com.github.api_abastecefacil.repository.NotificacaoNeoRepository;
 import com.github.api_abastecefacil.service.OpenStreetMapService.Coordinates;
 import com.github.api_abastecefacil.service.OpenStreetMapService.Geocodificacao;
 import com.github.api_abastecefacil.service.OpenStreetMapService.Origem;
@@ -30,6 +32,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static com.github.api_abastecefacil.constants.GasStationConstants.COORDINATES_NOT_FOUND_MESSAGE;
+import static com.github.api_abastecefacil.constants.GasStationConstants.POSTO_COM_VINCULO_NEO_MESSAGE;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -51,6 +54,9 @@ class GasStationServiceTest {
 
     @Mock
     private AutorizacaoOperacional autorizacaoOperacional;
+
+    @Mock
+    private NotificacaoNeoRepository notificacaoNeoRepository;
 
     @InjectMocks
     private GasStationService gasStationService;
@@ -372,10 +378,49 @@ class GasStationServiceTest {
     @Test
     void deleteGasStation_ShouldDeleteGasStationSuccessfully() {
         when(gasStationRepository.findById(1L)).thenReturn(Optional.of(gasStation));
+        when(gasStationRepository.existeAvaliacaoNeo(1L)).thenReturn(false);
+        when(notificacaoNeoRepository.existsByPostoId(1L)).thenReturn(false);
 
         gasStationService.deleteGasStation(1L);
 
         verify(gasStationRepository).delete(gasStation);
+    }
+
+    @Test
+    void deleteGasStation_ShouldRefuse_WhenGasStationHasNeoRating() {
+        when(gasStationRepository.findById(1L)).thenReturn(Optional.of(gasStation));
+        when(gasStationRepository.existeAvaliacaoNeo(1L)).thenReturn(true);
+
+        PostoComVinculoNeoException ex = assertThrows(PostoComVinculoNeoException.class,
+                () -> gasStationService.deleteGasStation(1L));
+
+        assertThat(ex.getMessage()).isEqualTo(POSTO_COM_VINCULO_NEO_MESSAGE);
+        verify(gasStationRepository, never()).delete(any());
+    }
+
+    @Test
+    void deleteGasStation_ShouldRefuse_WhenGasStationHasNeoNotification() {
+        // Notificação sem avaliação acontece quando o colaborador remove a avaliação depois
+        // da recusa: a notificação continua apontando para o posto.
+        when(gasStationRepository.findById(1L)).thenReturn(Optional.of(gasStation));
+        when(gasStationRepository.existeAvaliacaoNeo(1L)).thenReturn(false);
+        when(notificacaoNeoRepository.existsByPostoId(1L)).thenReturn(true);
+
+        PostoComVinculoNeoException ex = assertThrows(PostoComVinculoNeoException.class,
+                () -> gasStationService.deleteGasStation(1L));
+
+        assertThat(ex.getMessage()).isEqualTo(POSTO_COM_VINCULO_NEO_MESSAGE);
+        verify(gasStationRepository, never()).delete(any());
+    }
+
+    @Test
+    void deleteGasStation_ShouldReturnNotFound_BeforeCheckingNeoLinks() {
+        when(gasStationRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThrows(NotFoundException.class, () -> gasStationService.deleteGasStation(99L));
+
+        verify(gasStationRepository, never()).existeAvaliacaoNeo(any());
+        verifyNoInteractions(notificacaoNeoRepository);
     }
 
     @Test
@@ -421,7 +466,8 @@ class GasStationServiceTest {
 
         assertThrows(PerfilNaoPermitidoException.class, () -> gasStationService.deleteGasStation(1L));
 
-        verifyNoInteractions(gasStationRepository, gasStationMapper, openStreetMapService);
+        verifyNoInteractions(gasStationRepository, gasStationMapper, openStreetMapService,
+                notificacaoNeoRepository);
     }
 
     @Test
