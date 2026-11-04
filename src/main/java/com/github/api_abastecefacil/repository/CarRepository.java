@@ -23,15 +23,18 @@ public interface CarRepository extends JpaRepository<Car, Long> {
             "(:search IS NULL OR " +
             "LOWER(c.model) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
             "LOWER(c.license_plate) LIKE LOWER(CONCAT('%', :search, '%'))) AND " +
-            "(:active IS NULL OR c.active = :active) " +
+            "(:active IS NULL OR c.active = :active) AND " +
+            "(CAST(:regionalId AS bigint) IS NULL OR c.regional_id = :regionalId) " +
             "ORDER BY c.created_at DESC",
             countQuery = "SELECT COUNT(*) FROM cars c WHERE " +
                     "(:search IS NULL OR " +
                     "LOWER(c.model) LIKE LOWER(CONCAT('%', :search, '%')) OR " +
                     "LOWER(c.license_plate) LIKE LOWER(CONCAT('%', :search, '%'))) AND " +
-                    "(:active IS NULL OR c.active = :active)",
+                    "(:active IS NULL OR c.active = :active) AND " +
+                    "(CAST(:regionalId AS bigint) IS NULL OR c.regional_id = :regionalId)",
             nativeQuery = true)
     Page<Car> findByFilters(@Param("search") String search,
                             @Param("active") Boolean active,
+                            @Param("regionalId") Long regionalId,
                             Pageable pageable);
 }

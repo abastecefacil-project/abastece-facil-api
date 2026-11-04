@@ -37,7 +37,7 @@ class AvailableCarsControllerTest {
     @Test
     void colaboradorPodeConsultarVeiculosDisponiveis() throws Exception {
         when(service.getAvailableCars()).thenReturn(List.of(
-                new CarResponse(1L, "ABC1234", "Civic", true, null, null)));
+                new CarResponse(1L, "ABC1234", "Civic", true, null, null, null)));
         mvc.perform(get("/api/cars/available").with(user("colaborador").roles("COLABORADOR")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].model").value("Civic"))

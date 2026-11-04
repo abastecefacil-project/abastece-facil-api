@@ -8,6 +8,11 @@ import com.github.api_abastecefacil.exception.NotFoundException;
 import com.github.api_abastecefacil.exception.PerfilNaoPermitidoException;
 import com.github.api_abastecefacil.mapper.CarMapper;
 import com.github.api_abastecefacil.model.Car;
+import com.github.api_abastecefacil.model.User;
+import com.github.api_abastecefacil.model.Perfil;
+import com.github.api_abastecefacil.model.Regional;
+import com.github.api_abastecefacil.repository.RegionalRepository;
+import com.github.api_abastecefacil.exception.RegionalNaoPermitidaException;
 import com.github.api_abastecefacil.repository.CarRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,6 +46,12 @@ class CarServiceTest {
     @Mock
     private AutorizacaoOperacional autorizacaoOperacional;
 
+    @Mock
+    private RegionalRepository regionalRepository;
+
+    @Mock
+    private UsuarioAutenticadoProvider usuarioAutenticadoProvider;
+
     @InjectMocks
     private CarService carService;
 
@@ -49,6 +60,12 @@ class CarServiceTest {
 
     @BeforeEach
     void setUp() {
+        User admin = new User().setPerfil(Perfil.ADMINISTRADOR);
+        lenient().when(autorizacaoOperacional.autorizarEscrita()).thenReturn(admin);
+        lenient().when(autorizacaoOperacional.autorizarConsulta()).thenReturn(admin);
+        lenient().when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(admin);
+        lenient().when(regionalRepository.findById(1L))
+                .thenReturn(Optional.of(new Regional().setId(1L).setAtivo(true)));
         car = new Car()
                 .setId(1L)
                 .setLicensePlate("ABC1234")
@@ -56,24 +73,24 @@ class CarServiceTest {
                 .setActive(true)
                 .setCreatedAt(LocalDateTime.now());
 
-        carResponse = new CarResponse(1L, "ABC1234", "Civic", true, LocalDateTime.now(), null);
+        carResponse = new CarResponse(1L, "ABC1234", "Civic", true, LocalDateTime.now(), null, null);
     }
 
     @Test
     void getAvailableCars_ShouldReturnAllActiveCarsWithoutManagementPermission() {
-        when(carRepository.findByFilters(null, true, Pageable.unpaged()))
+        when(carRepository.findByFilters(null, true, null, Pageable.unpaged()))
                 .thenReturn(new PageImpl<>(List.of(car)));
         when(carMapper.toResponse(car)).thenReturn(carResponse);
 
         assertThat(carService.getAvailableCars()).containsExactly(carResponse);
 
-        verify(carRepository).findByFilters(null, true, Pageable.unpaged());
+        verify(carRepository).findByFilters(null, true, null, Pageable.unpaged());
         verifyNoInteractions(autorizacaoOperacional);
     }
 
     @Test
     void createCar_ShouldCreateCarSuccessfully() {
-        CreateCarRequest request = new CreateCarRequest("ABC1234", "Civic");
+        CreateCarRequest request = new CreateCarRequest("ABC1234", "Civic", 1L);
         when(carRepository.existsCarByLicensePlate("ABC1234")).thenReturn(false);
         when(carMapper.toEntity(request)).thenReturn(car);
         when(carRepository.save(car)).thenReturn(car);
@@ -88,7 +105,7 @@ class CarServiceTest {
 
     @Test
     void createCar_ShouldThrowCarAlreadyExistsException_WhenPlateExists() {
-        CreateCarRequest request = new CreateCarRequest("ABC1234", "Civic");
+        CreateCarRequest request = new CreateCarRequest("ABC1234", "Civic", 1L);
         when(carRepository.existsCarByLicensePlate("ABC1234")).thenReturn(true);
 
         assertThrows(CarAlreadyExistsException.class, () -> carService.createCar(request));
@@ -115,7 +132,7 @@ class CarServiceTest {
 
     @Test
     void updateCar_ShouldUpdateCarSuccessfully() {
-        UpdateCarRequest request = new UpdateCarRequest("XYZ9876", "Corolla", false);
+        UpdateCarRequest request = new UpdateCarRequest("XYZ9876", "Corolla", false, null);
         when(carRepository.findById(1L)).thenReturn(Optional.of(car));
         when(carRepository.findByLicensePlate("XYZ9876")).thenReturn(Optional.empty());
         when(carRepository.save(car)).thenReturn(car);
@@ -130,7 +147,7 @@ class CarServiceTest {
     @Test
     void updateCar_ShouldThrowCarAlreadyExistsException_WhenPlateBelongsToAnotherCar() {
         Car anotherCar = new Car().setId(2L).setLicensePlate("XYZ9876");
-        UpdateCarRequest request = new UpdateCarRequest("XYZ9876", "Corolla", true);
+        UpdateCarRequest request = new UpdateCarRequest("XYZ9876", "Corolla", true, null);
 
         when(carRepository.findById(1L)).thenReturn(Optional.of(car));
         when(carRepository.findByLicensePlate("XYZ9876")).thenReturn(Optional.of(anotherCar));
@@ -152,7 +169,7 @@ class CarServiceTest {
         Pageable pageable = PageRequest.of(0, 10);
         Page<Car> carPage = new PageImpl<>(List.of(car));
 
-        when(carRepository.findByFilters("Civic", true, pageable)).thenReturn(carPage);
+        when(carRepository.findByFilters("Civic", true, null, pageable)).thenReturn(carPage);
         when(carMapper.toResponse(car)).thenReturn(carResponse);
 
         Page<CarResponse> result = carService.getCarsByFilters("Civic", true, pageable);
@@ -224,7 +241,7 @@ class CarServiceTest {
     @Test
     void createCar_ShouldAuthorizeOnTheHappyPathToo() {
         // Sem este, um caminho feliz que pulasse a guarda passaria despercebido.
-        CreateCarRequest request = new CreateCarRequest("ABC1234", "Civic");
+        CreateCarRequest request = new CreateCarRequest("ABC1234", "Civic", 1L);
         when(carRepository.existsCarByLicensePlate("ABC1234")).thenReturn(false);
         when(carMapper.toEntity(request)).thenReturn(car);
         when(carRepository.save(car)).thenReturn(car);

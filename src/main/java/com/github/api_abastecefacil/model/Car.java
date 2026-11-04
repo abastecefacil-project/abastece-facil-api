@@ -21,6 +21,19 @@ public class Car {
     @Column(name = "active", nullable = false)
     private Boolean active;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "regional_id")
+    private Regional regional;
+
+    public Regional getRegional() {
+        return regional;
+    }
+
+    public Car setRegional(Regional regional) {
+        this.regional = regional;
+        return this;
+    }
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

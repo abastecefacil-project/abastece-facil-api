@@ -14,6 +14,7 @@ public record CreateCarRequest(
 
         @NotBlank(message = "Modelo do carro é obrigatório")
         @Size(min = 3, max = 45, message = "Modelo do carro deve ter entre 3 e 45 caracteres")
-        String model
+        String model,
+        Long regionalId
 ) {
 }

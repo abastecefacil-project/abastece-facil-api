@@ -8,6 +8,12 @@ import org.springframework.stereotype.Component;
 @Component
 public class CarMapper {
 
+    private final RegionalMapper regionalMapper;
+
+    public CarMapper(RegionalMapper regionalMapper) {
+        this.regionalMapper = regionalMapper;
+    }
+
     public Car toEntity(CreateCarRequest request) {
         return new Car()
                 .setLicensePlate(request.licensePlate())
@@ -21,7 +27,8 @@ public class CarMapper {
                 car.getModel(),
                 car.getActive(),
                 car.getCreatedAt(),
-                car.getUpdatedAt()
+                car.getUpdatedAt(),
+                regionalMapper.toSummaryResponse(car.getRegional())
         );
     }
 }

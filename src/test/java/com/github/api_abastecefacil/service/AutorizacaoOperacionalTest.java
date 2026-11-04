@@ -109,10 +109,7 @@ class AutorizacaoOperacionalTest {
 
     @Test
     void autorizar_ShouldNotDependOnRegional() {
-        // Posto, veiculo e ocorrencia nao tem regional, entao nao ha o que segmentar:
-        // gestor sem regional escreve igual ao gestor com regional. E o oposto de
-        // UserService.autorizarSobreUsuario, onde gestor sem regional nao cadastra
-        // ninguem -- ali existe alvo com regional para comparar, aqui nao.
+        // Esta guarda confere o perfil; a regional do veículo é validada em CarService.
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
                 .thenReturn(new User().setId(2L).setPerfil(Perfil.GESTOR_FROTA).setRegional(null));
 

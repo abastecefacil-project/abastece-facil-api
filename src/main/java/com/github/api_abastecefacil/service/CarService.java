@@ -7,6 +7,11 @@ import com.github.api_abastecefacil.exception.CarAlreadyExistsException;
 import com.github.api_abastecefacil.exception.NotFoundException;
 import com.github.api_abastecefacil.mapper.CarMapper;
 import com.github.api_abastecefacil.model.Car;
+import com.github.api_abastecefacil.model.User;
+import com.github.api_abastecefacil.model.Perfil;
+import com.github.api_abastecefacil.model.Regional;
+import com.github.api_abastecefacil.repository.RegionalRepository;
+import com.github.api_abastecefacil.exception.RegionalNaoPermitidaException;
 import com.github.api_abastecefacil.repository.CarRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -14,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Objects;
 
 import static com.github.api_abastecefacil.constants.CarConstants.CAR_NOT_FOUND_MESSAGE;
 import static com.github.api_abastecefacil.constants.CarConstants.LICENSE_PLATE_ALREADY_EXISTS_MESSAGE;
@@ -24,12 +30,18 @@ public class CarService {
 
     private final CarRepository carRepository;
     private final CarMapper carMapper;
+    private final RegionalRepository regionalRepository;
+    private final UsuarioAutenticadoProvider usuarioAutenticadoProvider;
     private final AutorizacaoOperacional autorizacaoOperacional;
 
     public CarService(
             CarRepository carRepository,
             CarMapper carMapper,
-            AutorizacaoOperacional autorizacaoOperacional) {
+            AutorizacaoOperacional autorizacaoOperacional,
+            RegionalRepository regionalRepository,
+            UsuarioAutenticadoProvider usuarioAutenticadoProvider) {
+        this.regionalRepository = regionalRepository;
+        this.usuarioAutenticadoProvider = usuarioAutenticadoProvider;
         this.carRepository = carRepository;
         this.carMapper = carMapper;
         this.autorizacaoOperacional = autorizacaoOperacional;
@@ -37,23 +49,29 @@ public class CarService {
 
     @Transactional
     public CarResponse createCar(CreateCarRequest request) {
-        autorizacaoOperacional.autorizarEscrita();
+        User autor = autorizacaoOperacional.autorizarEscrita();
         validateLicensePlateDoesNotExist(request.licensePlate());
         Car car = carMapper.toEntity(request);
+        car.setRegional(resolverRegional(autor, request.regionalId()));
         Car savedCar = carRepository.save(car);
         return carMapper.toResponse(savedCar);
     }
 
     public CarResponse getCarById(Long carId) {
-        autorizacaoOperacional.autorizarConsulta();
+        User autor = autorizacaoOperacional.autorizarConsulta();
         Car car = findCarByIdOrThrow(carId);
+        autorizarVeiculo(autor, car);
         return carMapper.toResponse(car);
     }
 
     @Transactional
     public CarResponse updateCar(Long carId, UpdateCarRequest request) {
-        autorizacaoOperacional.autorizarEscrita();
+        User autor = autorizacaoOperacional.autorizarEscrita();
         Car car = findCarByIdOrThrow(carId);
+        autorizarVeiculo(autor, car);
+        if (request.regionalId() != null) {
+            car.setRegional(resolverRegional(autor, request.regionalId()));
+        }
         updateLicensePlateIfProvided(car, carId, request.licensePlate());
         updateModelIfProvided(car, request.model());
         updateActiveStatusIfProvided(car, request.isActive());
@@ -63,21 +81,59 @@ public class CarService {
 
     @Transactional
     public void deleteCar(Long carId) {
-        autorizacaoOperacional.autorizarEscrita();
+        User autor = autorizacaoOperacional.autorizarEscrita();
         Car car = findCarByIdOrThrow(carId);
+        autorizarVeiculo(autor, car);
         carRepository.delete(car);
     }
 
     // Todos os perfis autenticados podem selecionar um veículo ativo ao registrar ocorrência.
     public List<CarResponse> getAvailableCars() {
-        return carRepository.findByFilters(null, true, Pageable.unpaged())
+        User autor = usuarioAutenticadoProvider.obterUsuarioAutenticado();
+        Long regionalId = autor.getPerfil() == Perfil.GESTOR_FROTA ? regionalDoGestor(autor).getId() : null;
+        return carRepository.findByFilters(null, true, regionalId, Pageable.unpaged())
                 .map(carMapper::toResponse).getContent();
     }
 
     public Page<CarResponse> getCarsByFilters(String search, Boolean active, Pageable pageable) {
-        autorizacaoOperacional.autorizarConsulta();
-        Page<Car> carsPage = carRepository.findByFilters(search, active, pageable);
+        User autor = autorizacaoOperacional.autorizarConsulta();
+        Long regionalId = autor.getPerfil() == Perfil.GESTOR_FROTA ? regionalDoGestor(autor).getId() : null;
+        Page<Car> carsPage = carRepository.findByFilters(search, active, regionalId, pageable);
         return carsPage.map(carMapper::toResponse);
+    }
+
+    private Regional regionalDoGestor(User autor) {
+        if (autor.getRegional() == null || autor.getRegional().getId() == null) {
+            throw new RegionalNaoPermitidaException("Sua conta não possui regional para gerenciar veículos.");
+        }
+        return autor.getRegional();
+    }
+
+    private void autorizarVeiculo(User autor, Car car) {
+        if (autor.getPerfil() == Perfil.GESTOR_FROTA
+                && (car.getRegional() == null
+                || !Objects.equals(regionalDoGestor(autor).getId(), car.getRegional().getId()))) {
+            throw new RegionalNaoPermitidaException("Você só pode acessar veículos da sua regional.");
+        }
+    }
+
+    private Regional resolverRegional(User autor, Long regionalId) {
+        if (autor.getPerfil() == Perfil.GESTOR_FROTA) {
+            Regional regional = regionalDoGestor(autor);
+            if (regionalId != null && !regionalId.equals(regional.getId())) {
+                throw new RegionalNaoPermitidaException("Você só pode cadastrar veículos na sua regional.");
+            }
+            return regional;
+        }
+        if (regionalId == null) {
+            throw new RegionalNaoPermitidaException("Informe a regional do veículo.");
+        }
+        Regional regional = regionalRepository.findById(regionalId)
+                .orElseThrow(() -> new NotFoundException("Regional não encontrada"));
+        if (!Boolean.TRUE.equals(regional.getAtivo())) {
+            throw new RegionalNaoPermitidaException("Selecione uma regional ativa.");
+        }
+        return regional;
     }
 
     private Car findCarByIdOrThrow(Long carId) {

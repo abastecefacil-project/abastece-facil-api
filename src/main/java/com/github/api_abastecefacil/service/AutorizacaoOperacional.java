@@ -10,40 +10,9 @@ import static com.github.api_abastecefacil.constants.AutorizacaoConstants.PERFIL
 import static com.github.api_abastecefacil.constants.AutorizacaoConstants.PERFIL_NAO_PERMITIDO_ESCRITA_MESSAGE;
 
 /**
- * Autorização por perfil do <b>cadastro operacional</b> — postos, veículos e ocorrências.
- * Ponto único da regra: ADMINISTRADOR e GESTOR_FROTA podem, COLABORADOR não.
- *
- * <p>A exceção é {@link #autorizarAdministracao}, que libera <b>só</b> ADMINISTRADOR. Hoje ela
- * guarda a importação da planilha de postos, que reescreve e desativa o cadastro inteiro de
- * uma vez.
- *
- * <p><b>Por que não é {@code @PreAuthorize}.</b> O P0.4 mediu a alternativa antes de
- * decidir, e o resultado corrige um detalhe do §6, item 19 do CLAUDE.md: com
- * {@code @EnableMethodSecurity}, o {@code AccessDeniedException} de um
- * {@code @PreAuthorize} <b>é</b> alcançável pelo {@code @ControllerAdvice} — ele é lançado
- * dentro do dispatch, então o {@code HandlerExceptionResolver} o vê antes do
- * {@code ExceptionTranslationFilter}, e um {@code @ExceptionHandler} devolve
- * {@code ErrorResponse} normalmente. O que continua valendo são os outros dois motivos, e
- * eles bastam:
- *
- * <ul>
- *   <li><b>Nenhum teste do projeto sobe contexto Spring</b>, então anotação de
- *       autorização ficaria sem cobertura nenhuma. Um {@code hasRole} escrito errado
- *       compila, passa na suíte inteira e abre a rota em silêncio.</li>
- *   <li>A autorização de {@code /api/users/**} tem lógica de dono e regional e
- *       <b>continua no serviço</b>. Anotar o resto criaria os dois lugares decidindo
- *       autorização que o S2a quis evitar — em vez de unificar, dobraria.</li>
- *   <li>O 403 do Spring traz {@code "Access Denied"}, em inglês e igual para todas as
- *       rotas. O projeto escreve mensagem em português e específica do recurso.</li>
- * </ul>
- *
- * <p><b>Escrita e consulta são o mesmo predicado hoje</b>, e mesmo assim são dois métodos:
- * a mensagem precisa dizer o que foi recusado, e a regra de leitura é a que tem chance de
- * afrouxar primeiro se um dia o colaborador precisar consultar a frota pela área logada.
- *
- * <p>Nada aqui protege o que é público: {@code GET /api/public/gas-stations/**} e
- * {@code POST /api/public/incident} passam pelos mesmos métodos de serviço e continuam
- * sem autorização, de propósito.
+ * Permissões operacionais resolvidas pelo usuário atual do banco.
+ * Postos exigem administração; veículos e ocorrências permitem gestão.
+ * O serviço de veículos também confere a regional do recurso.
  */
 @Component
 public class AutorizacaoOperacional {
@@ -54,9 +23,9 @@ public class AutorizacaoOperacional {
         this.usuarioAutenticadoProvider = usuarioAutenticadoProvider;
     }
 
-    /** Criar, alterar ou excluir posto, veículo ou ocorrência. */
-    public void autorizarEscrita() {
-        exigirGestao(PERFIL_NAO_PERMITIDO_ESCRITA_MESSAGE);
+    /** Criar, alterar ou excluir veículo ou ocorrência; devolve o autor para validar a regional. */
+    public User autorizarEscrita() {
+        return exigirGestao(PERFIL_NAO_PERMITIDO_ESCRITA_MESSAGE);
     }
 
     /**
