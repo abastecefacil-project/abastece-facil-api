@@ -442,7 +442,7 @@ class GasStationServiceTest {
     @Test
     void create_ShouldAuthorizeBeforeTouchingAnythingElse() {
         doThrow(new PerfilNaoPermitidoException("negado"))
-                .when(autorizacaoOperacional).autorizarEscrita();
+                .when(autorizacaoOperacional).autorizarAdministracao();
 
         assertThrows(PerfilNaoPermitidoException.class, () -> gasStationService.create(null));
 
@@ -452,7 +452,7 @@ class GasStationServiceTest {
     @Test
     void update_ShouldAuthorizeBeforeTouchingAnythingElse() {
         doThrow(new PerfilNaoPermitidoException("negado"))
-                .when(autorizacaoOperacional).autorizarEscrita();
+                .when(autorizacaoOperacional).autorizarAdministracao();
 
         assertThrows(PerfilNaoPermitidoException.class, () -> gasStationService.update(1L, null));
 
@@ -462,7 +462,7 @@ class GasStationServiceTest {
     @Test
     void deleteGasStation_ShouldAuthorizeBeforeTouchingAnythingElse() {
         doThrow(new PerfilNaoPermitidoException("negado"))
-                .when(autorizacaoOperacional).autorizarEscrita();
+                .when(autorizacaoOperacional).autorizarAdministracao();
 
         assertThrows(PerfilNaoPermitidoException.class, () -> gasStationService.deleteGasStation(1L));
 

@@ -54,7 +54,7 @@ public class GasStationService {
      */
     @Transactional
     public GasStationResponse create(CreateGasStationRequest request) {
-        autorizacaoOperacional.autorizarEscrita();
+        autorizacaoOperacional.autorizarAdministracao();
         validateCnpjDoesNotExist(request.cnpj());
         Coordinates coordinates = request.coordenadasInformadas()
                 ? informadas(request.latitude(), request.longitude())
@@ -78,7 +78,7 @@ public class GasStationService {
      */
     @Transactional
     public GasStationResponse update(Long id, UpdateGasStationRequest request) {
-        autorizacaoOperacional.autorizarEscrita();
+        autorizacaoOperacional.autorizarAdministracao();
         GasStation gasStation = findGasStationByIdOrThrow(id);
         validateCnpjNotUsedByAnotherGasStation(gasStation, request.cnpj());
         Coordinates coordinates = resolveUpdatedCoordinates(gasStation, request);
@@ -97,7 +97,7 @@ public class GasStationService {
      */
     @Transactional
     public void deleteGasStation(Long id) {
-        autorizacaoOperacional.autorizarEscrita();
+        autorizacaoOperacional.autorizarAdministracao();
         GasStation gasStation = findGasStationByIdOrThrow(id);
         validateSemVinculoNeo(id);
         gasStationRepository.delete(gasStation);
