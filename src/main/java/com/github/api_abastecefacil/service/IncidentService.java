@@ -9,6 +9,7 @@ import com.github.api_abastecefacil.mapper.IncidentMapper;
 import com.github.api_abastecefacil.model.Incident;
 import com.github.api_abastecefacil.repository.CarRepository;
 import com.github.api_abastecefacil.repository.IncidentRepository;
+import com.github.api_abastecefacil.util.PlanilhaXlsx;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.Arrays;
 import java.util.List;
 
 import static com.github.api_abastecefacil.constants.IncidentConstants.*;
@@ -24,6 +26,9 @@ import static com.github.api_abastecefacil.constants.IncidentConstants.*;
 @Service
 @Transactional(readOnly = true)
 public class IncidentService {
+
+    private static final List<String> CABECALHOS_EXPORTACAO = List.of(
+            "Data da ocorrência", "Placa", "Título", "Descrição", "Registrado por", "Registrado em");
 
     private final CarRepository carRepository;
     private final IncidentRepository incidentRepository;
@@ -76,6 +81,22 @@ public class IncidentService {
                 pageable
         );
         return incidentsPage.map(incidentMapper::toResponse);
+    }
+
+    /** Mesmos filtros e guarda da listagem, sem paginação. Ocorrência não tem regional: sem escopo. */
+    public byte[] exportarOcorrencias(String carPlate, String title, String userName, LocalDate occurrenceDate) {
+        autorizacaoOperacional.autorizarConsulta();
+        List<List<Object>> linhas = incidentRepository
+                .findByFilters(carPlate, title, userName, occurrenceDate, Pageable.unpaged())
+                .map(incident -> Arrays.<Object>asList(
+                        incident.getOccurrenceDate(),
+                        incident.getCarPlate(),
+                        incident.getTitle(),
+                        incident.getDescription(),
+                        incident.getUserName(),
+                        incident.getCreatedAt()))
+                .getContent();
+        return PlanilhaXlsx.gerar(CABECALHOS_EXPORTACAO, linhas);
     }
 
     @Transactional

@@ -12,6 +12,7 @@ import com.github.api_abastecefacil.model.GasStation;
 import com.github.api_abastecefacil.repository.GasStationRepository;
 import com.github.api_abastecefacil.repository.NotificacaoNeoRepository;
 import com.github.api_abastecefacil.service.OpenStreetMapService.Coordinates;
+import com.github.api_abastecefacil.util.PlanilhaXlsx;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -19,6 +20,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 
 import static com.github.api_abastecefacil.constants.GasStationConstants.*;
@@ -27,6 +30,10 @@ import static com.github.api_abastecefacil.validation.NormalizadorPlanilhaPostos
 @Service
 @Transactional(readOnly = true)
 public class GasStationService {
+
+    private static final List<String> CABECALHOS_EXPORTACAO = List.of(
+            "Nome", "Nome fantasia", "CNPJ", "Endereço", "Bairro", "Cidade", "UF", "CEP", "Telefone",
+            "Horário de funcionamento", "Latitude", "Longitude", "Situação", "Cadastrado em", "Atualizado em");
 
     private final GasStationRepository gasStationRepository;
     private final OpenStreetMapService openStreetMapService;
@@ -119,6 +126,32 @@ public class GasStationService {
         return stationsPage.map(gasStationMapper::toResponse);
     }
 
+    /**
+     * Mesmos filtros da listagem, sem paginação. Ao contrário dela, exige gestão: é relatório
+     * administrativo. Posto não tem regional, então gestor exporta todos, como vê na tela.
+     */
+    public byte[] exportarPostos(String search, Boolean active) {
+        autorizacaoOperacional.autorizarConsulta();
+        List<List<Object>> linhas = gasStationRepository.findByFilters(search, active, Pageable.unpaged())
+                .map(posto -> Arrays.<Object>asList(
+                        posto.getName(),
+                        posto.getFantasyName(),
+                        posto.getCnpj(),
+                        posto.getAddress(),
+                        posto.getDistrict(),
+                        posto.getCity(),
+                        posto.getState(),
+                        posto.getCep(),
+                        posto.getPhone(),
+                        posto.getBusinessHours(),
+                        posto.getLatitude(),
+                        posto.getLongitude(),
+                        posto.getActive(),
+                        posto.getCreatedAt(),
+                        posto.getUpdatedAt()))
+                .getContent();
+        return PlanilhaXlsx.gerar(CABECALHOS_EXPORTACAO, linhas);
+    }
 
     private GasStation findGasStationByIdOrThrow(Long id) {
         return gasStationRepository.findById(id)

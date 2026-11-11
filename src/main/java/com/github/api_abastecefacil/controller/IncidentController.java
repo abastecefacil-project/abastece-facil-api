@@ -5,6 +5,7 @@ import com.github.api_abastecefacil.dto.incident.IncidentDashboardResponse;
 import com.github.api_abastecefacil.dto.incident.IncidentResponse;
 import com.github.api_abastecefacil.dto.incident.UpdateIncidentRequest;
 import com.github.api_abastecefacil.service.IncidentService;
+import com.github.api_abastecefacil.util.PlanilhaXlsx;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -51,6 +52,15 @@ public class IncidentController {
         return ResponseEntity.ok(response);
     }
 
+    @GetMapping("/incidents/export")
+    public ResponseEntity<byte[]> exportIncidents(
+            @RequestParam(required = false) String carPlate,
+            @RequestParam(required = false) String title,
+            @RequestParam(required = false) String userName,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate occurrenceDate) {
+        return PlanilhaXlsx.resposta("ocorrencias",
+                incidentService.exportarOcorrencias(carPlate, title, userName, occurrenceDate));
+    }
 
     @GetMapping("/incidents/dashboard")
     public ResponseEntity<IncidentDashboardResponse> getIncidentSummary() {
