@@ -4,6 +4,7 @@ import com.github.api_abastecefacil.dto.car.CarResponse;
 import com.github.api_abastecefacil.dto.car.CreateCarRequest;
 import com.github.api_abastecefacil.dto.car.UpdateCarRequest;
 import com.github.api_abastecefacil.service.CarService;
+import com.github.api_abastecefacil.util.PlanilhaXlsx;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -47,6 +48,13 @@ public class CarController {
             @RequestParam(required = false) Boolean active,
             @PageableDefault(size = 10) Pageable pageable) {
         return ResponseEntity.ok(carService.getCarsByFilters(search, active, pageable));
+    }
+
+    @GetMapping("cars/export")
+    public ResponseEntity<byte[]> exportCars(
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) Boolean active) {
+        return PlanilhaXlsx.resposta("veiculos", carService.exportarVeiculos(search, active));
     }
 
     @PatchMapping("cars/{carId}")

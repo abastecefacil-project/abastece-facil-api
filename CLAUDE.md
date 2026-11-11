@@ -359,7 +359,11 @@ propósito: a anotação descreveria uma constraint total, que não é o que exi
 `created_at`, `updated_at`
 
 ### `cars`
-`id`, `license_plate` (único), `model`, `active`, `created_at`, `updated_at`
+`id`, `license_plate` (único), `model`, `active`, `created_at`, `updated_at`, `regional_id`
+
+`regional_id` entrou pela `V104__regional_veiculos.sql`, nullable, com FK para `regionais`; os
+veículos anteriores ficam sem regional até o administrador classificá-los. O `GESTOR_FROTA` só
+lista, exporta, lê e altera veículos da própria regional (sem regional: 403 `REGIONAL_NAO_PERMITIDA`).
 
 ### `incidents`
 `id`, `car_plate`, `user_name`, `occurrence_date` (date), `title`, `description`,
@@ -520,22 +524,26 @@ resultado por outro caminho.
 | GET | `/api/public/gas-stations/filter` | autenticado, qualquer perfil |
 | GET | `/api/public/gas-stations/{id}` | autenticado, qualquer perfil |
 | POST | `/api/public/incident` | autenticado, qualquer perfil |
-| POST | `/api/gas-stations` | **gestão** |
-| PUT | `/api/gas-stations/{id}` | **gestão** |
-| DELETE | `/api/gas-stations/{id}` | **gestão** |
+| POST | `/api/gas-stations` | **só `ADMINISTRADOR`** (desde 5df5d70) |
+| PUT | `/api/gas-stations/{id}` | **só `ADMINISTRADOR`** |
+| DELETE | `/api/gas-stations/{id}` | **só `ADMINISTRADOR`** |
+| GET | `/api/gas-stations/export` | **gestão** — `search`, `active`; posto não tem regional, gestor exporta todos |
 | GET | `/api/cars/filter` | **gestão** |
 | GET | `/api/cars/{carId}` | **gestão** |
 | POST | `/api/cars` | **gestão** |
 | PATCH | `/api/cars/{carId}` | **gestão** |
 | DELETE | `/api/cars/{carId}` | **gestão** |
+| GET | `/api/cars/export` | **gestão** — gestor só a própria regional |
 | GET | `/api/incidents` | **gestão** |
 | GET | `/api/incidents/{id}` | **gestão** |
 | GET | `/api/incidents/dashboard` | **gestão** — em uso pelo `AdminDashboard.vue`; sai depois da migração para `/api/dashboard` |
 | PATCH | `/api/incidents/{id}` | **gestão** |
+| GET | `/api/incidents/export` | **gestão** — filtros da listagem; ocorrência não tem regional, gestor exporta todas |
 | GET | `/api/users` | autenticado — **escopado por perfil** |
 | GET | `/api/users/me` | autenticado — **o próprio registro** |
 | GET | `/api/users/{userId}` | autenticado — **autorizado por perfil/regional** |
 | GET | `/api/users/dashboard` | autenticado — **sem uso no front, candidato a remoção** |
+| GET | `/api/users/export` | **gestão** — `active` (obrigatório), `name`; escopo de `GET /api/users` |
 | GET | `/api/dashboard` | **gestão** — usuários **escopados por perfil** |
 | POST | `/api/users` | autenticado |
 | POST | `/api/users/{userId}/reenviar-ativacao` | autenticado |
@@ -558,6 +566,12 @@ porque reescreve e desativa o cadastro inteiro de uma vez. Ver "Importação de 
 **Note a assimetria:** consultar postos e criar ocorrência valem para **qualquer
 perfil autenticado**, COLABORADOR inclusive; o resto do cadastro operacional é de gestão. Só
 `/api/auth/**` dispensa token — apesar do nome, `/api/public/**` exige login.
+
+**Exportação .xlsx (`GET /api/cars/export`).** Mesmos filtros (`search`, `active`), guarda e escopo
+de regional de `/api/cars/filter`, sem paginação. Responde o `.xlsx` com
+`Content-Disposition: attachment; filename="veiculos-AAAA-MM-DD.xlsx"` (data em São Paulo),
+montado por `util/PlanilhaXlsx`. O CORS expõe `Content-Disposition`
+(`SecurityConfig.corsConfigurationSource`) para o front em outra origem ler o nome do arquivo.
 
 ### Paginação
 
@@ -2351,7 +2365,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **695 testes no backend, todos passando.** Cobrem `AuthService`,
+- **740 testes no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -2366,7 +2380,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   fatia web. Nenhum sobe banco nem contexto completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 695, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 740, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa

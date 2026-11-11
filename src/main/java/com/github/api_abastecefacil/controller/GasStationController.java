@@ -4,6 +4,7 @@ import com.github.api_abastecefacil.dto.gasStation.CreateGasStationRequest;
 import com.github.api_abastecefacil.dto.gasStation.GasStationResponse;
 import com.github.api_abastecefacil.dto.gasStation.UpdateGasStationRequest;
 import com.github.api_abastecefacil.service.GasStationService;
+import com.github.api_abastecefacil.util.PlanilhaXlsx;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -50,6 +51,13 @@ public class GasStationController {
             @RequestParam(required = false) Boolean active,
             @PageableDefault(size = 10) Pageable pageable) {
         return ResponseEntity.ok(gasStationService.getGasStationsByFilters(search, active, pageable));
+    }
+
+    @GetMapping("/gas-stations/export")
+    public ResponseEntity<byte[]> exportGasStations(
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) Boolean active) {
+        return PlanilhaXlsx.resposta("postos", gasStationService.exportarPostos(search, active));
     }
 
     @DeleteMapping("/gas-stations/{id}")

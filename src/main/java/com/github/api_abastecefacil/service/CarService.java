@@ -13,11 +13,13 @@ import com.github.api_abastecefacil.model.Regional;
 import com.github.api_abastecefacil.repository.RegionalRepository;
 import com.github.api_abastecefacil.exception.RegionalNaoPermitidaException;
 import com.github.api_abastecefacil.repository.CarRepository;
+import com.github.api_abastecefacil.util.PlanilhaXlsx;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
@@ -27,6 +29,9 @@ import static com.github.api_abastecefacil.constants.CarConstants.LICENSE_PLATE_
 @Service
 @Transactional(readOnly = true)
 public class CarService {
+
+    private static final List<String> CABECALHOS_EXPORTACAO =
+            List.of("Placa", "Modelo", "Regional", "Situação", "Cadastrado em", "Atualizado em");
 
     private final CarRepository carRepository;
     private final CarMapper carMapper;
@@ -90,16 +95,38 @@ public class CarService {
     // Todos os perfis autenticados podem selecionar um veículo ativo ao registrar ocorrência.
     public List<CarResponse> getAvailableCars() {
         User autor = usuarioAutenticadoProvider.obterUsuarioAutenticado();
-        Long regionalId = autor.getPerfil() == Perfil.GESTOR_FROTA ? regionalDoGestor(autor).getId() : null;
-        return carRepository.findByFilters(null, true, regionalId, Pageable.unpaged())
+        return carRepository.findByFilters(null, true, regionalDaConsulta(autor), Pageable.unpaged())
                 .map(carMapper::toResponse).getContent();
     }
 
     public Page<CarResponse> getCarsByFilters(String search, Boolean active, Pageable pageable) {
         User autor = autorizacaoOperacional.autorizarConsulta();
-        Long regionalId = autor.getPerfil() == Perfil.GESTOR_FROTA ? regionalDoGestor(autor).getId() : null;
-        Page<Car> carsPage = carRepository.findByFilters(search, active, regionalId, pageable);
+        Page<Car> carsPage = carRepository.findByFilters(search, active, regionalDaConsulta(autor), pageable);
         return carsPage.map(carMapper::toResponse);
+    }
+
+    /**
+     * Mesmos filtros, guarda e escopo de regional da listagem, sem paginação. A regional é LAZY e
+     * é lida dentro desta transação: o contexto de persistência carrega cada regional uma vez.
+     */
+    public byte[] exportarVeiculos(String search, Boolean active) {
+        User autor = autorizacaoOperacional.autorizarConsulta();
+        List<List<Object>> linhas = carRepository
+                .findByFilters(search, active, regionalDaConsulta(autor), Pageable.unpaged())
+                .map(car -> Arrays.<Object>asList(
+                        car.getLicensePlate(),
+                        car.getModel(),
+                        car.getRegional() == null ? null : car.getRegional().getNome(),
+                        car.getActive(),
+                        car.getCreatedAt(),
+                        car.getUpdatedAt()))
+                .getContent();
+        return PlanilhaXlsx.gerar(CABECALHOS_EXPORTACAO, linhas);
+    }
+
+    /** Gestor só vê a própria regional; administrador vê todas ({@code null}). */
+    private Long regionalDaConsulta(User autor) {
+        return autor.getPerfil() == Perfil.GESTOR_FROTA ? regionalDoGestor(autor).getId() : null;
     }
 
     private Regional regionalDoGestor(User autor) {

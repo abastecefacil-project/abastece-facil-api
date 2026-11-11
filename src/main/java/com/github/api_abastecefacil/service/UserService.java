@@ -21,15 +21,18 @@ import com.github.api_abastecefacil.model.Regional;
 import com.github.api_abastecefacil.model.User;
 import com.github.api_abastecefacil.repository.RegionalRepository;
 import com.github.api_abastecefacil.repository.UserRepository;
+import com.github.api_abastecefacil.util.PlanilhaXlsx;
 import com.github.api_abastecefacil.validation.UserValidator;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -41,12 +44,18 @@ import static com.github.api_abastecefacil.constants.UserConstants.*;
 @Transactional(readOnly = true)
 public class UserService {
 
+    // Sem senha, hash, token nem senha_definida: relatório não carrega nada de credencial.
+    private static final List<String> CABECALHOS_EXPORTACAO = List.of(
+            "Nome", "E-mail", "Telefone", "Matrícula", "Perfil", "Regional", "Situação",
+            "Cadastrado em", "Atualizado em");
+
     private final UserRepository userRepository;
     private final RegionalRepository regionalRepository;
     private final UserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
     private final UsuarioAutenticadoProvider usuarioAutenticadoProvider;
     private final EnvioAcessoService envioAcessoService;
+    private final AutorizacaoOperacional autorizacaoOperacional;
     private final List<String> dominiosPermitidos;
 
     public UserService(
@@ -56,6 +65,7 @@ public class UserService {
             PasswordEncoder passwordEncoder,
             UsuarioAutenticadoProvider usuarioAutenticadoProvider,
             EnvioAcessoService envioAcessoService,
+            AutorizacaoOperacional autorizacaoOperacional,
             @Value("${abastecefacil.auth.dominios-permitidos:}") List<String> dominiosPermitidos) {
         this.userRepository = userRepository;
         this.regionalRepository = regionalRepository;
@@ -63,6 +73,7 @@ public class UserService {
         this.passwordEncoder = passwordEncoder;
         this.usuarioAutenticadoProvider = usuarioAutenticadoProvider;
         this.envioAcessoService = envioAcessoService;
+        this.autorizacaoOperacional = autorizacaoOperacional;
         this.dominiosPermitidos = dominiosPermitidos;
     }
 
@@ -451,6 +462,36 @@ public class UserService {
     public Page<UserResponse> getAllUsers(Boolean active, String name, Pageable pageable) {
         User autor = usuarioAutenticadoProvider.obterUsuarioAutenticado();
         return buscarUsuariosVisiveis(autor, active, name, pageable).map(userMapper::toResponse);
+    }
+
+    /**
+     * Mesmos filtros e escopo da listagem ({@link EscopoUsuarios}), sem paginação e ordenado por
+     * nome. Ao contrário da listagem, colaborador recebe 403: é relatório de gestão. Gestor sem
+     * regional cai no escopo próprio e exporta só a si mesmo, como vê na tela.
+     */
+    public byte[] exportarUsuarios(Boolean active, String name) {
+        User autor = autorizacaoOperacional.autorizarConsulta();
+        List<List<Object>> linhas = buscarUsuariosVisiveis(autor, active, name, Pageable.unpaged(Sort.by("name")))
+                .map(usuario -> Arrays.<Object>asList(
+                        usuario.getName(),
+                        usuario.getEmail(),
+                        usuario.getTelefone(),
+                        usuario.getMatricula(),
+                        rotuloPerfil(usuario.getPerfil()),
+                        usuario.getRegional() == null ? null : usuario.getRegional().getNome(),
+                        usuario.getActive(),
+                        usuario.getCreatedAt(),
+                        usuario.getUpdatedAt()))
+                .getContent();
+        return PlanilhaXlsx.gerar(CABECALHOS_EXPORTACAO, linhas);
+    }
+
+    private static String rotuloPerfil(Perfil perfil) {
+        return switch (perfil) {
+            case ADMINISTRADOR -> "Administrador";
+            case GESTOR_FROTA -> "Gestor de frota";
+            case COLABORADOR -> "Colaborador";
+        };
     }
 
     private Page<User> buscarUsuariosVisiveis(User autor, Boolean active, String name, Pageable pageable) {

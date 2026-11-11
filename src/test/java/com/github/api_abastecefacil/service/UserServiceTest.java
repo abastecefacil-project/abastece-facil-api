@@ -88,7 +88,8 @@ class UserServiceTest {
         // configuracao e e o proprio objeto de varios testes.
         userService = new UserService(
                 userRepository, regionalRepository, userMapper, passwordEncoder,
-                usuarioAutenticadoProvider, envioAcessoService, DOMINIOS);
+                usuarioAutenticadoProvider, envioAcessoService,
+                new AutorizacaoOperacional(usuarioAutenticadoProvider), DOMINIOS);
 
         joinville = new Regional().setId(REGIONAL_JOI).setNome("Joinville").setSigla("JOI").setAtivo(true);
 

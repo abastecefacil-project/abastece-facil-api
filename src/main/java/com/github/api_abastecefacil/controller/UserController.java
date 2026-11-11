@@ -6,6 +6,7 @@ import com.github.api_abastecefacil.dto.user.UpdateUserRequest;
 import com.github.api_abastecefacil.dto.user.UserResponse;
 import com.github.api_abastecefacil.service.UserService;
 import com.github.api_abastecefacil.util.IpSolicitante;
+import com.github.api_abastecefacil.util.PlanilhaXlsx;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
@@ -54,6 +55,13 @@ public class UserController {
             @RequestParam(value = "name", required = false, defaultValue = "") String name,
             Pageable pageable) {
         return ResponseEntity.ok(userService.getAllUsers(active, name, pageable));
+    }
+
+    @GetMapping("/export")
+    public ResponseEntity<byte[]> exportUsers(
+            @RequestParam(value = "active") boolean active,
+            @RequestParam(value = "name", required = false, defaultValue = "") String name) {
+        return PlanilhaXlsx.resposta("usuarios", userService.exportarUsuarios(active, name));
     }
 
     @GetMapping("/dashboard")
