@@ -11,12 +11,21 @@ public class Notificacao {
     private Long id;
     @Column(name = "administrador_id", nullable = false)
     private Long administradorId;
-    @Column(name = "posto_id", nullable = false)
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private TipoNotificacao tipo;
+    @Column(name = "posto_id")
     private Long postoId;
     @Column(name = "usuario_nome", nullable = false)
     private String usuarioNome;
-    @Column(name = "posto_nome", nullable = false)
+    @Column(name = "posto_nome")
     private String postoNome;
+    @Column(name = "ocorrencia_id")
+    private Long ocorrenciaId;
+    @Column(name = "ocorrencia_placa")
+    private String ocorrenciaPlaca;
+    @Column(name = "ocorrencia_titulo")
+    private String ocorrenciaTitulo;
     @Column(name = "criado_em", nullable = false)
     private LocalDateTime criadoEm;
     @Column(nullable = false)

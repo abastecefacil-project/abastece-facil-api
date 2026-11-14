@@ -386,6 +386,19 @@ demais FKs (`gas_stations.regional_id` e afins) entram depois.
 Não há relacionamento JPA entre `incidents` e `cars`: a ligação é pela **string da
 placa**, validada em tempo de criação.
 
+### `notificacoes_neo`
+`id`, `administrador_id`, `usuario_id`, `posto_id`, `usuario_nome`, `posto_nome`, `criado_em`,
+`lida`, `tipo`, `ocorrencia_id`, `ocorrencia_placa`, `ocorrencia_titulo`
+
+O nome da tabela ficou do tempo em que só havia recusa do Cartão Neo. A `V105__tipo_notificacao.sql`
+acrescentou `tipo` (`RECUSA_NEO` por default, que preencheu as linhas existentes, ou `OCORRENCIA`;
+enum `model/TipoNotificacao.java`) e o CHECK `ck_notificacoes_neo_tipo`: RECUSA_NEO exige `posto_id`
+e `posto_nome`, sem colunas de ocorrência; OCORRENCIA exige `ocorrencia_id` (FK
+`fk_notificacoes_neo_ocorrencia` para `incidents`), `ocorrencia_placa` e `ocorrencia_titulo`, sem
+posto. Por isso `existsByPostoId` continua querendo dizer "posto com vínculo do Neo". O
+`notificarRecusa` nativo grava o tipo como literal `'RECUSA_NEO'` (§9, item 16). A V105 é idempotente;
+as FKs e a PK da V102 continuam com os nomes gerados pelo Postgres.
+
 ### `tokens_acesso`
 `id`, `email`, `token_hash` (único), `finalidade`, `expira_em`, `usado_em`,
 `ip_solicitante`, `created_at`
@@ -2365,7 +2378,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **740 testes no backend, todos passando.** Cobrem `AuthService`,
+- **741 testes no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -2380,7 +2393,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   fatia web. Nenhum sobe banco nem contexto completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 740, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 741, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa

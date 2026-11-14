@@ -13,8 +13,8 @@ public interface NotificacaoRepository extends JpaRepository<Notificacao, Long> 
 
     @Modifying
     @Query(value = """
-            INSERT INTO notificacoes_neo (administrador_id, usuario_id, posto_id, usuario_nome, posto_nome)
-            SELECT a.id, u.id, p.id, u.name, COALESCE(NULLIF(BTRIM(p.fantasy_name), ''), p.name)
+            INSERT INTO notificacoes_neo (tipo, administrador_id, usuario_id, posto_id, usuario_nome, posto_nome)
+            SELECT 'RECUSA_NEO', a.id, u.id, p.id, u.name, COALESCE(NULLIF(BTRIM(p.fantasy_name), ''), p.name)
             FROM users a JOIN users u ON u.id = :usuarioId JOIN gas_stations p ON p.id = :postoId
             WHERE a.perfil = 'ADMINISTRADOR' AND a.is_active = true
             """, nativeQuery = true)
