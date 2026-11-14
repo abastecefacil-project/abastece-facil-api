@@ -7,8 +7,10 @@ import com.github.api_abastecefacil.dto.incident.UpdateIncidentRequest;
 import com.github.api_abastecefacil.exception.NotFoundException;
 import com.github.api_abastecefacil.mapper.IncidentMapper;
 import com.github.api_abastecefacil.model.Incident;
+import com.github.api_abastecefacil.model.User;
 import com.github.api_abastecefacil.repository.CarRepository;
 import com.github.api_abastecefacil.repository.IncidentRepository;
+import com.github.api_abastecefacil.repository.NotificacaoRepository;
 import com.github.api_abastecefacil.util.PlanilhaXlsx;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -34,28 +36,39 @@ public class IncidentService {
     private final IncidentRepository incidentRepository;
     private final IncidentMapper incidentMapper;
     private final AutorizacaoOperacional autorizacaoOperacional;
+    private final UsuarioAutenticadoProvider usuarioAutenticadoProvider;
+    private final NotificacaoRepository notificacaoRepository;
 
     public IncidentService(
             CarRepository carRepository,
             IncidentRepository incidentRepository,
             IncidentMapper incidentMapper,
-            AutorizacaoOperacional autorizacaoOperacional
+            AutorizacaoOperacional autorizacaoOperacional,
+            UsuarioAutenticadoProvider usuarioAutenticadoProvider,
+            NotificacaoRepository notificacaoRepository
     ) {
         this.carRepository = carRepository;
         this.incidentRepository = incidentRepository;
         this.incidentMapper = incidentMapper;
         this.autorizacaoOperacional = autorizacaoOperacional;
+        this.usuarioAutenticadoProvider = usuarioAutenticadoProvider;
+        this.notificacaoRepository = notificacaoRepository;
     }
     
-    @Transactional
     /**
-     * <b>Sem autorização de propósito.</b> Atende {@code POST /api/public/incident}, que é
-     * público por contrato: registrar ocorrência é o que o usuário final faz sem login.
+     * <b>Sem guarda de perfil de propósito.</b> Atende {@code POST /api/public/incident}, que
+     * exige JWT, mas vale para qualquer perfil autenticado: registrar ocorrência é o que o
+     * colaborador faz. O {@code user_name} gravado é o nome de quem está na sessão, nunca um
+     * valor do payload — senão qualquer um registraria ocorrência em nome de outra pessoa.
+     * Notifica todos os administradores ativos na mesma transação, como a recusa do Neo.
      */
+    @Transactional
     public IncidentResponse createIncident(CreateIncidentRequest request) {
         validateCarExistsByPlate(request.licensePlate());
-        Incident incident = incidentMapper.toEntity(request);
+        User autor = usuarioAutenticadoProvider.obterUsuarioAutenticado();
+        Incident incident = incidentMapper.toEntity(request, autor.getName());
         Incident savedIncident = incidentRepository.save(incident);
+        notificacaoRepository.notificarOcorrencia(savedIncident.getId(), autor.getId());
         return incidentMapper.toResponse(savedIncident);
     }
 

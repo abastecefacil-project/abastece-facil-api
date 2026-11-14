@@ -5,27 +5,40 @@ import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "notificacoes_neo")
-public class NotificacaoNeo {
+public class Notificacao {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     @Column(name = "administrador_id", nullable = false)
     private Long administradorId;
-    @Column(name = "posto_id", nullable = false)
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private TipoNotificacao tipo;
+    @Column(name = "posto_id")
     private Long postoId;
     @Column(name = "usuario_nome", nullable = false)
     private String usuarioNome;
-    @Column(name = "posto_nome", nullable = false)
+    @Column(name = "posto_nome")
     private String postoNome;
+    @Column(name = "ocorrencia_id")
+    private Long ocorrenciaId;
+    @Column(name = "ocorrencia_placa")
+    private String ocorrenciaPlaca;
+    @Column(name = "ocorrencia_titulo")
+    private String ocorrenciaTitulo;
     @Column(name = "criado_em", nullable = false)
     private LocalDateTime criadoEm;
     @Column(nullable = false)
     private boolean lida;
 
     public Long getId() { return id; }
+    public TipoNotificacao getTipo() { return tipo; }
     public Long getPostoId() { return postoId; }
     public String getUsuarioNome() { return usuarioNome; }
     public String getPostoNome() { return postoNome; }
+    public Long getOcorrenciaId() { return ocorrenciaId; }
+    public String getOcorrenciaPlaca() { return ocorrenciaPlaca; }
+    public String getOcorrenciaTitulo() { return ocorrenciaTitulo; }
     public LocalDateTime getCriadoEm() { return criadoEm; }
     public boolean isLida() { return lida; }
 }

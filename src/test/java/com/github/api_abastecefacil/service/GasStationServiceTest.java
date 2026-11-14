@@ -11,7 +11,7 @@ import com.github.api_abastecefacil.exception.PostoComVinculoNeoException;
 import com.github.api_abastecefacil.mapper.GasStationMapper;
 import com.github.api_abastecefacil.model.GasStation;
 import com.github.api_abastecefacil.repository.GasStationRepository;
-import com.github.api_abastecefacil.repository.NotificacaoNeoRepository;
+import com.github.api_abastecefacil.repository.NotificacaoRepository;
 import com.github.api_abastecefacil.service.OpenStreetMapService.Coordinates;
 import com.github.api_abastecefacil.service.OpenStreetMapService.Geocodificacao;
 import com.github.api_abastecefacil.service.OpenStreetMapService.Origem;
@@ -56,7 +56,7 @@ class GasStationServiceTest {
     private AutorizacaoOperacional autorizacaoOperacional;
 
     @Mock
-    private NotificacaoNeoRepository notificacaoNeoRepository;
+    private NotificacaoRepository notificacaoNeoRepository;
 
     @InjectMocks
     private GasStationService gasStationService;

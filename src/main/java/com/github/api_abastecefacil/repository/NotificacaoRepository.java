@@ -1,0 +1,36 @@
+package com.github.api_abastecefacil.repository;
+
+import com.github.api_abastecefacil.model.Notificacao;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.*;
+import org.springframework.data.repository.query.Param;
+
+public interface NotificacaoRepository extends JpaRepository<Notificacao, Long> {
+    Page<Notificacao> findByAdministradorIdOrderByCriadoEmDescIdDesc(Long administradorId, Pageable pageable);
+    long countByAdministradorIdAndLidaFalse(Long administradorId);
+    boolean existsByPostoId(Long postoId);
+
+    @Modifying
+    @Query(value = """
+            INSERT INTO notificacoes_neo (tipo, administrador_id, usuario_id, posto_id, usuario_nome, posto_nome)
+            SELECT 'RECUSA_NEO', a.id, u.id, p.id, u.name, COALESCE(NULLIF(BTRIM(p.fantasy_name), ''), p.name)
+            FROM users a JOIN users u ON u.id = :usuarioId JOIN gas_stations p ON p.id = :postoId
+            WHERE a.perfil = 'ADMINISTRADOR' AND a.is_active = true
+            """, nativeQuery = true)
+    void notificarRecusa(@Param("postoId") Long postoId, @Param("usuarioId") Long usuarioId);
+
+    @Modifying
+    @Query(value = """
+            INSERT INTO notificacoes_neo (tipo, administrador_id, usuario_id, usuario_nome,
+                                          ocorrencia_id, ocorrencia_placa, ocorrencia_titulo)
+            SELECT 'OCORRENCIA', a.id, u.id, u.name, i.id, i.car_plate, i.title
+            FROM users a JOIN users u ON u.id = :usuarioId JOIN incidents i ON i.id = :ocorrenciaId
+            WHERE a.perfil = 'ADMINISTRADOR' AND a.is_active = true
+            """, nativeQuery = true)
+    void notificarOcorrencia(@Param("ocorrenciaId") Long ocorrenciaId, @Param("usuarioId") Long usuarioId);
+
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE Notificacao n SET n.lida = true WHERE n.id = :id AND n.administradorId = :administradorId")
+    int marcarLida(@Param("id") Long id, @Param("administradorId") Long administradorId);
+}

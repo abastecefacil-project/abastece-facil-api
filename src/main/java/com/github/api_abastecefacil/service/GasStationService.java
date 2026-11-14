@@ -10,7 +10,7 @@ import com.github.api_abastecefacil.exception.PostoComVinculoNeoException;
 import com.github.api_abastecefacil.mapper.GasStationMapper;
 import com.github.api_abastecefacil.model.GasStation;
 import com.github.api_abastecefacil.repository.GasStationRepository;
-import com.github.api_abastecefacil.repository.NotificacaoNeoRepository;
+import com.github.api_abastecefacil.repository.NotificacaoRepository;
 import com.github.api_abastecefacil.service.OpenStreetMapService.Coordinates;
 import com.github.api_abastecefacil.util.PlanilhaXlsx;
 import org.springframework.data.domain.Page;
@@ -39,14 +39,14 @@ public class GasStationService {
     private final OpenStreetMapService openStreetMapService;
     private final GasStationMapper gasStationMapper;
     private final AutorizacaoOperacional autorizacaoOperacional;
-    private final NotificacaoNeoRepository notificacaoNeoRepository;
+    private final NotificacaoRepository notificacaoNeoRepository;
 
     public GasStationService(
             GasStationRepository gasStationRepository,
             OpenStreetMapService openStreetMapService,
             GasStationMapper gasStationMapper,
             AutorizacaoOperacional autorizacaoOperacional,
-            NotificacaoNeoRepository notificacaoNeoRepository
+            NotificacaoRepository notificacaoNeoRepository
     ) {
         this.gasStationRepository = gasStationRepository;
         this.openStreetMapService = openStreetMapService;

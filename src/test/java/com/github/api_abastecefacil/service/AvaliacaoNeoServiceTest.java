@@ -4,7 +4,7 @@ import com.github.api_abastecefacil.exception.NotFoundException;
 import com.github.api_abastecefacil.model.Perfil;
 import com.github.api_abastecefacil.model.User;
 import com.github.api_abastecefacil.repository.GasStationRepository;
-import com.github.api_abastecefacil.repository.NotificacaoNeoRepository;
+import com.github.api_abastecefacil.repository.NotificacaoRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -23,7 +23,7 @@ import static org.mockito.Mockito.*;
 class AvaliacaoNeoServiceTest {
     @Mock GasStationRepository postos;
     @Mock UsuarioAutenticadoProvider usuarios;
-    @Mock NotificacaoNeoRepository notificacoes;
+    @Mock NotificacaoRepository notificacoes;
     @InjectMocks AvaliacaoNeoService service;
     User usuario;
 

@@ -10,10 +10,6 @@ public record CreateIncidentRequest(
         @NotNull(message = "A placa do veiculo é obrigatorio")
         String licensePlate,
 
-        @NotNull(message = "O nome é obrigatorio")
-        @NotEmpty(message = "O nome não pode ser vazio")
-        String userName,
-
         @NotNull(message = "A data é obrigatoria")
         LocalDate occurrenceDate,
 

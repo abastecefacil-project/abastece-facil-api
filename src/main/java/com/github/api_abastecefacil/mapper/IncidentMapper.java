@@ -7,10 +7,10 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class IncidentMapper {
-    public Incident toEntity(CreateIncidentRequest request) {
+    public Incident toEntity(CreateIncidentRequest request, String userName) {
         return new Incident()
                 .setCarPlate(request.licensePlate())
-                .setUserName(request.userName())
+                .setUserName(userName)
                 .setOccurrenceDate(request.occurrenceDate())
                 .setTitle(request.title())
                 .setDescription(request.description());
