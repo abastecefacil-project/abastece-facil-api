@@ -643,7 +643,7 @@ comportamento de antes, não regressão, e o `save` já grava no formato novo.
 veículo — e por isso é recusada quando o posto tem dado do Cartão Neo. `avaliacoes_neo.posto_id`
 e `notificacoes_neo.posto_id` têm FK para `gas_stations` **sem `ON DELETE`**, e esses dados são
 preservados: nada é apagado em cascata. `GasStationService.deleteGasStation` confere
-(`GasStationRepository.existeAvaliacaoNeo` e `NotificacaoNeoRepository.existsByPostoId`) **depois**
+(`GasStationRepository.existeAvaliacaoNeo` e `NotificacaoRepository.existsByPostoId`) **depois**
 da autorização e do 404, e antes do `delete`.
 
 | Situação | HTTP | `error` | `message` |

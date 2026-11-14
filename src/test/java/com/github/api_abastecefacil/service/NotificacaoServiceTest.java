@@ -3,7 +3,7 @@ package com.github.api_abastecefacil.service;
 import com.github.api_abastecefacil.exception.NotFoundException;
 import com.github.api_abastecefacil.exception.PerfilNaoPermitidoException;
 import com.github.api_abastecefacil.model.User;
-import com.github.api_abastecefacil.repository.NotificacaoNeoRepository;
+import com.github.api_abastecefacil.repository.NotificacaoRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -17,10 +17,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-class NotificacaoNeoServiceTest {
-    @Mock NotificacaoNeoRepository notificacoes;
+class NotificacaoServiceTest {
+    @Mock NotificacaoRepository notificacoes;
     @Mock AutorizacaoOperacional autorizacao;
-    @InjectMocks NotificacaoNeoService service;
+    @InjectMocks NotificacaoService service;
 
     @Test
     void consultaUsaSomenteDestinatarioAutenticado() {

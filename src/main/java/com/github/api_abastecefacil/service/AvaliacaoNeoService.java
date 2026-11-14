@@ -3,7 +3,7 @@ package com.github.api_abastecefacil.service;
 import com.github.api_abastecefacil.dto.gasStation.AvaliacaoNeoResponse;
 import com.github.api_abastecefacil.exception.NotFoundException;
 import com.github.api_abastecefacil.repository.GasStationRepository;
-import com.github.api_abastecefacil.repository.NotificacaoNeoRepository;
+import com.github.api_abastecefacil.repository.NotificacaoRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -12,10 +12,10 @@ import org.springframework.transaction.annotation.Transactional;
 public class AvaliacaoNeoService {
     private final GasStationRepository postos;
     private final UsuarioAutenticadoProvider usuarios;
-    private final NotificacaoNeoRepository notificacoes;
+    private final NotificacaoRepository notificacoes;
 
     public AvaliacaoNeoService(GasStationRepository postos, UsuarioAutenticadoProvider usuarios,
-                              NotificacaoNeoRepository notificacoes) {
+                              NotificacaoRepository notificacoes) {
         this.postos = postos;
         this.usuarios = usuarios;
         this.notificacoes = notificacoes;

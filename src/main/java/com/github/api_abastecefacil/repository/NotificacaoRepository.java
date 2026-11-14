@@ -1,13 +1,13 @@
 package com.github.api_abastecefacil.repository;
 
-import com.github.api_abastecefacil.model.NotificacaoNeo;
+import com.github.api_abastecefacil.model.Notificacao;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.*;
 import org.springframework.data.repository.query.Param;
 
-public interface NotificacaoNeoRepository extends JpaRepository<NotificacaoNeo, Long> {
-    Page<NotificacaoNeo> findByAdministradorIdOrderByCriadoEmDescIdDesc(Long administradorId, Pageable pageable);
+public interface NotificacaoRepository extends JpaRepository<Notificacao, Long> {
+    Page<Notificacao> findByAdministradorIdOrderByCriadoEmDescIdDesc(Long administradorId, Pageable pageable);
     long countByAdministradorIdAndLidaFalse(Long administradorId);
     boolean existsByPostoId(Long postoId);
 
@@ -21,6 +21,6 @@ public interface NotificacaoNeoRepository extends JpaRepository<NotificacaoNeo, 
     void notificarRecusa(@Param("postoId") Long postoId, @Param("usuarioId") Long usuarioId);
 
     @Modifying(clearAutomatically = true)
-    @Query("UPDATE NotificacaoNeo n SET n.lida = true WHERE n.id = :id AND n.administradorId = :administradorId")
+    @Query("UPDATE Notificacao n SET n.lida = true WHERE n.id = :id AND n.administradorId = :administradorId")
     int marcarLida(@Param("id") Long id, @Param("administradorId") Long administradorId);
 }
