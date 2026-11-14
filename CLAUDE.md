@@ -543,6 +543,9 @@ resultado por outro caminho.
 | POST | `/api/gas-stations` | **só `ADMINISTRADOR`** (desde 5df5d70) |
 | PUT | `/api/gas-stations/{id}` | **só `ADMINISTRADOR`** |
 | DELETE | `/api/gas-stations/{id}` | **só `ADMINISTRADOR`** |
+| GET | `/api/gas-stations/{id}/neo` | autenticado, qualquer perfil — resumo e a resposta do próprio usuário |
+| PUT | `/api/gas-stations/{id}/neo` | autenticado, qualquer perfil — avaliação do Cartão Neo pelo próprio usuário |
+| DELETE | `/api/gas-stations/{id}/neo` | autenticado, qualquer perfil — remove a resposta do próprio usuário |
 | GET | `/api/gas-stations/export` | **gestão** — `search`, `active`; posto não tem regional, gestor exporta todos |
 | GET | `/api/cars/filter` | **gestão** |
 | GET | `/api/cars/{carId}` | **gestão** |
@@ -573,6 +576,8 @@ resultado por outro caminho.
 | GET | `/api/gas-stations/import/atual` | **só `ADMINISTRADOR`** |
 | GET | `/api/gas-stations/import/{id}` | **só `ADMINISTRADOR`** |
 | POST | `/api/gas-stations/import/{id}/cancelamento` | **só `ADMINISTRADOR`** |
+| GET | `/api/notificacoes?page&size` | **só `ADMINISTRADOR`** — as do próprio administrador |
+| PATCH | `/api/notificacoes/{id}/lida` | **só `ADMINISTRADOR`** |
 
 **"gestão"** é a marca do P0.4 e significa `ADMINISTRADOR` **ou** `GESTOR_FROTA` —
 COLABORADOR recebe 403. Detalhe na subseção "Autorização do cadastro operacional".
@@ -588,6 +593,47 @@ de regional de `/api/cars/filter`, sem paginação. Responde o `.xlsx` com
 `Content-Disposition: attachment; filename="veiculos-AAAA-MM-DD.xlsx"` (data em São Paulo),
 montado por `util/PlanilhaXlsx`. O CORS expõe `Content-Disposition`
 (`SecurityConfig.corsConfigurationSource`) para o front em outra origem ler o nome do arquivo.
+
+### Notificações do administrador (`/api/notificacoes`)
+
+Leitura da tabela `notificacoes_neo` (§4), os dois tipos na mesma lista. As duas rotas chamam
+`autorizarAdministracao()` primeiro: `GESTOR_FROTA` e `COLABORADOR` recebem 403
+`PERFIL_NAO_PERMITIDO`. Substituíram `/api/notificacoes/neo`, removida sem alias — hoje responde 404.
+
+- **`GET /api/notificacoes`** — `size = 10` por padrão, só as do administrador autenticado, por
+  `criado_em` e depois `id`, decrescentes. `naoLidas` soma **todos os tipos**, sem filtro.
+- **`PATCH /api/notificacoes/{id}/lida`** — 204, sem corpo. Inexistente ou de outro administrador:
+  404 `NOT_FOUND`, "Notificação não encontrada" (a mesma resposta nos dois casos, de propósito).
+
+`NotificacaoResponse` é **plano**: os campos que não se aplicam ao tipo vêm `null`, e `tipo` é o
+nome do enum `TipoNotificacao`. Nome, posto, placa e título são cópias gravadas na hora da
+notificação: editar o posto ou a ocorrência depois não altera o texto. `postoNome` é o nome
+fantasia, ou a razão social quando ele está vazio.
+
+```json
+{
+  "pagina": {
+    "content": [
+      { "id": 13, "tipo": "OCORRENCIA", "lida": false, "criadoEm": "2026-11-14T16:34:04.419278",
+        "usuarioNome": "Administrador", "postoId": null, "postoNome": null,
+        "ocorrenciaId": 9, "ocorrenciaPlaca": "MGM5H18", "ocorrenciaTitulo": "Verificacao notificacao" },
+      { "id": 8, "tipo": "RECUSA_NEO", "lida": true, "criadoEm": "2026-11-09T20:05:55.312452",
+        "usuarioNome": "Colaborador", "postoId": 44, "postoNome": "POSTO TUIUTI LTDA",
+        "ocorrenciaId": null, "ocorrenciaPlaca": null, "ocorrenciaTitulo": null }
+    ],
+    "number": 0, "size": 10, "totalElements": 2, "totalPages": 1, "...": "demais campos de Page"
+  },
+  "naoLidas": 1
+}
+```
+
+### Avaliação do Cartão Neo (`PUT /api/gas-stations/{id}/neo`)
+
+Qualquer perfil autenticado; a identidade vem da sessão. Corpo `{ "passouNeo": true|false }`,
+obrigatório (`null` ou ausente: 400). Resposta `AvaliacaoNeoResponse`:
+`{ "minhaResposta": false, "passaram": 3, "naoPassaram": 2, "ultimoRelatoEm": "..." }`. Posto
+inexistente: 404 "Posto não encontrado". Uma resposta `false` que muda o registro gera uma
+notificação `RECUSA_NEO` por administrador ativo; repetir a mesma resposta não gera outra.
 
 ### Paginação
 
@@ -2390,7 +2436,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **744 testes no backend, todos passando.** Cobrem `AuthService`,
+- **747 testes no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -2405,7 +2451,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   fatia web. Nenhum sobe banco nem contexto completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 744, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 747, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa
@@ -2416,10 +2462,10 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   `UserServiceTest` para o `EnvioAcessoServiceTest` no S4, junto com o código que testam;
   o que sobrou no `UserServiceTest` é a delegação. Nenhum teste foi removido.
 
-  **Testes `@WebMvcTest`: cinco**, todos com `MockMvc`, importando `SecurityConfig` e
+  **Testes `@WebMvcTest`: seis**, todos com `MockMvc`, importando `SecurityConfig` e
   `JwtAuthenticationFilter` e mockando `JwtService` e `UserDetailsService`:
-  `controller/AvailableCarsControllerTest`, `controller/AvaliacaoNeoControllerTest` e
-  `controller/UserStatusControllerTest` (controllers reais), mais
+  `controller/AvailableCarsControllerTest`, `controller/AvaliacaoNeoControllerTest`,
+  `controller/NotificacaoControllerTest` e `controller/UserStatusControllerTest` (controllers reais), mais
   `config/SecurityConfigTest` e `config/TratamentoErrosSegurancaTest` (endpoints de teste
   internos, para a cadeia de segurança e o handler global). Não há `@SpringBootTest`. O
   resto dos controllers não tem teste: o `@Valid` mal posicionado do `updateUser` (no

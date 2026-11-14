@@ -22,8 +22,9 @@ public class NotificacaoService {
     public NotificacoesResponse listar(Pageable pageable) {
         Long administradorId = autorizacao.autorizarAdministracao().getId();
         var pagina = notificacoes.findByAdministradorIdOrderByCriadoEmDescIdDesc(administradorId, pageable)
-                .map(n -> new NotificacaoResponse(n.getId(), n.getPostoId(), n.getUsuarioNome(),
-                        n.getPostoNome(), n.getCriadoEm(), n.isLida()));
+                .map(n -> new NotificacaoResponse(n.getId(), n.getTipo(), n.isLida(), n.getCriadoEm(),
+                        n.getUsuarioNome(), n.getPostoId(), n.getPostoNome(),
+                        n.getOcorrenciaId(), n.getOcorrenciaPlaca(), n.getOcorrenciaTitulo()));
         return new NotificacoesResponse(pagina, notificacoes.countByAdministradorIdAndLidaFalse(administradorId));
     }
 

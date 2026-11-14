@@ -32,9 +32,13 @@ public class Notificacao {
     private boolean lida;
 
     public Long getId() { return id; }
+    public TipoNotificacao getTipo() { return tipo; }
     public Long getPostoId() { return postoId; }
     public String getUsuarioNome() { return usuarioNome; }
     public String getPostoNome() { return postoNome; }
+    public Long getOcorrenciaId() { return ocorrenciaId; }
+    public String getOcorrenciaPlaca() { return ocorrenciaPlaca; }
+    public String getOcorrenciaTitulo() { return ocorrenciaTitulo; }
     public LocalDateTime getCriadoEm() { return criadoEm; }
     public boolean isLida() { return lida; }
 }
