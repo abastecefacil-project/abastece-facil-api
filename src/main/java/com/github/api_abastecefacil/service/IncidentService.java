@@ -34,27 +34,33 @@ public class IncidentService {
     private final IncidentRepository incidentRepository;
     private final IncidentMapper incidentMapper;
     private final AutorizacaoOperacional autorizacaoOperacional;
+    private final UsuarioAutenticadoProvider usuarioAutenticadoProvider;
 
     public IncidentService(
             CarRepository carRepository,
             IncidentRepository incidentRepository,
             IncidentMapper incidentMapper,
-            AutorizacaoOperacional autorizacaoOperacional
+            AutorizacaoOperacional autorizacaoOperacional,
+            UsuarioAutenticadoProvider usuarioAutenticadoProvider
     ) {
         this.carRepository = carRepository;
         this.incidentRepository = incidentRepository;
         this.incidentMapper = incidentMapper;
         this.autorizacaoOperacional = autorizacaoOperacional;
+        this.usuarioAutenticadoProvider = usuarioAutenticadoProvider;
     }
     
-    @Transactional
     /**
-     * <b>Sem autorização de propósito.</b> Atende {@code POST /api/public/incident}, que é
-     * público por contrato: registrar ocorrência é o que o usuário final faz sem login.
+     * <b>Sem guarda de perfil de propósito.</b> Atende {@code POST /api/public/incident}, que
+     * exige JWT, mas vale para qualquer perfil autenticado: registrar ocorrência é o que o
+     * colaborador faz. O {@code user_name} gravado é o nome de quem está na sessão, nunca um
+     * valor do payload — senão qualquer um registraria ocorrência em nome de outra pessoa.
      */
+    @Transactional
     public IncidentResponse createIncident(CreateIncidentRequest request) {
         validateCarExistsByPlate(request.licensePlate());
-        Incident incident = incidentMapper.toEntity(request);
+        String autor = usuarioAutenticadoProvider.obterUsuarioAutenticado().getName();
+        Incident incident = incidentMapper.toEntity(request, autor);
         Incident savedIncident = incidentRepository.save(incident);
         return incidentMapper.toResponse(savedIncident);
     }

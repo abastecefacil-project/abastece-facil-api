@@ -9,11 +9,13 @@ import com.github.api_abastecefacil.exception.PerfilNaoPermitidoException;
 import com.github.api_abastecefacil.mapper.IncidentMapper;
 import com.github.api_abastecefacil.model.Car;
 import com.github.api_abastecefacil.model.Incident;
+import com.github.api_abastecefacil.model.User;
 import com.github.api_abastecefacil.repository.CarRepository;
 import com.github.api_abastecefacil.repository.IncidentRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -21,6 +23,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -45,6 +48,9 @@ class IncidentServiceTest {
 
     @Mock
     private AutorizacaoOperacional autorizacaoOperacional;
+
+    @Mock
+    private UsuarioAutenticadoProvider usuarioAutenticadoProvider;
 
     @InjectMocks
     private IncidentService incidentService;
@@ -72,11 +78,12 @@ class IncidentServiceTest {
     @Test
     void createIncident_ShouldCreateIncidentSuccessfully() {
         CreateIncidentRequest request = new CreateIncidentRequest(
-                "ABC1234", "John Doe", LocalDate.now(), "Pneu Furado", "Furo no pneu traseiro"
+                "ABC1234", LocalDate.now(), "Pneu Furado", "Furo no pneu traseiro"
         );
 
         when(carRepository.findByLicensePlate("ABC1234")).thenReturn(Optional.of(car));
-        when(incidentMapper.toEntity(request)).thenReturn(incident);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(new User().setName("John Doe"));
+        when(incidentMapper.toEntity(request, "John Doe")).thenReturn(incident);
         when(incidentRepository.save(incident)).thenReturn(incident);
         when(incidentMapper.toResponse(incident)).thenReturn(incidentResponse);
 
@@ -90,7 +97,7 @@ class IncidentServiceTest {
     @Test
     void createIncident_ShouldThrowNotFoundException_WhenCarDoesNotExist() {
         CreateIncidentRequest request = new CreateIncidentRequest(
-                "UNKNOWN", "John Doe", LocalDate.now(), "Pneu Furado", "Furo no pneu traseiro"
+                "UNKNOWN", LocalDate.now(), "Pneu Furado", "Furo no pneu traseiro"
         );
 
         when(carRepository.findByLicensePlate("UNKNOWN")).thenReturn(Optional.empty());
@@ -191,18 +198,43 @@ class IncidentServiceTest {
 
     @Test
     void createIncident_ShouldNotAuthorize_BecauseTheRouteIsPublic() {
-        // POST /api/public/incident e publico por contrato: registrar ocorrencia e
-        // exatamente o que o usuario final faz sem login.
+        // POST /api/public/incident exige JWT, mas vale para qualquer perfil: registrar
+        // ocorrencia e exatamente o que o colaborador faz.
         CreateIncidentRequest request = new CreateIncidentRequest(
-                "ABC1234", "John Doe", LocalDate.now(), "Pneu Furado", "Furo no pneu traseiro"
+                "ABC1234", LocalDate.now(), "Pneu Furado", "Furo no pneu traseiro"
         );
         when(carRepository.findByLicensePlate("ABC1234")).thenReturn(Optional.of(car));
-        when(incidentMapper.toEntity(request)).thenReturn(incident);
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(new User().setName("John Doe"));
+        when(incidentMapper.toEntity(request, "John Doe")).thenReturn(incident);
         when(incidentRepository.save(incident)).thenReturn(incident);
         when(incidentMapper.toResponse(incident)).thenReturn(incidentResponse);
 
         incidentService.createIncident(request);
 
+        verifyNoInteractions(autorizacaoOperacional);
+    }
+
+    @Test
+    void createIncident_ShouldRecordAuthenticatedUserName_IgnoringUserNameFromPayload() throws Exception {
+        // Mapper real e ObjectMapper montado como o do Spring Boot (ignora propriedade
+        // desconhecida): prova o caminho JSON -> entidade gravada.
+        IncidentService service = new IncidentService(
+                carRepository, incidentRepository, new IncidentMapper(),
+                autorizacaoOperacional, usuarioAutenticadoProvider);
+        CreateIncidentRequest request = Jackson2ObjectMapperBuilder.json().build().readValue("""
+                {"licensePlate":"ABC1234","userName":"Outra Pessoa","occurrenceDate":"2026-08-18",
+                 "title":"Pneu Furado","description":"Furo no pneu traseiro"}
+                """, CreateIncidentRequest.class);
+        when(carRepository.findByLicensePlate("ABC1234")).thenReturn(Optional.of(car));
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(new User().setName("Maria Sessao"));
+        when(incidentRepository.save(any(Incident.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        IncidentResponse response = service.createIncident(request);
+
+        ArgumentCaptor<Incident> salvo = ArgumentCaptor.forClass(Incident.class);
+        verify(incidentRepository).save(salvo.capture());
+        assertThat(salvo.getValue().getUserName()).isEqualTo("Maria Sessao");
+        assertThat(response.userName()).isEqualTo("Maria Sessao");
         verifyNoInteractions(autorizacaoOperacional);
     }
 

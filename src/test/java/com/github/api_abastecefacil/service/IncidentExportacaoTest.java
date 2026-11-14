@@ -27,7 +27,7 @@ class IncidentExportacaoTest {
     private final IncidentRepository incidents = mock(IncidentRepository.class);
     private final UsuarioAutenticadoProvider autenticado = mock(UsuarioAutenticadoProvider.class);
     private final IncidentService service = new IncidentService(
-            null, incidents, null, new AutorizacaoOperacional(autenticado));
+            null, incidents, null, new AutorizacaoOperacional(autenticado), autenticado);
 
     @Test
     void administradorExportaComCabecalhoELinhas() throws Exception {

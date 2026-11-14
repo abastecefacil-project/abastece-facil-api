@@ -688,12 +688,20 @@ exceção (`UserService.salvarComBackstop`, `ExecutorImportacaoPostos`,
 ```json
 {
   "licensePlate": "ABC1234",
-  "userName": "Fulano",
   "occurrenceDate": "2026-08-18",
   "title": "Combustível Abaixo de Meio Tanque",
   "description": "texto livre"
 }
 ```
+
+**Não tem `userName`: a identidade vem da sessão**, como no Cartão Neo. O
+`IncidentService.createIncident` grava em `incidents.user_name` o `name` do usuário autenticado
+(`UsuarioAutenticadoProvider`, lido do banco). Até aqui o nome era texto livre do payload e o
+backend não conferia — qualquer autenticado registrava ocorrência em nome de outra pessoa. Um
+cliente antigo que ainda mande `"userName"` não quebra: o Jackson do Spring Boot ignora
+propriedade desconhecida (`FAIL_ON_UNKNOWN_PROPERTIES` desligado; o projeto não o reconfigura),
+e o valor enviado é descartado. O `userName` da resposta (`IncidentResponse`) e o filtro
+`userName` de `GET /api/incidents` não mudaram.
 
 `AuthResponse`: `{ token, type, message, perfil }`. O `perfil` foi acrescentado no
 P0.3 — quebra de contrato deliberada e **aditiva**, para o frontend rotear sem uma
@@ -1293,7 +1301,8 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
 
 1. **Criar ocorrência exige que o veículo exista.** `IncidentService` busca o carro
    por placa e lança `NotFoundException` se não achar. Uma placa não cadastrada
-   resulta em erro, mesmo o endpoint sendo público.
+   resulta em erro, mesmo o endpoint aceitando qualquer perfil autenticado (exige JWT,
+   apesar do prefixo `/api/public`).
 2. **Criar posto dispara geocodificação, e editar só quando o lugar muda** — salvo quando o
    administrador informa latitude e longitude, caso em que não há consulta nenhuma (item 42 e
    §5). `GasStationService` chama `OpenStreetMapService.geocodificarComFallback(address, city,
@@ -2378,7 +2387,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **741 testes no backend, todos passando.** Cobrem `AuthService`,
+- **742 testes no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -2393,7 +2402,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   fatia web. Nenhum sobe banco nem contexto completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 741, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 742, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa
