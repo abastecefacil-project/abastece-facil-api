@@ -396,7 +396,10 @@ enum `model/TipoNotificacao.java`) e o CHECK `ck_notificacoes_neo_tipo`: RECUSA_
 e `posto_nome`, sem colunas de ocorrência; OCORRENCIA exige `ocorrencia_id` (FK
 `fk_notificacoes_neo_ocorrencia` para `incidents`), `ocorrencia_placa` e `ocorrencia_titulo`, sem
 posto. Por isso `existsByPostoId` continua querendo dizer "posto com vínculo do Neo". O
-`notificarRecusa` nativo grava o tipo como literal `'RECUSA_NEO'` (§9, item 16). A V105 é idempotente;
+`notificarRecusa` nativo grava o tipo como literal `'RECUSA_NEO'` (§9, item 16). Toda ocorrência
+criada gera uma linha `OCORRENCIA` por administrador ativo, inclusive quando o autor é administrador:
+`IncidentService.createIncident` chama `notificarOcorrencia` (INSERT ... SELECT nativo, literal
+`'OCORRENCIA'`) na mesma transação, depois do `save`. A V105 é idempotente;
 as FKs e a PK da V102 continuam com os nomes gerados pelo Postgres.
 
 ### `tokens_acesso`
@@ -2387,7 +2390,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **742 testes no backend, todos passando.** Cobrem `AuthService`,
+- **744 testes no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -2402,7 +2405,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   fatia web. Nenhum sobe banco nem contexto completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 742, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 744, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa

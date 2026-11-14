@@ -12,6 +12,7 @@ import com.github.api_abastecefacil.model.Incident;
 import com.github.api_abastecefacil.model.User;
 import com.github.api_abastecefacil.repository.CarRepository;
 import com.github.api_abastecefacil.repository.IncidentRepository;
+import com.github.api_abastecefacil.repository.NotificacaoRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -51,6 +52,9 @@ class IncidentServiceTest {
 
     @Mock
     private UsuarioAutenticadoProvider usuarioAutenticadoProvider;
+
+    @Mock
+    private NotificacaoRepository notificacaoRepository;
 
     @InjectMocks
     private IncidentService incidentService;
@@ -104,6 +108,23 @@ class IncidentServiceTest {
 
         assertThrows(NotFoundException.class, () -> incidentService.createIncident(request));
         verify(incidentRepository, never()).save(any());
+        verifyNoInteractions(notificacaoRepository);
+    }
+
+    @Test
+    void createIncident_ShouldNotifyAdministrators_WithSavedIdAndAuthenticatedUser() {
+        CreateIncidentRequest request = new CreateIncidentRequest(
+                "ABC1234", LocalDate.now(), "Pneu Furado", "Furo no pneu traseiro"
+        );
+        when(carRepository.findByLicensePlate("ABC1234")).thenReturn(Optional.of(car));
+        when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
+                .thenReturn(new User().setId(42L).setName("John Doe"));
+        when(incidentMapper.toEntity(request, "John Doe")).thenReturn(new Incident());
+        when(incidentRepository.save(any(Incident.class))).thenReturn(incident);
+
+        incidentService.createIncident(request);
+
+        verify(notificacaoRepository).notificarOcorrencia(1L, 42L);
     }
 
     @Test
@@ -220,7 +241,7 @@ class IncidentServiceTest {
         // desconhecida): prova o caminho JSON -> entidade gravada.
         IncidentService service = new IncidentService(
                 carRepository, incidentRepository, new IncidentMapper(),
-                autorizacaoOperacional, usuarioAutenticadoProvider);
+                autorizacaoOperacional, usuarioAutenticadoProvider, notificacaoRepository);
         CreateIncidentRequest request = Jackson2ObjectMapperBuilder.json().build().readValue("""
                 {"licensePlate":"ABC1234","userName":"Outra Pessoa","occurrenceDate":"2026-08-18",
                  "title":"Pneu Furado","description":"Furo no pneu traseiro"}

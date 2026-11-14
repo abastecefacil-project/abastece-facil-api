@@ -7,8 +7,10 @@ import com.github.api_abastecefacil.dto.incident.UpdateIncidentRequest;
 import com.github.api_abastecefacil.exception.NotFoundException;
 import com.github.api_abastecefacil.mapper.IncidentMapper;
 import com.github.api_abastecefacil.model.Incident;
+import com.github.api_abastecefacil.model.User;
 import com.github.api_abastecefacil.repository.CarRepository;
 import com.github.api_abastecefacil.repository.IncidentRepository;
+import com.github.api_abastecefacil.repository.NotificacaoRepository;
 import com.github.api_abastecefacil.util.PlanilhaXlsx;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -35,19 +37,22 @@ public class IncidentService {
     private final IncidentMapper incidentMapper;
     private final AutorizacaoOperacional autorizacaoOperacional;
     private final UsuarioAutenticadoProvider usuarioAutenticadoProvider;
+    private final NotificacaoRepository notificacaoRepository;
 
     public IncidentService(
             CarRepository carRepository,
             IncidentRepository incidentRepository,
             IncidentMapper incidentMapper,
             AutorizacaoOperacional autorizacaoOperacional,
-            UsuarioAutenticadoProvider usuarioAutenticadoProvider
+            UsuarioAutenticadoProvider usuarioAutenticadoProvider,
+            NotificacaoRepository notificacaoRepository
     ) {
         this.carRepository = carRepository;
         this.incidentRepository = incidentRepository;
         this.incidentMapper = incidentMapper;
         this.autorizacaoOperacional = autorizacaoOperacional;
         this.usuarioAutenticadoProvider = usuarioAutenticadoProvider;
+        this.notificacaoRepository = notificacaoRepository;
     }
     
     /**
@@ -55,13 +60,15 @@ public class IncidentService {
      * exige JWT, mas vale para qualquer perfil autenticado: registrar ocorrência é o que o
      * colaborador faz. O {@code user_name} gravado é o nome de quem está na sessão, nunca um
      * valor do payload — senão qualquer um registraria ocorrência em nome de outra pessoa.
+     * Notifica todos os administradores ativos na mesma transação, como a recusa do Neo.
      */
     @Transactional
     public IncidentResponse createIncident(CreateIncidentRequest request) {
         validateCarExistsByPlate(request.licensePlate());
-        String autor = usuarioAutenticadoProvider.obterUsuarioAutenticado().getName();
-        Incident incident = incidentMapper.toEntity(request, autor);
+        User autor = usuarioAutenticadoProvider.obterUsuarioAutenticado();
+        Incident incident = incidentMapper.toEntity(request, autor.getName());
         Incident savedIncident = incidentRepository.save(incident);
+        notificacaoRepository.notificarOcorrencia(savedIncident.getId(), autor.getId());
         return incidentMapper.toResponse(savedIncident);
     }
 

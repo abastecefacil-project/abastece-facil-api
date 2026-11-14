@@ -14,4 +14,12 @@ class NotificacaoRepositoryTest {
                 .getAnnotation(Query.class).value();
         assertThat(sql).contains("INSERT INTO notificacoes_neo (tipo,").contains("SELECT 'RECUSA_NEO',");
     }
+
+    @Test
+    void notificarOcorrenciaGravaTipoOcorrenciaSemPosto() throws NoSuchMethodException {
+        String sql = NotificacaoRepository.class.getMethod("notificarOcorrencia", Long.class, Long.class)
+                .getAnnotation(Query.class).value();
+        assertThat(sql).contains("INSERT INTO notificacoes_neo (tipo,").contains("SELECT 'OCORRENCIA',")
+                .doesNotContain("posto_id");
+    }
 }
