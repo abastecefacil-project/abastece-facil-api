@@ -71,7 +71,7 @@ class GlobalExceptionHandlerTest {
         assertThat(response.getBody()).isNotNull();
         assertThat(response.getBody().error()).isEqualTo("POSTO_COM_VINCULO_NEO");
         assertThat(response.getBody().message()).isEqualTo(
-                "Este posto tem avaliações ou notificações do Cartão Neo e não pode ser excluído. Inative-o pela edição.");
+                "Este posto tem avaliações ou notificações e não pode ser excluído. Inative-o pela edição.");
     }
 
     @Test

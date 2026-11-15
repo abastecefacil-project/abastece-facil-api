@@ -41,8 +41,8 @@ public interface GasStationRepository extends JpaRepository<GasStation, Long> {
     @Query(value = "SELECT MAX(atualizado_em) FROM avaliacoes_neo WHERE posto_id = :postoId", nativeQuery = true)
     Optional<LocalDateTime> buscarUltimoRelatoNeo(@Param("postoId") Long postoId);
 
-    @Query(value = "SELECT EXISTS (SELECT 1 FROM avaliacoes_neo WHERE posto_id = :postoId)", nativeQuery = true)
-    boolean existeAvaliacaoNeo(@Param("postoId") Long postoId);
+    @Query(value = "SELECT EXISTS (SELECT 1 FROM avaliacoes_neo WHERE posto_id = :postoId) OR EXISTS (SELECT 1 FROM avaliacoes_postos WHERE posto_id = :postoId)", nativeQuery = true)
+    boolean existeAvaliacao(@Param("postoId") Long postoId);
 
     boolean existsGasStationById(Long id);
 

@@ -378,7 +378,7 @@ class GasStationServiceTest {
     @Test
     void deleteGasStation_ShouldDeleteGasStationSuccessfully() {
         when(gasStationRepository.findById(1L)).thenReturn(Optional.of(gasStation));
-        when(gasStationRepository.existeAvaliacaoNeo(1L)).thenReturn(false);
+        when(gasStationRepository.existeAvaliacao(1L)).thenReturn(false);
         when(notificacaoNeoRepository.existsByPostoId(1L)).thenReturn(false);
 
         gasStationService.deleteGasStation(1L);
@@ -389,7 +389,7 @@ class GasStationServiceTest {
     @Test
     void deleteGasStation_ShouldRefuse_WhenGasStationHasNeoRating() {
         when(gasStationRepository.findById(1L)).thenReturn(Optional.of(gasStation));
-        when(gasStationRepository.existeAvaliacaoNeo(1L)).thenReturn(true);
+        when(gasStationRepository.existeAvaliacao(1L)).thenReturn(true);
 
         PostoComVinculoNeoException ex = assertThrows(PostoComVinculoNeoException.class,
                 () -> gasStationService.deleteGasStation(1L));
@@ -403,7 +403,7 @@ class GasStationServiceTest {
         // Notificação sem avaliação acontece quando o colaborador remove a avaliação depois
         // da recusa: a notificação continua apontando para o posto.
         when(gasStationRepository.findById(1L)).thenReturn(Optional.of(gasStation));
-        when(gasStationRepository.existeAvaliacaoNeo(1L)).thenReturn(false);
+        when(gasStationRepository.existeAvaliacao(1L)).thenReturn(false);
         when(notificacaoNeoRepository.existsByPostoId(1L)).thenReturn(true);
 
         PostoComVinculoNeoException ex = assertThrows(PostoComVinculoNeoException.class,
@@ -419,7 +419,7 @@ class GasStationServiceTest {
 
         assertThrows(NotFoundException.class, () -> gasStationService.deleteGasStation(99L));
 
-        verify(gasStationRepository, never()).existeAvaliacaoNeo(any());
+        verify(gasStationRepository, never()).existeAvaliacao(any());
         verifyNoInteractions(notificacaoNeoRepository);
     }
 

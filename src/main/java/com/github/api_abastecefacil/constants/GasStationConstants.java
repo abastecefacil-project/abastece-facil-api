@@ -16,7 +16,7 @@ public final class GasStationConstants {
      * inativar o posto, e os dados do Cartão Neo ficam preservados.
      */
     public static final String POSTO_COM_VINCULO_NEO_MESSAGE =
-            "Este posto tem avaliações ou notificações do Cartão Neo e não pode ser excluído. Inative-o pela edição.";
+            "Este posto tem avaliações ou notificações e não pode ser excluído. Inative-o pela edição.";
 
     /**
      * Casas decimais de {@code gas_stations.latitude} e {@code longitude} ({@code numeric(10,8)}

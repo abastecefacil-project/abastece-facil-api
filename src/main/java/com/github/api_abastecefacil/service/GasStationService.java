@@ -159,7 +159,7 @@ public class GasStationService {
     }
 
     private void validateSemVinculoNeo(Long id) {
-        if (gasStationRepository.existeAvaliacaoNeo(id) || notificacaoNeoRepository.existsByPostoId(id)) {
+        if (gasStationRepository.existeAvaliacao(id) || notificacaoNeoRepository.existsByPostoId(id)) {
             throw new PostoComVinculoNeoException(POSTO_COM_VINCULO_NEO_MESSAGE);
         }
     }
