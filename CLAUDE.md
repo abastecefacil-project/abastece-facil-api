@@ -2613,6 +2613,34 @@ dois. O da raiz é candidato a remoção, depois de confirmar que nada o referen
 
 ---
 
+
+### Avaliações por estrelas dos postos
+
+Além dos relatos do Cartão Neo, a V106 cria `avaliacoes_postos`: nota inteira de
+1 a 5, comentário opcional de até 1000 caracteres, autor autenticado e data de
+atualização. A chave `(posto_id, usuario_id)` mantém uma avaliação por usuário;
+PUT edita a avaliação existente e DELETE remove apenas a de quem está logado.
+Postos com avaliações são preservados: devem ser inativados em vez de excluídos.
+
+Rotas autenticadas:
+- `GET /api/gas-stations/avaliacoes/resumos`: lista `{ postoId, media, total }`,
+  agregada numa única consulta para o mapa; postos sem avaliações não aparecem.
+- `GET /api/gas-stations/{id}/avaliacoes?page=0`: `{ media, total, minhaAvaliacao,
+  avaliacoes }`, com uma página de 10 avaliações, mais recentes primeiro.
+  A própria avaliação vem separada para edição, mesmo fora da página atual.
+  Média ausente é `null`, total é zero. Cada avaliação expõe somente `autor`,
+  `nota`, `comentario` e `atualizadoEm`, sem e-mail nem identificador do usuário.
+- `PUT /api/gas-stations/{id}/avaliacoes`: `{ nota, comentario }`.
+- `DELETE /api/gas-stations/{id}/avaliacoes`: sem corpo.
+
+PUT/DELETE retornam o mesmo resumo e a primeira página atualizada. O mapa mostra
+`★ 4.3` acima do pino, ou “Sem avaliações”; falha de carga gera aviso e não é
+representada como ausência de avaliações. O diálogo `AvaliacaoPostoDialog` abre
+pelo popup do mapa e pelo detalhe do posto na lista. Comentários são texto,
+renderizados por interpolação Vue, e não HTML. Avaliações do Neo são independentes.
+
+---
+
 ## 12. Manutenção deste documento
 
 Ao alterar modelo de dados, contrato de API ou configuração, atualize as seções
