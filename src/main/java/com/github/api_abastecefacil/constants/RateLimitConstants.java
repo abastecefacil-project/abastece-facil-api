@@ -3,13 +3,13 @@ package com.github.api_abastecefacil.constants;
 import java.time.Duration;
 
 /**
- * Política de limite de solicitações da recuperação de senha (S4).
+ * Política de limite de solicitações do login e da recuperação de senha.
  *
  * <p><b>Constantes, e não propriedades de configuração</b>, ao contrário de
  * {@code abastecefacil.token.*}. Os TTLs viraram configuráveis porque o <b>corpo do
  * e-mail exibe o prazo</b> e não pode divergir dele — uma constante ali passaria a mentir
  * assim que alguém mudasse a propriedade. O limite de requisições não tem acoplamento
- * equivalente: nada além do próprio limitador o lê, e nenhum texto o repete. Vira
+ * equivalente: nada além do próprio limitador o lê. Vira
  * propriedade no dia em que houver necessidade real de ajustá-lo sem novo deploy.
  */
 public final class RateLimitConstants {
@@ -26,6 +26,16 @@ public final class RateLimitConstants {
     public static final String CHAVE_RECUPERACAO_EMAIL = "recuperacao:email:";
 
     public static final String CHAVE_RECUPERACAO_IP = "recuperacao:ip:";
+
+    public static final String CHAVE_LOGIN_EMAIL = "login:email:";
+
+    public static final String CHAVE_LOGIN_IP = "login:ip:";
+
+    public static final int LIMITE_LOGIN_EMAIL = 10;
+
+    public static final int LIMITE_LOGIN_IP = 30;
+
+    public static final Duration JANELA_LOGIN = Duration.ofMinutes(15);
 
     /** Três solicitações por e-mail a cada quinze minutos. */
     public static final int LIMITE_RECUPERACAO_EMAIL = 3;

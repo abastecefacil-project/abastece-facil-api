@@ -58,7 +58,7 @@ class CarExportControllerTest {
     @Test
     void corsExpoeContentDisposition() throws Exception {
         when(service.exportarVeiculos(null, null)).thenReturn(new byte[0]);
-        mvc.perform(get("/api/cars/export").header("Origin", "https://front.exemplo.com")
+        mvc.perform(get("/api/cars/export").header("Origin", "http://localhost:5173")
                         .with(user("admin").roles("ADMINISTRADOR")))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Access-Control-Expose-Headers", containsString("Content-Disposition")));

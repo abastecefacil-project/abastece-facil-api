@@ -4,6 +4,7 @@ import com.github.api_abastecefacil.exception.DominioEmailNaoPermitidoException;
 import com.github.api_abastecefacil.exception.InvalidUserDataException;
 import com.github.api_abastecefacil.exception.SenhaFracaException;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -91,6 +92,7 @@ public final class UserValidator {
     public static void validarSenha(String senha, String email, String nome) {
         if (senha == null
                 || senha.length() < SENHA_TAMANHO_MINIMO
+                || senha.getBytes(StandardCharsets.UTF_8).length > SENHA_TAMANHO_MAXIMO_BYTES
                 || !CONTEM_LETRA.matcher(senha).find()
                 || !CONTEM_DIGITO.matcher(senha).find()) {
             throw new SenhaFracaException(SENHA_FRACA_MESSAGE);

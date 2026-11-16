@@ -38,7 +38,7 @@ class ResendEnviadorEmailTest {
     private static final String REMETENTE = "Abastece Fácil <onboarding@resend.dev>";
 
     private static final String DESTINATARIO = "colaborador@abastecefacil.com";
-    private static final String URL_ACAO = "https://app.abastecefacil.com.br/definir-senha?token=SEGREDO";
+    private static final String URL_ACAO = "https://app.abastecefacil.com.br/definir-senha#token=SEGREDO";
 
     private static final String CORPO_SUCESSO = "{\"id\":\"8f1c-4b2a\"}";
 

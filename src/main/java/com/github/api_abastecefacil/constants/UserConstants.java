@@ -53,11 +53,9 @@ public class UserConstants {
      * link precisa existir antes de a tela existir.</b> O S6 implementa esta rota; se ela
      * mudar de um lado, muda dos dois. Registrada também na §5 do CLAUDE.md.
      *
-     * <p>O token vai em query string, e não em path, porque é um valor opaco de 43
-     * caracteres em Base64 URL-safe — sem {@code +}, {@code /} ou {@code =}, então não
-     * precisa de escape e não colide com a separação de segmentos da URL.
+     * <p>O token vai no fragmento para não chegar ao servidor web nem ao access log.
      */
-    public static final String ROTA_DEFINIR_SENHA = "/definir-senha?token=";
+    public static final String ROTA_DEFINIR_SENHA = "/definir-senha#token=";
 
     /**
      * Rota do frontend para onde o link de <b>recuperação</b> aponta, definida no S4 pela
@@ -72,7 +70,7 @@ public class UserConstants {
      * porque o contexto do usuário é outro: um está concluindo o primeiro acesso, o outro
      * já tinha senha e a perdeu.
      */
-    public static final String ROTA_REDEFINIR_SENHA = "/redefinir-senha?token=";
+    public static final String ROTA_REDEFINIR_SENHA = "/redefinir-senha#token=";
 
     /**
      * Falha inesperada no envio assíncrono da recuperação — banco fora do ar ao emitir o
@@ -102,6 +100,8 @@ public class UserConstants {
 
     public static final int SENHA_TAMANHO_MINIMO = 10;
 
+    public static final int SENHA_TAMANHO_MAXIMO_BYTES = 72;
+
     /**
      * Comprimento mínimo de uma palavra do nome para entrar na checagem de "senha contém
      * dados pessoais".
@@ -120,7 +120,7 @@ public class UserConstants {
     public static final int SENHA_NOME_PALAVRA_MINIMA = 4;
 
     public static final String SENHA_FRACA_MESSAGE =
-            "A senha deve ter no mínimo 10 caracteres e conter pelo menos uma letra e um número";
+            "A senha deve ter entre 10 e 72 bytes e conter pelo menos uma letra e um número";
 
     /**
      * Diz o motivo sem revelar o critério: não lista a palavra detectada nem o limiar de

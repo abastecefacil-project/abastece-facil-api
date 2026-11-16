@@ -23,6 +23,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -30,6 +31,7 @@ import java.util.UUID;
 import static com.github.api_abastecefacil.constants.AuthConstants.*;
 import static com.github.api_abastecefacil.constants.RateLimitConstants.*;
 import static com.github.api_abastecefacil.constants.TokenAcessoConstants.TOKEN_INVALIDO_MESSAGE;
+import static com.github.api_abastecefacil.constants.UserConstants.SENHA_TAMANHO_MAXIMO_BYTES;
 
 @Service
 @Transactional(readOnly = true)
@@ -90,7 +92,11 @@ public class AuthService {
      * {@code toUserDetails} trocaria a senha nula por {@code ""}, e o BCrypt devolve
      * {@code false} contra hash vazio sem calcular nada — o mesmo vazamento de tempo.
      */
-    public AuthResponse login(LoginRequest request) {
+    public AuthResponse login(LoginRequest request, String ipSolicitante) {
+        aplicarLimiteDeLogin(request.email(), ipSolicitante);
+        if (request.password().getBytes(StandardCharsets.UTF_8).length > SENHA_TAMANHO_MAXIMO_BYTES) {
+            throw new InvalidLoginException(INVALID_CREDENTIALS_MESSAGE);
+        }
         User user = userRepository.findByEmail(request.email())
                 .filter(this::podeAutenticar)
                 .orElseThrow(() -> recusarComCustoDeHash(request.password()));
@@ -256,16 +262,35 @@ public class AuthService {
         String chaveEmail = CHAVE_RECUPERACAO_EMAIL + email.toLowerCase(Locale.ROOT);
         String chaveIp = CHAVE_RECUPERACAO_IP + ipSolicitante;
 
-        boolean excedeu =
-                rateLimitService.excedeu(chaveEmail, LIMITE_RECUPERACAO_EMAIL, JANELA_RECUPERACAO_EMAIL)
-                        || rateLimitService.excedeu(chaveIp, LIMITE_RECUPERACAO_IP, JANELA_RECUPERACAO_IP);
+        synchronized (rateLimitService) {
+            boolean excedeu =
+                    rateLimitService.excedeu(chaveEmail, LIMITE_RECUPERACAO_EMAIL, JANELA_RECUPERACAO_EMAIL)
+                            || rateLimitService.excedeu(chaveIp, LIMITE_RECUPERACAO_IP, JANELA_RECUPERACAO_IP);
 
-        if (excedeu) {
-            throw new LimiteSolicitacoesExcedidoException(LIMITE_SOLICITACOES_EXCEDIDO_MESSAGE);
+            if (excedeu) {
+                throw new LimiteSolicitacoesExcedidoException(LIMITE_SOLICITACOES_EXCEDIDO_MESSAGE);
+            }
+
+            rateLimitService.registrar(chaveEmail);
+            rateLimitService.registrar(chaveIp);
         }
+    }
 
-        rateLimitService.registrar(chaveEmail);
-        rateLimitService.registrar(chaveIp);
+    private void aplicarLimiteDeLogin(String email, String ipSolicitante) {
+        String chaveEmail = CHAVE_LOGIN_EMAIL + email.toLowerCase(Locale.ROOT);
+        String chaveIp = CHAVE_LOGIN_IP + ipSolicitante;
+
+        synchronized (rateLimitService) {
+            boolean excedeu = rateLimitService.excedeu(chaveEmail, LIMITE_LOGIN_EMAIL, JANELA_LOGIN)
+                    || rateLimitService.excedeu(chaveIp, LIMITE_LOGIN_IP, JANELA_LOGIN);
+
+            if (excedeu) {
+                throw new LimiteSolicitacoesExcedidoException(LIMITE_SOLICITACOES_EXCEDIDO_MESSAGE);
+            }
+
+            rateLimitService.registrar(chaveEmail);
+            rateLimitService.registrar(chaveIp);
+        }
     }
 
     /**

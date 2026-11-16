@@ -111,7 +111,10 @@ class EnvioAcessoServiceTest {
 
         envioAcessoService.enviar(usuario, FinalidadeToken.ATIVACAO, IP);
 
-        assertThat(capturarEnviada().urlAcao()).isEqualTo(FRONTEND_URL + ROTA_DEFINIR_SENHA + TOKEN);
+        assertThat(capturarEnviada().urlAcao())
+                .isEqualTo(FRONTEND_URL + ROTA_DEFINIR_SENHA + TOKEN)
+                .contains("#token=")
+                .doesNotContain("?token=");
     }
 
     // -------------------------------------------------------------- recuperacao
@@ -140,7 +143,10 @@ class EnvioAcessoServiceTest {
 
         envioAcessoService.enviar(usuario, FinalidadeToken.RECUPERACAO, IP);
 
-        assertThat(capturarEnviada().urlAcao()).isEqualTo(FRONTEND_URL + ROTA_REDEFINIR_SENHA + TOKEN);
+        assertThat(capturarEnviada().urlAcao())
+                .isEqualTo(FRONTEND_URL + ROTA_REDEFINIR_SENHA + TOKEN)
+                .contains("#token=")
+                .doesNotContain("?token=");
     }
 
     @Test

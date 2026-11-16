@@ -8,7 +8,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ConteudoEmailTest {
 
     private static final String NOME = "Rafaela Mendes";
-    private static final String URL = "https://app.abastecefacil.com.br/definir-senha?token=abc123";
+    private static final String URL = "https://app.abastecefacil.com.br/definir-senha#token=abc123";
 
     private static MensagemAcesso mensagem(FinalidadeToken finalidade, long validadeHoras) {
         return new MensagemAcesso("rafaela@abastecefacil.com", NOME, URL, finalidade, validadeHoras);

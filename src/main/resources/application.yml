@@ -64,6 +64,7 @@ spring:
 
 server:
   port: 8081
+  forward-headers-strategy: framework
   # Corpo das respostas que passam pelo /error (4xx do Spring MVC, exceção lançada num
   # filtro). "never" já é o default do Spring Boot, mas o devtools troca os dois para
   # "always" no spring-boot:run, e o stack trace sairia na resposta. Explícito para o
@@ -73,9 +74,7 @@ server:
     include-message: never
 
 jwt:
-  # Segredo de desenvolvimento, versionado desde o início do projeto. Em produção,
-  # sobrescrever com a variável de ambiente JWT_SECRET — nunca editar este valor aqui.
-  secret: YWJhc3RlY2VmYWNpbC1zZWNyZXQta2V5LTIwMjQtdmVyeS1sb25nLWFuZC1zZWN1cmUta2V5LWZvci1qd3Qtc2lnbmluZw==
+  secret: ${JWT_SECRET}
   # Sessão curta, 24h: vale para GESTOR_FROTA e ADMINISTRADOR, que usam o sistema com
   # frequência e têm poderes destrutivos.
   expiration: 86400000
@@ -89,6 +88,8 @@ jwt:
   expiration-colaborador: 2592000000
 
 abastecefacil:
+  cors:
+    allowed-origins: "${CORS_ALLOWED_ORIGINS:http://localhost:5173}"
   auth:
     # Domínios de e-mail aceitos no cadastro administrativo (POST /api/users).
     # A comparação é sobre a parte depois do ÚLTIMO arroba, com igualdade exata ou

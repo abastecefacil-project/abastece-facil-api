@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export JWT_SECRET="${JWT_SECRET:-YWJhc3RlY2VmYWNpbC1kZXNlbnZvbHZpbWVudG8tbG9jYWwtbmFvLXVzYXItZW0tcHJvZHVjYW8=}"
 ./mvnw spring-boot:run

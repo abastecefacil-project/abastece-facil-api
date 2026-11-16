@@ -41,7 +41,7 @@ pasta irmã `../front-abastecefacil`.
 
 2. **Executar a aplicação:**
    ```bash
-   ./mvnw spring-boot:run
+   JWT_SECRET="$(openssl rand -base64 32)" ./mvnw spring-boot:run
    ```
 
 #### Comando rápido
@@ -95,6 +95,19 @@ No Windows, use `start-db.cmd` e `start-api.cmd`.
 
 Variável de ambiente tem precedência sobre os dois. A tabela completa de propriedades
 está no `CLAUDE.md`, seção 3.
+
+### Segurança
+
+- O login aceita até 10 tentativas por e-mail e 30 por IP a cada 15 minutos.
+- A recuperação aceita 3 pedidos por e-mail em 15 minutos e 10 por IP em uma hora.
+- O JWT exige `JWT_SECRET`; a aplicação não inicia sem essa variável.
+- O CORS aceita somente as origens definidas em `CORS_ALLOWED_ORIGINS`.
+- As consultas usam Spring Data com parâmetros nomeados. Dados recebidos não são concatenados em SQL.
+- Senhas usam BCrypt e links de acesso são aleatórios, armazenados como hash e válidos uma única vez.
+- O Nginx envia CSP, proteção contra frames, política de referência e bloqueio de MIME sniffing.
+
+O limite é mantido em memória e atende ao Compose atual, com uma instância da API. Se a API for
+replicada, o contador deve ser movido para um armazenamento compartilhado.
 
 ### Administrador inicial
 

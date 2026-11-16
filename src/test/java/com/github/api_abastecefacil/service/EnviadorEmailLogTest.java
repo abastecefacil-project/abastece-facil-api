@@ -18,7 +18,7 @@ class EnviadorEmailLogTest {
 
     private static final String DESTINATARIO = "colaborador@abastecefacil.com";
     private static final String NOME = "Pedro Alves";
-    private static final String URL = "http://localhost:5173/definir-senha?token=Zm9vYmFy";
+    private static final String URL = "http://localhost:5173/definir-senha#token=Zm9vYmFy";
 
     private ListAppender<ILoggingEvent> appender;
     private ch.qos.logback.classic.Logger logger;

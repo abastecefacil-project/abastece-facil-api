@@ -28,6 +28,7 @@ services:
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-abastecefacil_user}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost}
     depends_on:
       postgres:
         condition: service_healthy
