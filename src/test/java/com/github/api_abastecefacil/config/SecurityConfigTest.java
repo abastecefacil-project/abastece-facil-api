@@ -18,6 +18,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.mockito.Mockito.when;
 
 @WebMvcTest(SecurityConfigTest.Endpoints.class)
@@ -48,6 +49,19 @@ class SecurityConfigTest {
                 .andExpect(status().isUnauthorized());
         mvc.perform(get("/api/public/gas-stations/filter").header("Authorization", "Bearer malformado"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void corsAceitaSomenteOFrontendConfigurado() throws Exception {
+        mvc.perform(get("/api/public/gas-stations/filter")
+                        .header("Origin", "http://localhost:5173")
+                        .with(user("colaborador")))
+                .andExpect(header().string("Access-Control-Allow-Origin", "http://localhost:5173"));
+
+        mvc.perform(get("/api/public/gas-stations/filter")
+                        .header("Origin", "https://site-malicioso.example")
+                        .with(user("colaborador")))
+                .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
     }
 
     @RestController

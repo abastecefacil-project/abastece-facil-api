@@ -831,7 +831,7 @@ o usuário, não uma tentativa de envio. Só `false` quer dizer que o e-mail nã
 convite precisa ser reenviado. Tratar `null` como falha faria a listagem inteira exibir
 alerta.
 
-**Rota do link de ativação: `/definir-senha?token=<token>`.** Definida no S2b1 porque o
+**Rota do link de ativação: `/definir-senha#token=<token>`.** Definida no S2b1 porque o
 link precisa existir antes da tela, e **implementada pelo S6** — é contrato entre os dois
 lados, e mudar de um exige mudar do outro. A origem única é
 `UserConstants.ROTA_DEFINIR_SENHA`; a base vem de `abastecefacil.email.frontend-url`. O
@@ -1152,7 +1152,7 @@ devolve o **mesmo `AuthResponse` do login**, com `message` = "Senha redefinida c
 **Token de `ATIVACAO` não serve em `/recuperacao/confirmar`, e o inverso também** — a
 finalidade faz parte do predicado de validade das duas consultas.
 
-**Rota do link: `/redefinir-senha?token=<token>`**, definida no S4 e **implementada pelo
+**Rota do link: `/redefinir-senha#token=<token>`**, definida no S4 e **implementada pelo
 S6b** — contrato entre os dois lados, como `/definir-senha` foi entre o S2b1 e o S6. A
 origem única é `UserConstants.ROTA_REDEFINIR_SENHA`, ao lado de `ROTA_DEFINIR_SENHA`; quem
 escolhe entre as duas é um `switch` sobre `FinalidadeToken` em `EnvioAcessoService.rotaDe`.
@@ -1768,7 +1768,7 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
     o texto anuncia o prazo real, seja qual for, pela regra do item 16.
 
     **Verificável no log com `provedor: log`:** a linha do `EnviadorEmailLog` traz
-    `finalidade=ATIVACAO` e o link `/definir-senha?token=`.
+    `finalidade=ATIVACAO` e o link `/definir-senha#token=`.
 36. **Definir senha invalida todos os tokens pendentes do e-mail, de QUALQUER finalidade** —
     `TokenAcessoRepository.invalidarTodosPendentes`, chamado ao final de
     `AuthService.definirSenhaComToken`. É o irmão mais largo de `invalidarPendentes`, que

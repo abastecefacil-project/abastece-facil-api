@@ -1,6 +1,7 @@
 package com.github.api_abastecefacil.dto.auth;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 /**
  * Corpo de {@code POST /api/auth/ativacao} <b>e</b> de
@@ -26,9 +27,11 @@ import jakarta.validation.constraints.NotBlank;
 public record DefinicaoSenhaRequest(
 
         @NotBlank(message = "Token é obrigatório")
+        @Size(max = 128, message = "Token inválido")
         String token,
 
         @NotBlank(message = "Senha é obrigatória")
+        @Size(max = 72, message = "Senha deve ter no máximo 72 caracteres")
         String senha
 ) {
 }

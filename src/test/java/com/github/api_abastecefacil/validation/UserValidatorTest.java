@@ -104,6 +104,12 @@ class UserValidatorTest {
     }
 
     @Test
+    void validarSenha_ShouldRejectMoreThanSeventyTwoBytes() {
+        assertThrows(SenhaFracaException.class,
+                () -> UserValidator.validarSenha("Á".repeat(37) + "1234567890", EMAIL, NOME));
+    }
+
+    @Test
     void validarSenha_ShouldThrow_WhenThereIsNoDigit() {
         assertThrows(SenhaFracaException.class,
                 () -> UserValidator.validarSenha("ChuvaVerdeSemNumero", EMAIL, NOME));

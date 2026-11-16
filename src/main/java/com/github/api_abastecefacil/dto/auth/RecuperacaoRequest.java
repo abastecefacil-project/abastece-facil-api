@@ -2,6 +2,7 @@ package com.github.api_abastecefacil.dto.auth;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 
 /**
  * Corpo de {@code POST /api/auth/recuperacao}: apenas o e-mail.
@@ -22,6 +23,7 @@ public record RecuperacaoRequest(
 
         @NotBlank(message = "E-mail é obrigatório")
         @Email(message = "E-mail inválido")
+        @Size(max = 254, message = "E-mail deve ter no máximo 254 caracteres")
         String email
 ) {
 }

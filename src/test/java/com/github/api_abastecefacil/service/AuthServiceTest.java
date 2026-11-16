@@ -124,12 +124,43 @@ class AuthServiceTest {
         when(customUserDetailsService.toUserDetails(user)).thenReturn(userDetails);
         when(jwtService.generateToken(anyMap(), any(UserDetails.class), anyLong())).thenReturn("jwt-token");
 
-        AuthResponse response = authService.login(request);
+        AuthResponse response = authService.login(request, IP);
 
         assertThat(response).isNotNull();
         assertThat(response.token()).isEqualTo("jwt-token");
         assertThat(response.perfil()).isEqualTo(Perfil.COLABORADOR);
         verify(authenticationManager).authenticate(any(UsernamePasswordAuthenticationToken.class));
+    }
+
+    @Test
+    void login_ShouldRejectBeforeAuthentication_WhenTheEmailLimitIsExceeded() {
+        when(rateLimitService.excedeu(CHAVE_LOGIN_EMAIL + "user@test.com", LIMITE_LOGIN_EMAIL, JANELA_LOGIN))
+                .thenReturn(true);
+
+        assertThrows(LimiteSolicitacoesExcedidoException.class,
+                () -> authService.login(new LoginRequest("user@test.com", "password123"), IP));
+
+        verifyNoInteractions(userRepository, authenticationManager);
+    }
+
+    @Test
+    void login_ShouldCountAttemptsByNormalizedEmailAndIp() {
+        when(userRepository.findByEmail("USER@test.com")).thenReturn(Optional.of(user));
+        when(customUserDetailsService.toUserDetails(user)).thenReturn(userDetails);
+        when(jwtService.generateToken(anyMap(), any(UserDetails.class), anyLong())).thenReturn("jwt-token");
+
+        authService.login(new LoginRequest("USER@test.com", "password123"), IP);
+
+        verify(rateLimitService).registrar(CHAVE_LOGIN_EMAIL + "user@test.com");
+        verify(rateLimitService).registrar(CHAVE_LOGIN_IP + IP);
+    }
+
+    @Test
+    void login_ShouldRejectPasswordAboveTheBcryptLimit() {
+        assertThrows(InvalidLoginException.class,
+                () -> authService.login(new LoginRequest("user@test.com", "Á".repeat(37)), IP));
+
+        verifyNoInteractions(userRepository, authenticationManager, passwordEncoder);
     }
 
     @Test
@@ -140,7 +171,7 @@ class AuthServiceTest {
         when(customUserDetailsService.toUserDetails(user)).thenReturn(userDetails);
         when(jwtService.generateToken(anyMap(), any(UserDetails.class), anyLong())).thenReturn("jwt-token");
 
-        authService.login(request);
+        authService.login(request, IP);
 
         verify(jwtService).generateToken(claimsCaptor.capture(), any(UserDetails.class), anyLong());
         assertThat(claimsCaptor.getValue()).containsEntry("perfil", "ADMINISTRADOR");
@@ -160,7 +191,7 @@ class AuthServiceTest {
 
     private InvalidLoginException recusaDoLogin(String email) {
         return assertThrows(InvalidLoginException.class,
-                () -> authService.login(new LoginRequest(email, SENHA_TENTADA)));
+                () -> authService.login(new LoginRequest(email, SENHA_TENTADA), IP));
     }
 
     private InvalidLoginException recusaDeUsuarioExistente() {
@@ -312,7 +343,7 @@ class AuthServiceTest {
         when(customUserDetailsService.toUserDetails(user)).thenReturn(userDetails);
         when(jwtService.generateToken(anyMap(), any(UserDetails.class), anyLong())).thenReturn("jwt-token");
 
-        authService.login(new LoginRequest("user@test.com", "password123"));
+        authService.login(new LoginRequest("user@test.com", "password123"), IP);
 
         verifyNoInteractions(passwordEncoder);
     }
@@ -325,7 +356,7 @@ class AuthServiceTest {
         when(customUserDetailsService.toUserDetails(user)).thenReturn(userDetails);
         when(jwtService.generateToken(anyMap(), any(UserDetails.class), anyLong())).thenReturn("jwt-token");
 
-        authService.login(new LoginRequest("user@test.com", "senha"));
+        authService.login(new LoginRequest("user@test.com", "senha"), IP);
 
         ArgumentCaptor<Long> captor = ArgumentCaptor.forClass(Long.class);
         verify(jwtService).generateToken(anyMap(), any(UserDetails.class), captor.capture());
