@@ -1,0 +1,70 @@
+name: Evidencias TCC - API
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  testes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Obter o codigo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Configurar Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Registrar commit e ambiente
+        shell: bash
+        run: |
+          estado_codigo="$(git status --porcelain)"
+          if [ -n "$estado_codigo" ]; then
+            printf '%s\n' "$estado_codigo"
+            exit 1
+          fi
+          mkdir -p evidencias
+          {
+            echo "repositorio=$GITHUB_REPOSITORY"
+            echo "commit_testado=$(git rev-parse HEAD)"
+            echo "codigo_sem_alteracoes_locais=true"
+            echo "referencia=$GITHUB_REF"
+            echo "execucao=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "tentativa=$GITHUB_RUN_ATTEMPT"
+            echo "inicio_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "fuso=UTC"
+            uname -a
+            cat /etc/os-release
+            java -version
+            bash ./mvnw -version
+          } 2>&1 | tee evidencias/ambiente.log
+
+      - name: Executar a suite da API
+        shell: bash
+        run: |
+          echo 'comando=bash ./mvnw -B -ntp clean test' >> evidencias/ambiente.log
+          set +e
+          bash ./mvnw -B -ntp clean test 2>&1 | tee evidencias/testes.log
+          codigo=${PIPESTATUS[0]}
+          echo "fim_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> evidencias/ambiente.log
+          echo "codigo_saida_testes=$codigo" >> evidencias/ambiente.log
+          exit "$codigo"
+
+      - name: Salvar logs e relatorios
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidencias-api-${{ github.sha }}-${{ github.run_attempt }}
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            evidencias/
+            target/surefire-reports/
