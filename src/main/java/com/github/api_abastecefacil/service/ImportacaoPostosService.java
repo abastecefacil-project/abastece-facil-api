@@ -3,8 +3,10 @@ package com.github.api_abastecefacil.service;
 import com.github.api_abastecefacil.dto.gasStation.ImportacaoPostosStatus;
 import com.github.api_abastecefacil.dto.gasStation.PlanoImportacao;
 import com.github.api_abastecefacil.dto.gasStation.PreviaImportacaoResponse;
+import com.github.api_abastecefacil.exception.DesativacaoNaoConfirmadaException;
 import com.github.api_abastecefacil.exception.ImportacaoNaoEncontradaException;
 import com.github.api_abastecefacil.exception.PlanilhaInvalidaException;
+import com.github.api_abastecefacil.exception.PlanoImportacaoDivergenteException;
 import com.github.api_abastecefacil.model.User;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,7 +34,8 @@ import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.*;
  * não reaproveita prévia nenhuma: entre a prévia e o clique o banco pode ter mudado, e um
  * plano guardado seria aplicado sobre um cadastro que ele não descreve mais. Por isso os
  * erros de leitura (400) e de planejamento (422) saem de forma síncrona, antes de qualquer
- * gravação.
+ * gravação. A ciência das desativações (ver {@link #iniciar}) é conferida contra esse plano
+ * recalculado, pelo mesmo motivo.
  *
  * <p><b>Não é {@code @Transactional}, de propósito.</b> Ler uma planilha de alguns MB leva
  * segundos, e uma transação aberta aqui seguraria uma conexão do pool durante a leitura. O
@@ -69,11 +72,55 @@ public class ImportacaoPostosService {
     }
 
     /**
+     * Recalcula o plano e só então o entrega ao executor, que reserva a vaga da importação.
+     *
+     * <p><b>Desativar exige ciência explícita.</b> {@code desativacoesConfirmadas} é a
+     * quantidade de desativações que o administrador viu e confirmou na prévia. Ela é
+     * conferida contra o plano <b>recalculado</b>, antes de reservar a importação, então nos
+     * dois casos recusados nada é gravado e a vaga continua livre:
+     *
+     * <ul>
+     *   <li>plano com desativações e parâmetro ausente: {@link DesativacaoNaoConfirmadaException};</li>
+     *   <li>parâmetro diferente da quantidade do plano recalculado — inclusive um valor
+     *       informado para um plano que já não desativa nada: {@link PlanoImportacaoDivergenteException}.
+     *       A ciência foi dada sobre outro cadastro e não vale para este.</li>
+     * </ul>
+     *
+     * <p>Plano sem desativações dispensa o parâmetro. A regra de quem é desativado não muda:
+     * continua sendo do {@link PlanejadorImportacaoPostos}; aqui muda só a condição para
+     * começar.
+     *
+     * @param desativacoesConfirmadas quantidade confirmada na prévia, ou {@code null}
      * @return o id da importação, que segue em segundo plano
      */
-    public UUID iniciar(MultipartFile arquivo) {
+    public UUID iniciar(MultipartFile arquivo, Integer desativacoesConfirmadas) {
         autorizacaoOperacional.autorizarAdministracao();
-        return executor.iniciar(planejar(arquivo));
+        PlanoImportacao plano = planejar(arquivo);
+        exigirCienciaDasDesativacoes(plano, desativacoesConfirmadas);
+        return executor.iniciar(plano);
+    }
+
+    private static void exigirCienciaDasDesativacoes(PlanoImportacao plano, Integer desativacoesConfirmadas) {
+        int desativacoes = plano.desativar().size();
+        if (desativacoesConfirmadas == null) {
+            if (desativacoes > 0) {
+                throw new DesativacaoNaoConfirmadaException(
+                        String.format(DESATIVACAO_NAO_CONFIRMADA_MESSAGE, formatarQuantidadePostos(desativacoes)));
+            }
+            return;
+        }
+        if (desativacoesConfirmadas != desativacoes) {
+            throw new PlanoImportacaoDivergenteException(
+                    String.format(PLANO_IMPORTACAO_DIVERGENTE_MESSAGE, desativacoesConfirmadas, desativacoes));
+        }
+    }
+
+    /**
+     * "1 posto" ou "N postos". Mesmo desenho do {@code ConteudoEmail.formatarValidade}: o caso
+     * de 1 existe só para a mensagem concordar com o número.
+     */
+    private static String formatarQuantidadePostos(int quantidade) {
+        return quantidade == 1 ? QUANTIDADE_UM_POSTO : String.format(QUANTIDADE_POSTOS_FORMATO, quantidade);
     }
 
     /**

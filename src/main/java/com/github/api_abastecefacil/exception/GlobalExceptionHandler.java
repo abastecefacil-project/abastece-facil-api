@@ -583,6 +583,52 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 422, como PLANILHA_SEM_POSTOS_NO_ESCOPO: o envio esta bem formado -- arquivo valido,
+     * parametro opcional ausente --, mas o conteudo exige uma ciencia que nao veio. O plano
+     * desativaria postos e o administrador nao confirmou a quantidade vista na previa. Nao e
+     * 400 porque o mesmo envio sem o parametro e valido quando o plano nao desativa nada.
+     *
+     * <p>O "error" e proprio para o frontend reabrir a confirmacao da previa em vez de exibir
+     * um erro generico. A mensagem traz a quantidade a confirmar.
+     */
+    @ExceptionHandler(DesativacaoNaoConfirmadaException.class)
+    public ResponseEntity<ErrorResponse> handleDesativacaoNaoConfirmadaException(
+            DesativacaoNaoConfirmadaException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.UNPROCESSABLE_ENTITY.value(),
+                "DESATIVACAO_NAO_CONFIRMADA",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(error);
+    }
+
+    /**
+     * 409, como IMPORTACAO_EM_ANDAMENTO: a ciencia enviada conflita com o estado atual do
+     * cadastro. A quantidade confirmada na previa difere da do plano recalculado, porque o
+     * banco mudou entre a previa e o clique. Repetir o mesmo envio continua falhando; o que
+     * resolve e gerar uma nova previa.
+     *
+     * <p>O "error" e proprio para o frontend descartar a previa exibida e pedir outra. A
+     * mensagem traz o valor confirmado e o atual.
+     */
+    @ExceptionHandler(PlanoImportacaoDivergenteException.class)
+    public ResponseEntity<ErrorResponse> handlePlanoImportacaoDivergenteException(
+            PlanoImportacaoDivergenteException ex, WebRequest request) {
+
+        ErrorResponse error = ErrorResponse.of(
+                HttpStatus.CONFLICT.value(),
+                "PLANO_IMPORTACAO_DIVERGENTE",
+                ex.getMessage(),
+                request.getDescription(false)
+        );
+
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(error);
+    }
+
+    /**
      * 409: ja existe uma importacao de postos em andamento, e so roda uma por vez. Conflito
      * com o estado atual do recurso, nao erro no envio -- repetir mais tarde funciona.
      *
