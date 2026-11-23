@@ -190,27 +190,26 @@ class UserValidatorTest {
     // ---------- validarDominioEmail ----------
 
     private static final java.util.List<String> DOMINIOS =
-            java.util.List.of("fiesc.org.br", "sesisenai.org.br");
+            java.util.List.of("sc.senai.br", "sesisc.org.br", "fiesc.com.br");
 
     @Test
     void validarDominioEmail_ShouldAccept_OnExactDomainMatch() {
         assertThatCode(() -> {
-            UserValidator.validarDominioEmail("joao@fiesc.org.br", DOMINIOS);
-            UserValidator.validarDominioEmail("maria@sesisenai.org.br", DOMINIOS);
+            UserValidator.validarDominioEmail("joao@sc.senai.br", DOMINIOS);
+            UserValidator.validarDominioEmail("maria@sesisc.org.br", DOMINIOS);
+            UserValidator.validarDominioEmail("ana@fiesc.com.br", DOMINIOS);
         }).doesNotThrowAnyException();
     }
 
     @Test
-    void validarDominioEmail_ShouldAccept_OnSubdomain() {
-        assertThatCode(() -> {
-            UserValidator.validarDominioEmail("joao@sc.fiesc.org.br", DOMINIOS);
-            UserValidator.validarDominioEmail("joao@joinville.sesisenai.org.br", DOMINIOS);
-        }).doesNotThrowAnyException();
+    void validarDominioEmail_ShouldReject_UnlistedSubdomain() {
+        assertThrows(DominioEmailNaoPermitidoException.class,
+                () -> UserValidator.validarDominioEmail("joao@sub.sc.senai.br", DOMINIOS));
     }
 
     @Test
     void validarDominioEmail_ShouldBeCaseInsensitive() {
-        assertThatCode(() -> UserValidator.validarDominioEmail("Joao@FIESC.ORG.BR", DOMINIOS))
+        assertThatCode(() -> UserValidator.validarDominioEmail("Joao@SC.SENAI.BR", DOMINIOS))
                 .doesNotThrowAnyException();
     }
 
@@ -220,24 +219,23 @@ class UserValidatorTest {
         // endereco e do Gmail. A comparacao tem que ser sobre o que vem depois do ULTIMO
         // arroba.
         assertThrows(DominioEmailNaoPermitidoException.class,
-                () -> UserValidator.validarDominioEmail("fiesc.org.br@gmail.com", DOMINIOS));
+                () -> UserValidator.validarDominioEmail("sc.senai.br@gmail.com", DOMINIOS));
     }
 
     @Test
     void validarDominioEmail_ShouldReject_WhenAllowedDomainIsALabelOfAnotherDomain() {
-        // O dominio real aqui e exemplo.com; fiesc.org.br e so um rotulo no meio.
+        // O dominio real aqui e exemplo.com; sc.senai.br e so um rotulo no meio.
         assertThrows(DominioEmailNaoPermitidoException.class,
-                () -> UserValidator.validarDominioEmail("contato@fiesc.org.br.exemplo.com", DOMINIOS));
+                () -> UserValidator.validarDominioEmail("contato@sc.senai.br.exemplo.com", DOMINIOS));
     }
 
     @Test
     void validarDominioEmail_ShouldReject_WhenDomainMerelyEndsWithAllowedOne() {
-        // Sem o ponto em "." + permitido, notfiesc.org.br terminaria em fiesc.org.br e
-        // passaria.
+        // Domínios parecidos, mas não exatamente iguais à lista, devem ser recusados.
         assertThrows(DominioEmailNaoPermitidoException.class,
-                () -> UserValidator.validarDominioEmail("joao@notfiesc.org.br", DOMINIOS));
+                () -> UserValidator.validarDominioEmail("joao@not-sc.senai.br", DOMINIOS));
         assertThrows(DominioEmailNaoPermitidoException.class,
-                () -> UserValidator.validarDominioEmail("joao@xsesisenai.org.br", DOMINIOS));
+                () -> UserValidator.validarDominioEmail("joao@xsesis.c.org.br", DOMINIOS));
     }
 
     @Test
@@ -260,9 +258,9 @@ class UserValidatorTest {
     void validarDominioEmail_ShouldRejectEverything_WhenTheAllowListIsEmpty() {
         // Deny by default: lista vazia ou nula nao autoriza ninguem.
         assertThrows(DominioEmailNaoPermitidoException.class,
-                () -> UserValidator.validarDominioEmail("joao@fiesc.org.br", java.util.List.of()));
+                () -> UserValidator.validarDominioEmail("joao@sc.senai.br", java.util.List.of()));
         assertThrows(DominioEmailNaoPermitidoException.class,
-                () -> UserValidator.validarDominioEmail("joao@fiesc.org.br", null));
+                () -> UserValidator.validarDominioEmail("joao@sc.senai.br", null));
     }
 
     @Test
@@ -271,14 +269,14 @@ class UserValidatorTest {
         DominioEmailNaoPermitidoException ex = assertThrows(DominioEmailNaoPermitidoException.class,
                 () -> UserValidator.validarDominioEmail("fulano@gmail.com", DOMINIOS));
 
-        assertThat(ex.getMessage()).contains("fiesc.org.br").contains("sesisenai.org.br");
+        assertThat(ex.getMessage()).contains("sc.senai.br").contains("sesisc.org.br").contains("fiesc.com.br");
     }
 
     @Test
     void validarDominioEmail_ShouldToleratePaddingInTheConfiguredList() {
         // A lista vem de CSV em configuracao, entao espaco em volta e comum.
         assertThatCode(() -> UserValidator.validarDominioEmail(
-                "joao@fiesc.org.br", java.util.List.of(" fiesc.org.br ", "  "))).doesNotThrowAnyException();
+                "joao@sc.senai.br", java.util.List.of(" sc.senai.br ", "  "))).doesNotThrowAnyException();
     }
 
     // ---------- normalizarTelefone ----------

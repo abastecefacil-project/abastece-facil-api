@@ -158,11 +158,7 @@ public final class UserValidator {
      * {@code fiesc.org.br@gmail.com}, onde o domínio permitido aparece como nome de
      * usuário — o endereço é do Gmail e o texto casa mesmo assim.
      *
-     * <p>Aceita <b>igualdade exata ou subdomínio</b>. O ponto em {@code "." + permitido}
-     * não é enfeite: sem ele, {@code notfiesc.org.br} terminaria em {@code fiesc.org.br} e
-     * passaria. E como o domínio comparado é o trecho final inteiro,
-     * {@code contato@fiesc.org.br.exemplo.com} também é rejeitado — ali o domínio real é
-     * {@code exemplo.com}, e {@code fiesc.org.br} é só um rótulo no meio.
+     * <p>Exige <b>igualdade exata</b>: subdomínios não listados também são recusados.
      *
      * <p>A lista vem por parâmetro, e não de configuração injetada, para esta classe
      * continuar sendo utilitária e pura como as irmãs. Quem lê
@@ -175,7 +171,7 @@ public final class UserValidator {
                 .filter(Objects::nonNull)
                 .map(d -> d.trim().toLowerCase(Locale.ROOT))
                 .filter(d -> !d.isEmpty())
-                .anyMatch(d -> dominio.equals(d) || dominio.endsWith("." + d));
+                .anyMatch(dominio::equals);
 
         if (!permitido) {
             throw new DominioEmailNaoPermitidoException(String.format(

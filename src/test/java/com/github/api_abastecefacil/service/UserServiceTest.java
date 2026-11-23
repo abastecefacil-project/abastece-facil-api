@@ -50,7 +50,7 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class UserServiceTest {
 
-    private static final List<String> DOMINIOS = List.of("fiesc.org.br", "sesisenai.org.br");
+    private static final List<String> DOMINIOS = List.of("sc.senai.br", "sesisc.org.br", "fiesc.com.br");
 
     private static final String IP = "10.0.0.7";
 
@@ -96,7 +96,7 @@ class UserServiceTest {
         user = new User()
                 .setId(1L)
                 .setName("User One")
-                .setEmail("one@fiesc.org.br")
+                .setEmail("one@sc.senai.br")
                 .setPassword("pass123")
                 .setActive(true)
                 .setCreatedAt(LocalDateTime.now())
@@ -104,7 +104,7 @@ class UserServiceTest {
                 .setSenhaDefinida(true);
 
         userResponse = new UserResponse(
-                1L, "User One", "one@fiesc.org.br", true, LocalDateTime.now(), null,
+                1L, "User One", "one@sc.senai.br", true, LocalDateTime.now(), null,
                 Perfil.COLABORADOR, null, "47999998888", "12345", false, null);
     }
 
@@ -119,7 +119,7 @@ class UserServiceTest {
      * outra pessoa", e a comparacao no service e por id.
      */
     private User autorComId(Long id, Perfil perfil, Regional regional) {
-        return new User().setId(id).setName("Autor Um").setEmail("autor@fiesc.org.br")
+        return new User().setId(id).setName("Autor Um").setEmail("autor@sc.senai.br")
                 .setPerfil(perfil).setRegional(regional).setActive(true);
     }
 
@@ -129,7 +129,7 @@ class UserServiceTest {
 
     private CreateUserRequest pedido(Perfil perfil, Long regionalId, String matricula) {
         return new CreateUserRequest(
-                "Novo Colaborador", "novo@fiesc.org.br", "(47) 99999-8888", matricula, perfil, regionalId);
+                "Novo Colaborador", "novo@sc.senai.br", "(47) 99999-8888", matricula, perfil, regionalId);
     }
 
     private CreateUserRequest pedidoColaborador() {
@@ -269,7 +269,7 @@ class UserServiceTest {
         // Conta de infraestrutura pode nao pertencer a regional nenhuma, como o
         // administrador inicial criado pelo A3.
         CreateUserRequest request = new CreateUserRequest(
-                "Admin Novo", "admin@fiesc.org.br", null, null, Perfil.ADMINISTRADOR, null);
+                "Admin Novo", "admin@sc.senai.br", null, null, Perfil.ADMINISTRADOR, null);
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
                 .thenReturn(autor(Perfil.ADMINISTRADOR, null));
         when(userRepository.existsByEmail(request.email())).thenReturn(false);
@@ -304,10 +304,10 @@ class UserServiceTest {
 
     @Test
     void createUser_ShouldRejectAllowedDomainUsedAsLocalPart() {
-        // fiesc.org.br@gmail.com: o dominio permitido aparece como nome de usuario. Um
+        // sc.senai.br@gmail.com: o dominio permitido aparece como nome de usuario. Um
         // contains sobre o e-mail inteiro aceitaria, e o endereco e do Gmail.
         CreateUserRequest request = new CreateUserRequest(
-                "Fulano", "fiesc.org.br@gmail.com", null, "12345", Perfil.COLABORADOR, REGIONAL_JOI);
+                "Fulano", "sc.senai.br@gmail.com", null, "12345", Perfil.COLABORADOR, REGIONAL_JOI);
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
                 .thenReturn(autor(Perfil.ADMINISTRADOR, null));
 
@@ -316,9 +316,9 @@ class UserServiceTest {
 
     @Test
     void createUser_ShouldRejectAllowedDomainUsedAsLabelInAnotherDomain() {
-        // contato@fiesc.org.br.exemplo.com: o dominio real e exemplo.com.
+        // contato@sc.senai.br.exemplo.com: o dominio real e exemplo.com.
         CreateUserRequest request = new CreateUserRequest(
-                "Fulano", "contato@fiesc.org.br.exemplo.com", null, "12345", Perfil.COLABORADOR, REGIONAL_JOI);
+                "Fulano", "contato@sc.senai.br.exemplo.com", null, "12345", Perfil.COLABORADOR, REGIONAL_JOI);
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
                 .thenReturn(autor(Perfil.ADMINISTRADOR, null));
 
@@ -328,7 +328,7 @@ class UserServiceTest {
     @Test
     void createUser_ShouldThrowInvalidUserData_WhenTelefoneIsMalformed() {
         CreateUserRequest request = new CreateUserRequest(
-                "Fulano", "fulano@fiesc.org.br", "+55 47 99999-8888", "12345", Perfil.COLABORADOR, REGIONAL_JOI);
+                "Fulano", "fulano@sc.senai.br", "+55 47 99999-8888", "12345", Perfil.COLABORADOR, REGIONAL_JOI);
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
                 .thenReturn(autor(Perfil.ADMINISTRADOR, null));
 
@@ -351,7 +351,7 @@ class UserServiceTest {
         CreateUserRequest request = pedidoColaborador();
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
                 .thenReturn(autor(Perfil.ADMINISTRADOR, null));
-        when(userRepository.existsByEmail("novo@fiesc.org.br")).thenReturn(true);
+        when(userRepository.existsByEmail("novo@sc.senai.br")).thenReturn(true);
 
         assertThrows(UserAlreadyExistsException.class, () -> userService.createUser(request, IP));
 
@@ -449,7 +449,7 @@ class UserServiceTest {
     // ------------------------------------------------------- convite de ativacao
 
     private User alvoPendente() {
-        return new User().setId(5L).setName("Convidada").setEmail("convidada@fiesc.org.br")
+        return new User().setId(5L).setName("Convidada").setEmail("convidada@sc.senai.br")
                 .setPerfil(Perfil.COLABORADOR).setRegional(joinville)
                 .setActive(true).setSenhaDefinida(false).setPassword(null);
     }
@@ -724,7 +724,7 @@ class UserServiceTest {
     void getUsuarioAutenticado_ShouldReturnOwnRecord_WithRegional() {
         User gestor = autorComId(9L, Perfil.GESTOR_FROTA, joinville);
         UserResponse esperado = new UserResponse(
-                9L, "Autor Um", "autor@fiesc.org.br", true, LocalDateTime.now(), null,
+                9L, "Autor Um", "autor@sc.senai.br", true, LocalDateTime.now(), null,
                 Perfil.GESTOR_FROTA, new RegionalSummaryResponse(REGIONAL_JOI, "Joinville", "JOI"),
                 null, null, true, null);
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado()).thenReturn(gestor);
@@ -878,10 +878,10 @@ class UserServiceTest {
         prepararEdicaoAdministrativa();
         when(regionalRepository.findById(REGIONAL_JOI)).thenReturn(Optional.of(joinville));
         when(userRepository.save(user)).thenReturn(user);
-        userService.updateUser(1L, new UpdateUserRequest("Novo nome", "novo@fiesc.org.br", null,
+        userService.updateUser(1L, new UpdateUserRequest("Novo nome", "novo@sc.senai.br", null,
                 REGIONAL_JOI, "(47) 99999-8888", "5678", Perfil.GESTOR_FROTA));
         assertThat(user.getName()).isEqualTo("Novo nome");
-        assertThat(user.getEmail()).isEqualTo("novo@fiesc.org.br");
+        assertThat(user.getEmail()).isEqualTo("novo@sc.senai.br");
         assertThat(user.getTelefone()).isEqualTo("47999998888");
         assertThat(user.getMatricula()).isEqualTo("5678");
         assertThat(user.getPerfil()).isEqualTo(Perfil.GESTOR_FROTA);
@@ -1077,7 +1077,7 @@ class UserServiceTest {
 
     @Test
     void updateUser_ShouldNotTreatTheOwnCurrentEmailAsDuplicate() {
-        UpdateUserRequest request = new UpdateUserRequest("Nome Novo", "one@fiesc.org.br", null, null, null, null, null);
+        UpdateUserRequest request = new UpdateUserRequest("Nome Novo", "one@sc.senai.br", null, null, null, null, null);
         when(usuarioAutenticadoProvider.obterUsuarioAutenticado())
                 .thenReturn(autorComId(1L, Perfil.COLABORADOR, null));
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));

@@ -92,17 +92,16 @@ abastecefacil:
     allowed-origins: "${CORS_ALLOWED_ORIGINS:http://localhost:5173}"
   auth:
     # Domínios de e-mail aceitos no cadastro administrativo (POST /api/users).
-    # A comparação é sobre a parte depois do ÚLTIMO arroba, com igualdade exata ou
-    # subdomínio — ver UserValidator.validarDominioEmail.
+    # A comparação é exata sobre a parte depois do ÚLTIMO arroba — ver
+    # UserValidator.validarDominioEmail.
     #
-    # PROVISÓRIO: lista pendente de confirmação do cliente (FIESC/UNISENAI). Um domínio
-    # que falte aqui significa colaborador que NÃO consegue ser cadastrado — o gestor
-    # recebe 400 e não tem como contornar pela interface. Revisar antes de produção.
+    # Um domínio que falte aqui significa colaborador que NÃO consegue ser cadastrado —
+    # o gestor recebe 400 e não tem como contornar pela interface.
     #
     # Lista separada por vírgula, e não sequência YAML, para o @Value converter sozinho
     # e para o override por ambiente ser direto:
-    # ABASTECEFACIL_AUTH_DOMINIOS_PERMITIDOS=fiesc.org.br,sesisenai.org.br
-    dominios-permitidos: "fiesc.org.br,sesisenai.org.br"
+    # ABASTECEFACIL_AUTH_DOMINIOS_PERMITIDOS=sc.senai.br,sesisc.org.br,fiesc.com.br
+    dominios-permitidos: "sc.senai.br,sesisc.org.br,fiesc.com.br"
   token:
     # Prazo de vida dos tokens de acesso enviados por e-mail, em horas.
     # Ativação é mais longa porque o usuário pode demorar a abrir o convite;

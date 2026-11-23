@@ -1,21 +1,12 @@
 # API AbasteceFacil
 
-## Configuração do Banco de Dados
+Repositórios: [backend](https://github.com/abastecefacil-project/abastece-facil-api) e
+[frontend](https://github.com/abastecefacil-project/abastece-facil-web).
 
-Este projeto utiliza PostgreSQL rodando em Docker para desenvolvimento.
+## Rodar localmente (recomendado)
 
-### Pré-requisitos
-
-- Docker
-- Docker Compose
-- Java 21 (apenas para desenvolvimento local)
-- Maven (apenas para desenvolvimento local)
-
-### Como executar
-
-#### **Opção 1: Docker Compose completo**
-
-Com a API e o frontend clonados em pastas irmãs:
+Você precisa de Docker Desktop, Java 21 e Node.js 20. O Maven já vem pelo wrapper do
+projeto. Clone o backend e o frontend lado a lado, com estes nomes de pasta:
 
 ```text
 workspace/
@@ -23,69 +14,75 @@ workspace/
 └── front-abastecefacil/
 ```
 
-```bash
-cp .env.example .env
-# Edite o .env antes de usar em produção
-docker compose up -d --build
-```
-
-Esse comando executa PostgreSQL, API e frontend. O frontend deve estar clonado na
-pasta irmã `../front-abastecefacil`.
-
-#### **Opção 2: Desenvolvimento Local**
-
-1. **Iniciar o banco de dados:**
-   ```bash
-   docker compose -f docker-compose.dev.yml up -d
-   ```
-
-2. **Executar a aplicação:**
-   ```bash
-   JWT_SECRET="$(openssl rand -base64 32)" ./mvnw spring-boot:run
-   ```
-
-#### Comando rápido
-
-No Linux/WSL:
+**Terminal 1 — API e banco:**
 
 ```bash
+cd api-abastecefacil
 ./dev.sh
 ```
 
-No Windows:
+No Windows, use `dev.cmd`. O script sobe o PostgreSQL em Docker e inicia a API na porta
+8081. Na primeira execução, o Maven baixa as dependências.
 
-```bat
-dev.cmd
-```
-
-Esses comandos iniciam o PostgreSQL em Docker e executam a API localmente.
-
-#### Comandos separados
-
-Para iniciar somente o banco:
+**Terminal 2 — frontend:**
 
 ```bash
-./start-db
+cd front-abastecefacil
+cp .env.example .env
+npm ci
+npm run dev
 ```
 
-Para iniciar somente a API:
+No PowerShell, use `Copy-Item .env.example .env` no lugar de `cp`.
+Abra [http://localhost:5173](http://localhost:5173). Para desenvolvimento, use:
+
+| Perfil | E-mail | Senha |
+|---|---|---|
+| Administrador | `admin@abastecefacil.com` | `Admin@12345` |
+| Gestor de frota | `gestor@abastecefacil.com` | `Gestor@12345` |
+| Colaborador | `colaborador@abastecefacil.com` | `Colab@12345` |
+
+O envio de e-mail fica simulado por padrão. Não use essas contas fora do ambiente local.
+
+## Rodar tudo em Docker (opcional)
+
+O Compose completo precisa das pastas irmãs mostradas acima. No diretório do backend, copie
+o exemplo e troque a senha de banco de exemplo:
 
 ```bash
-./start-api
+cp .env.example .env
 ```
 
-No Windows, use `start-db.cmd` e `start-api.cmd`.
+No PowerShell, use `Copy-Item .env.example .env`.
+
+Gere um segredo com `openssl rand -base64 32` e cole em `JWT_SECRET` no `.env`. No
+PowerShell, gere-o com:
+
+```powershell
+[Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+```
+
+Depois rode:
+
+```bash
+docker compose up -d --build
+```
+
+Abra [http://localhost](http://localhost). O banco fica somente na rede interna do
+Compose; a API e o frontend comunicam-se pela rede Docker. O envio de e-mail começa no
+modo simulado (`log`). Para entrar, configure também o administrador inicial conforme a
+seção abaixo; as contas de desenvolvimento só existem no modo local recomendado.
 
 ### Configurações do Banco
 
 - **Host:** localhost (dev) / postgres (docker)
-- **Porta:** **5432** no host (dev) / 5432 dentro da rede do compose (docker)
+- **Porta:** 5432 no host (Compose de desenvolvimento) / 5432 na rede do Compose completo
 - **Database:** abastecefacil
 - **Usuário:** abastecefacil_user
 - **Senha:** abastecefacil_password
 
-> A porta publicada é 5432. A API em Docker fala com o banco usando `postgres:5432`
-> pelo DNS interno da rede.
+> Só o Compose de desenvolvimento publica a porta 5432 no host. No Compose completo, a
+> API acessa o banco por `postgres:5432` na rede interna.
 
 ### Arquivos de configuração
 
@@ -101,7 +98,8 @@ está no `CLAUDE.md`, seção 3.
 - O login aceita até 10 tentativas por e-mail e 30 por IP a cada 15 minutos.
 - A recuperação aceita 3 pedidos por e-mail em 15 minutos e 10 por IP em uma hora.
 - O JWT exige `JWT_SECRET`; a aplicação não inicia sem essa variável.
-- O CORS aceita somente as origens definidas em `CORS_ALLOWED_ORIGINS`.
+- O CORS aceita somente as origens definidas em `CORS_ALLOWED_ORIGINS`. No exemplo local,
+  `http://localhost` atende o frontend pelo Compose e `http://localhost:5173` atende o Vite.
 - As consultas usam Spring Data com parâmetros nomeados. Dados recebidos não são concatenados em SQL.
 - Senhas usam BCrypt e links de acesso são aleatórios, armazenados como hash e válidos uma única vez.
 - O Nginx envia CSP, proteção contra frames, política de referência e bloqueio de MIME sniffing.
@@ -202,6 +200,12 @@ A chave se obtém no painel do Resend e **nunca entra no `application.yml`**, qu
 versionado — mesma regra do hash do administrador inicial. O remetente precisa ser um
 endereço verificado no Resend; o default é o domínio de teste deles, que só entrega para
 a conta dona da chave.
+
+O `docker-compose.yml` repassa essas variáveis ao container da API. Para ativar o envio,
+defina no `.env` usado pelo Compose `ABASTECEFACIL_EMAIL_PROVEDOR=resend`, a chave da API,
+um remetente verificado e a URL pública do frontend. O `.env.example` mantém o modo `log`
+para desenvolvimento; copie-o para `.env` e não versione esse arquivo. Na VPS, não use o
+remetente de teste `onboarding@resend.dev`: configure o domínio verificado da aplicação.
 
 ### Endpoints da API
 

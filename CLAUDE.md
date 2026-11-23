@@ -195,7 +195,7 @@ que a forma canônica, não porque fosse necessário.
 | `abastecefacil.admin.nome` | `Administrador` | — | `ABASTECEFACIL_ADMIN_NOME` | não |
 | `abastecefacil.admin.email` | vazio | — | `ABASTECEFACIL_ADMIN_EMAIL` | **sim** |
 | `abastecefacil.admin.senha-hash` | vazio | — | `ABASTECEFACIL_ADMIN_SENHA_HASH` | **sim** |
-| `abastecefacil.auth.dominios-permitidos` | `fiesc.org.br,sesisenai.org.br` | — | `ABASTECEFACIL_AUTH_DOMINIOS_PERMITIDOS` | **sim** |
+| `abastecefacil.auth.dominios-permitidos` | `sc.senai.br,sesisc.org.br,fiesc.com.br` | — | `ABASTECEFACIL_AUTH_DOMINIOS_PERMITIDOS` | **sim** |
 | `abastecefacil.email.provedor` | `log` | — | `ABASTECEFACIL_EMAIL_PROVEDOR` | **sim** (`resend`) |
 | `abastecefacil.email.remetente` | `Abastece Fácil <onboarding@resend.dev>` | — | `ABASTECEFACIL_EMAIL_REMETENTE` | **sim** |
 | `abastecefacil.email.api-key` | vazio | — | `ABASTECEFACIL_EMAIL_API_KEY` | **sim** |
@@ -244,9 +244,8 @@ Os "precisa em produção" que não são o banco:
   propósito (ver §6, item 16). O remetente precisa ser um endereço verificado no Resend;
   o default é o domínio de teste deles, que só entrega para a conta dona da chave.
 - **`ABASTECEFACIL_AUTH_DOMINIOS_PERMITIDOS`** — lista, separada por vírgula, dos
-  domínios de e-mail aceitos no cadastro administrativo. A lista versionada —
-  `fiesc.org.br` e `sesisenai.org.br` — foi **confirmada pelo cliente (FIESC/UNISENAI)**
-  e é a lista definitiva. Um domínio que falte ali é um colaborador que **não consegue
+  domínios exatos de e-mail aceitos no cadastro administrativo: `sc.senai.br`,
+  `sesisc.org.br` e `fiesc.com.br`. Um domínio que falte ali é um colaborador que **não consegue
   ser cadastrado**, porque o gestor recebe 400 e não tem como contornar pela interface.
   Lista vazia recusa todo mundo — *deny by default*, deliberado. É CSV, e não sequência YAML, para o `@Value` converter para
   `List<String>` sozinho e o override por ambiente ser direto; sequência YAML exigiria
@@ -1594,12 +1593,10 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
 
     Esta nota existe porque "colocar a regional no token" parece uma otimização óbvia
     para quem chega depois. Não é.
-21. **Domínio de e-mail é comparado depois do ÚLTIMO arroba, com igualdade exata ou
-    subdomínio.** `UserValidator.validarDominioEmail`. Nunca `contains` sobre o e-mail
-    inteiro: `fiesc.org.br@gmail.com` casaria, e o endereço é do Gmail. O ponto em
-    `"." + permitido` também não é enfeite — sem ele `notfiesc.org.br` passaria. E como a
-    comparação é sobre o trecho final inteiro, `contato@fiesc.org.br.exemplo.com` é
-    rejeitado, porque ali o domínio real é `exemplo.com`. Lista vazia recusa todo mundo.
+21. **Domínio de e-mail precisa corresponder exatamente a um domínio permitido, depois do
+    ÚLTIMO arroba.** `UserValidator.validarDominioEmail`. Nunca `contains` sobre o e-mail
+    inteiro: `sc.senai.br@gmail.com` casaria, e o endereço é do Gmail. Subdomínios não
+    listados e lista vazia são recusados.
 22. **Autorizar vem antes de validar.** Quem não pode criar o usuário não recebe pistas
     sobre o payload: um gestor tentando criar administrador leva 403 com matrícula certa
     ou errada, e não descobre pela mensagem o que mais estava errado.
