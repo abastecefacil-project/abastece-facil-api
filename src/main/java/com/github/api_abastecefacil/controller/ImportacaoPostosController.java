@@ -9,12 +9,15 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.net.URI;
 import java.util.UUID;
+
+import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.PARAM_DESATIVACOES_CONFIRMADAS;
 
 /**
  * Importação da planilha de postos. Tudo fica sob {@code /api/gas-stations/**}, que o
@@ -47,9 +50,16 @@ public class ImportacaoPostosController {
         return ResponseEntity.ok(importacaoPostosService.previa(arquivo));
     }
 
+    /**
+     * {@code desativacoesConfirmadas} é opcional: a quantidade de desativações confirmada na
+     * prévia, como campo do multipart ou na query string. A regra de quando ele é exigido fica
+     * no {@link ImportacaoPostosService#iniciar}.
+     */
     @PostMapping
-    public ResponseEntity<ImportacaoIniciadaResponse> iniciar(@RequestPart("arquivo") MultipartFile arquivo) {
-        UUID id = importacaoPostosService.iniciar(arquivo);
+    public ResponseEntity<ImportacaoIniciadaResponse> iniciar(
+            @RequestPart("arquivo") MultipartFile arquivo,
+            @RequestParam(value = PARAM_DESATIVACOES_CONFIRMADAS, required = false) Integer desativacoesConfirmadas) {
+        UUID id = importacaoPostosService.iniciar(arquivo, desativacoesConfirmadas);
         URI location = URI.create("/api/gas-stations/import/" + id);
         return ResponseEntity.accepted().location(location).body(new ImportacaoIniciadaResponse(id));
     }

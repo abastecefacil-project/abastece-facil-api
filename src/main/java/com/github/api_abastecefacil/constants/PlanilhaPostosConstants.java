@@ -165,6 +165,19 @@ public final class PlanilhaPostosConstants {
     public static final String IMPORTACAO_NAO_EM_ANDAMENTO_MESSAGE =
             "A importação de postos já foi finalizada (status %s) e não pode ser cancelada.";
 
+    /** Nome do parâmetro de {@code POST /api/gas-stations/import} com a ciência da prévia. */
+    public static final String PARAM_DESATIVACOES_CONFIRMADAS = "desativacoesConfirmadas";
+    /** O {@code %s} recebe {@link #QUANTIDADE_UM_POSTO} ou {@link #QUANTIDADE_POSTOS_FORMATO}. */
+    public static final String DESATIVACAO_NAO_CONFIRMADA_MESSAGE =
+            "Confirme a desativação de %s antes de iniciar a importação.";
+    /** Só para não escrever "1 postos", como o {@code VALIDADE_UMA_HORA} do e-mail. */
+    public static final String QUANTIDADE_UM_POSTO = "1 posto";
+    public static final String QUANTIDADE_POSTOS_FORMATO = "%d postos";
+    public static final String PLANO_IMPORTACAO_DIVERGENTE_MESSAGE =
+            "A quantidade de postos a desativar mudou desde a prévia (confirmados: %d, atuais: %d). "
+                    + "Gere uma nova prévia e confirme novamente antes de iniciar a importação. "
+                    + "Nenhum posto foi alterado.";
+
     public static final String COORDENADAS_NAO_ENCONTRADAS_INSERIR_MESSAGE =
             "Endereço não localizado pelo serviço de geocodificação; posto não inserido";
     public static final String COORDENADAS_NAO_ENCONTRADAS_ATUALIZAR_MESSAGE =

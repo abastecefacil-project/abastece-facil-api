@@ -5,7 +5,9 @@ import com.github.api_abastecefacil.dto.gasStation.ItemPlanoImportacao;
 import com.github.api_abastecefacil.dto.gasStation.PlanoImportacao;
 import com.github.api_abastecefacil.dto.gasStation.PreviaImportacaoResponse;
 import com.github.api_abastecefacil.dto.gasStation.ResultadoLeituraPlanilha;
+import com.github.api_abastecefacil.exception.DesativacaoNaoConfirmadaException;
 import com.github.api_abastecefacil.exception.ImportacaoNaoEmAndamentoException;
+import com.github.api_abastecefacil.exception.PlanoImportacaoDivergenteException;
 import com.github.api_abastecefacil.exception.ImportacaoNaoEncontradaException;
 import com.github.api_abastecefacil.exception.PerfilNaoPermitidoException;
 import com.github.api_abastecefacil.exception.PlanilhaInvalidaException;
@@ -27,10 +29,12 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.IntStream;
 
 import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.ARQUIVO_ILEGIVEL_MESSAGE;
 import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.ARQUIVO_VAZIO_MESSAGE;
 import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.PLANILHA_INVALIDA_MESSAGE;
+import static com.github.api_abastecefacil.constants.PlanilhaPostosConstants.PLANO_IMPORTACAO_DIVERGENTE_MESSAGE;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -107,7 +111,7 @@ class ImportacaoPostosServiceTest {
         negarAcesso();
         MultipartFile arquivo = mock(MultipartFile.class);
 
-        assertThrows(PerfilNaoPermitidoException.class, () -> service.iniciar(arquivo));
+        assertThrows(PerfilNaoPermitidoException.class, () -> service.iniciar(arquivo, null));
 
         verifyNoInteractions(leitor, planejador, executor, registro, arquivo);
     }
@@ -163,7 +167,101 @@ class ImportacaoPostosServiceTest {
         when(planejador.planejar(LEITURA)).thenReturn(plano);
         when(executor.iniciar(plano)).thenReturn(id);
 
-        assertThat(service.iniciar(planilha("postos.xlsx"))).isEqualTo(id);
+        assertThat(service.iniciar(planilha("postos.xlsx"), null)).isEqualTo(id);
+    }
+
+    // ------------------------------------------------- ciência das desativações
+
+    /** Plano com {@code desativacoes} itens a desativar e um a inserir. */
+    private static PlanoImportacao planoComDesativacoes(int desativacoes) {
+        ItemPlanoImportacao inserir = new ItemPlanoImportacao(null, "12.345.678/0001-95", "Posto", "Posto",
+                "Joinville", List.of(), true, null);
+        List<ItemPlanoImportacao> desativar = IntStream.range(0, desativacoes)
+                .mapToObj(i -> new ItemPlanoImportacao((long) i + 1, "00.000.000/0001-0" + i, "Ausente " + i,
+                        "Ausente " + i, "Blumenau", List.of(), false, null))
+                .toList();
+        return new PlanoImportacao(List.of(inserir), List.of(), List.of(), desativar, 0, 10, 8, 5,
+                List.of(), List.of());
+    }
+
+    @Test
+    void iniciar_ShouldStart_WhenThePlanHasNoDeactivations_AndNoConfirmationWasSent() {
+        PlanoImportacao plano = planoComDesativacoes(0);
+        UUID id = UUID.randomUUID();
+        when(leitor.ler(any())).thenReturn(LEITURA);
+        when(planejador.planejar(LEITURA)).thenReturn(plano);
+        when(executor.iniciar(plano)).thenReturn(id);
+
+        assertThat(service.iniciar(planilha("postos.xlsx"), null)).isEqualTo(id);
+    }
+
+    @Test
+    void iniciar_ShouldRefuseWithoutReserving_WhenThePlanHasDeactivations_AndNoConfirmationWasSent() {
+        when(leitor.ler(any())).thenReturn(LEITURA);
+        when(planejador.planejar(LEITURA)).thenReturn(planoComDesativacoes(3));
+
+        assertThatThrownBy(() -> service.iniciar(planilha("postos.xlsx"), null))
+                .isInstanceOf(DesativacaoNaoConfirmadaException.class)
+                .hasMessage("Confirme a desativação de 3 postos antes de iniciar a importação.");
+
+        verifyNoInteractions(executor, registro);
+    }
+
+    @Test
+    void iniciar_ShouldUseSingular_WhenThePlanDeactivatesExactlyOneStation() {
+        when(leitor.ler(any())).thenReturn(LEITURA);
+        when(planejador.planejar(LEITURA)).thenReturn(planoComDesativacoes(1));
+
+        assertThatThrownBy(() -> service.iniciar(planilha("postos.xlsx"), null))
+                .isInstanceOf(DesativacaoNaoConfirmadaException.class)
+                .hasMessage("Confirme a desativação de 1 posto antes de iniciar a importação.");
+
+        verifyNoInteractions(executor, registro);
+    }
+
+    @Test
+    void iniciar_ShouldStart_WhenTheConfirmedAmountMatchesTheRecalculatedPlan() {
+        PlanoImportacao plano = planoComDesativacoes(3);
+        UUID id = UUID.randomUUID();
+        when(leitor.ler(any())).thenReturn(LEITURA);
+        when(planejador.planejar(LEITURA)).thenReturn(plano);
+        when(executor.iniciar(plano)).thenReturn(id);
+
+        assertThat(service.iniciar(planilha("postos.xlsx"), 3)).isEqualTo(id);
+    }
+
+    @Test
+    void iniciar_ShouldRefuseWithoutReserving_WhenTheConfirmedAmountDiffersFromTheRecalculatedPlan() {
+        when(leitor.ler(any())).thenReturn(LEITURA);
+        when(planejador.planejar(LEITURA)).thenReturn(planoComDesativacoes(5));
+
+        assertThatThrownBy(() -> service.iniciar(planilha("postos.xlsx"), 3))
+                .isInstanceOf(PlanoImportacaoDivergenteException.class)
+                .hasMessage(String.format(PLANO_IMPORTACAO_DIVERGENTE_MESSAGE, 3, 5))
+                .hasMessageContaining("confirmados: 3, atuais: 5");
+
+        verifyNoInteractions(executor, registro);
+    }
+
+    @Test
+    void iniciar_ShouldRefuseWithoutReserving_WhenAConfirmationWasSentButThePlanNoLongerDeactivates() {
+        when(leitor.ler(any())).thenReturn(LEITURA);
+        when(planejador.planejar(LEITURA)).thenReturn(planoComDesativacoes(0));
+
+        assertThrows(PlanoImportacaoDivergenteException.class, () -> service.iniciar(planilha("postos.xlsx"), 2));
+
+        verifyNoInteractions(executor, registro);
+    }
+
+    @Test
+    void iniciar_ShouldStart_WhenZeroIsConfirmedForAPlanWithoutDeactivations() {
+        PlanoImportacao plano = planoComDesativacoes(0);
+        UUID id = UUID.randomUUID();
+        when(leitor.ler(any())).thenReturn(LEITURA);
+        when(planejador.planejar(LEITURA)).thenReturn(plano);
+        when(executor.iniciar(plano)).thenReturn(id);
+
+        assertThat(service.iniciar(planilha("postos.xlsx"), 0)).isEqualTo(id);
     }
 
     @Test
@@ -171,7 +269,7 @@ class ImportacaoPostosServiceTest {
         when(leitor.ler(any())).thenReturn(LEITURA);
         when(planejador.planejar(LEITURA)).thenThrow(new PlanilhaSemPostosNoEscopoException("nenhuma linha"));
 
-        assertThrows(PlanilhaSemPostosNoEscopoException.class, () -> service.iniciar(planilha("postos.xlsx")));
+        assertThrows(PlanilhaSemPostosNoEscopoException.class, () -> service.iniciar(planilha("postos.xlsx"), null));
 
         verifyNoInteractions(executor);
     }
@@ -180,7 +278,7 @@ class ImportacaoPostosServiceTest {
     void iniciar_ShouldPropagateReadingErrorSynchronously_WithoutPlanning() {
         when(leitor.ler(any())).thenThrow(new PlanilhaInvalidaException("cabeçalho"));
 
-        assertThrows(PlanilhaInvalidaException.class, () -> service.iniciar(planilha("postos.xlsx")));
+        assertThrows(PlanilhaInvalidaException.class, () -> service.iniciar(planilha("postos.xlsx"), null));
 
         verifyNoInteractions(planejador, executor);
     }
@@ -209,7 +307,7 @@ class ImportacaoPostosServiceTest {
     void iniciar_ShouldRejectFileWithoutName_WithoutReading() {
         MockMultipartFile semNome = new MockMultipartFile("arquivo", null, "application/octet-stream", new byte[]{1});
 
-        assertThrows(PlanilhaInvalidaException.class, () -> service.iniciar(semNome));
+        assertThrows(PlanilhaInvalidaException.class, () -> service.iniciar(semNome, null));
         verifyNoInteractions(leitor, planejador, executor);
     }
 

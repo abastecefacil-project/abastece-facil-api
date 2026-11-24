@@ -1037,7 +1037,7 @@ autenticado: o `SecurityConfig` **não mudou**, e não há rota pública de impo
 | Rota | Resposta |
 |---|---|
 | `POST /preview`, multipart, parte `arquivo` | 200 `PreviaImportacaoResponse`. Não grava nada |
-| `POST /`, multipart, parte `arquivo` | **202** `{ "id": "<uuid>" }`, com `Location: /api/gas-stations/import/{id}` |
+| `POST /`, multipart, parte `arquivo` e parâmetro opcional `desativacoesConfirmadas` | **202** `{ "id": "<uuid>" }`, com `Location: /api/gas-stations/import/{id}` |
 | `GET /atual` | 200 `ImportacaoPostosStatus` da importação `EM_ANDAMENTO`, ou **204** sem corpo |
 | `GET /{id}` | 200 `ImportacaoPostosStatus` |
 | `POST /{id}/cancelamento`, sem corpo | **202** `ImportacaoPostosStatus` no instante do pedido, ainda `EM_ANDAMENTO` |
@@ -1047,6 +1047,15 @@ autenticado: o `SecurityConfig` **não mudou**, e não há rota pública de impo
   ou `CONCLUIDA` se o pedido chegou tarde demais — sai no `GET /{id}`. O `{id}` segue a mesma
   regra do `GET`: valor que não é UUID responde 404. Pedir de novo enquanto em andamento
   responde 202 outra vez.
+- **Desativar exige ciência da prévia.** `desativacoesConfirmadas` (inteiro, campo do multipart
+  ou query string) é a quantidade de desativações que o administrador viu na prévia. Depois de
+  recalcular o plano e **antes de reservar a importação**, `ImportacaoPostosService.iniciar`
+  confere: plano com desativações e parâmetro ausente → 422 `DESATIVACAO_NAO_CONFIRMADA`
+  ("Confirme a desativação de N postos antes de iniciar a importação."); parâmetro diferente
+  da quantidade do plano recalculado → 409 `PLANO_IMPORTACAO_DIVERGENTE`, com o valor
+  confirmado e o atual. Vale também para um valor informado quando o plano já não desativa
+  nada. Plano sem desativações dispensa o parâmetro. Nas recusas nada é gravado e a vaga fica
+  livre. A prévia não mudou, e a regra de quem é desativado (planejador) também não.
 - **`/atual` vence `/{id}`** porque o `PathPattern` ordena segmento literal acima de variável,
   o mesmo mecanismo de `/api/users/me`.
 - **O `{id}` é recebido como `String`.** Valor que não é UUID responde 404
@@ -1087,6 +1096,8 @@ autenticado: o `SecurityConfig` **não mudou**, e não há rota pública de impo
 | arquivo vazio, sem `.xlsx`, ilegível, sem cabeçalho ou com coluna faltando | 400 | `PLANILHA_INVALIDA` |
 | arquivo acima de `spring.servlet.multipart.*` | **413** | `ARQUIVO_MUITO_GRANDE` |
 | nenhuma linha válida no escopo | 422 | `PLANILHA_SEM_POSTOS_NO_ESCOPO` |
+| plano com desativações e `desativacoesConfirmadas` ausente | 422 | `DESATIVACAO_NAO_CONFIRMADA` |
+| `desativacoesConfirmadas` diferente das desativações do plano recalculado | 409 | `PLANO_IMPORTACAO_DIVERGENTE` |
 | já há importação em andamento | 409 | `IMPORTACAO_EM_ANDAMENTO` |
 | cancelamento de importação já finalizada (concluída, falha ou cancelada) | 409 | `IMPORTACAO_NAO_EM_ANDAMENTO` |
 | id inexistente, descartado após 24 h, ou que não é UUID | 404 | `IMPORTACAO_NAO_ENCONTRADA` |
@@ -1905,6 +1916,9 @@ finalidade para prazo é o `TokenAcessoService`, num único `switch` privado.
       reaproveita a prévia: o administrador reenvia o arquivo, que é lido e planejado de novo
       na requisição — erros 400 e 422 saem ali, síncronos, antes de qualquer gravação. Uma
       prévia pedida durante uma importação em curso descreve um banco que está mudando.
+    - **Desativar exige ciência.** O início recebe a quantidade de desativações confirmada na
+      prévia (`desativacoesConfirmadas`) e a compara com o plano recalculado: ausente com
+      desativações é 422, divergente é 409, e nenhuma importação é reservada (§5).
     - **A chave é o CNPJ em dígitos**, dos dois lados. O banco tem CNPJ com e sem máscara, e
       a importação grava sempre mascarado.
     - **Inserir** quem não existe; **reativar** quem existe inativo; **atualizar** quem
@@ -2433,7 +2447,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
 
 ### Qualidade
 
-- **747 testes no backend, todos passando.** Cobrem `AuthService`,
+- **770 testes no backend, todos passando.** Cobrem `AuthService`,
   `UserService`, `JwtService`, `CarService`, `GasStationService`, `IncidentService`,
   `RegionalService`, `TokenAcessoService`, `CustomUserDetailsService`,
   `UsuarioAutenticadoProvider`, `OpenStreetMapService`, `ViaCepService`, o
@@ -2448,7 +2462,7 @@ login do pgAdmin, que usa o mesmo e-mail com a senha `admin` e não tem relaçã
   fatia web. Nenhum sobe banco nem contexto completo
   (`ApiAbastecefacilApplicationTests` perdeu o `@SpringBootTest` e hoje é um
   `contextLoads()` vazio). Rodar `./mvnw clean test` ao final de qualquer alteração no
-  backend: a contagem tem que continuar 747, ou subir junto com os testes novos. O
+  backend: a contagem tem que continuar 770, ou subir junto com os testes novos. O
   frontend não tem testes.
 
   **Rode `clean`.** Sem ele o `test-compile` reaproveita classes antigas e não acusa
