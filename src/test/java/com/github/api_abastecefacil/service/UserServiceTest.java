@@ -866,6 +866,7 @@ class UserServiceTest {
         when(userRepository.findById(5L)).thenReturn(Optional.of(alvo));
 
         assertThrows(RegionalNaoPermitidaException.class, () -> userService.updateUser(5L, request));
+        verify(userRepository, never()).save(any());
     }
 
     private void prepararEdicaoAdministrativa() {

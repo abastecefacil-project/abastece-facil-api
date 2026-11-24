@@ -2,12 +2,15 @@ package com.github.api_abastecefacil.controller;
 
 import com.github.api_abastecefacil.config.JwtAuthenticationFilter;
 import com.github.api_abastecefacil.config.SecurityConfig;
+import com.github.api_abastecefacil.exception.GlobalExceptionHandler;
+import com.github.api_abastecefacil.exception.RegionalNaoPermitidaException;
 import com.github.api_abastecefacil.service.JwtService;
 import com.github.api_abastecefacil.service.UserService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.http.MediaType;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -16,10 +19,12 @@ import static org.mockito.Mockito.*;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(UserController.class)
-@Import({SecurityConfig.class, JwtAuthenticationFilter.class})
+@Import({SecurityConfig.class, JwtAuthenticationFilter.class, GlobalExceptionHandler.class})
 class UserStatusControllerTest {
     @Autowired MockMvc mvc;
     @MockitoBean UserService service;
@@ -50,5 +55,20 @@ class UserStatusControllerTest {
     void reativacaoDelegaAutorizacaoAoServico() throws Exception {
         mvc.perform(post("/api/users/7/reativar").with(user("admin"))).andExpect(status().isOk());
         verify(service).reativarUser(7L);
+    }
+
+    @Test
+    void gestorDeOutraRegionalRecebe403AoAlterarUsuario() throws Exception {
+        when(service.updateUser(eq(7L), any()))
+                .thenThrow(new RegionalNaoPermitidaException("Gestor de frota só pode alterar usuários da própria regional"));
+
+        mvc.perform(patch("/api/users/7")
+                        .with(user("gestor").roles("GESTOR_FROTA"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Nome alterado\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value("REGIONAL_NAO_PERMITIDA"));
+
+        verify(service).updateUser(eq(7L), any());
     }
 }
