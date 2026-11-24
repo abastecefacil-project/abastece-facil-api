@@ -44,6 +44,16 @@ Abra [http://localhost:5173](http://localhost:5173). Para desenvolvimento, use:
 
 O envio de e-mail fica simulado por padrão. Não use essas contas fora do ambiente local.
 
+### Scripts auxiliares
+
+Execute os scripts a partir da pasta `api-abastecefacil`:
+
+| Ação | Linux/macOS/WSL | Windows |
+|---|---|---|
+| Iniciar banco e API | `./dev.sh` | `dev.cmd` |
+| Iniciar somente o banco | `./start-db` | `start-db.cmd` |
+| Iniciar somente a API, com o banco já ativo | `./start-api` | `start-api.cmd` |
+
 ## Rodar tudo em Docker (opcional)
 
 O Compose completo precisa das pastas irmãs mostradas acima. No diretório do backend, copie
