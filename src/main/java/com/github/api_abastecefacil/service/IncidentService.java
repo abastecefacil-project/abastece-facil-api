@@ -7,15 +7,17 @@ import com.github.api_abastecefacil.dto.incident.UpdateIncidentRequest;
 import com.github.api_abastecefacil.exception.NotFoundException;
 import com.github.api_abastecefacil.mapper.IncidentMapper;
 import com.github.api_abastecefacil.model.Incident;
+import com.github.api_abastecefacil.model.Perfil;
+import com.github.api_abastecefacil.model.Car;
 import com.github.api_abastecefacil.model.User;
 import com.github.api_abastecefacil.repository.CarRepository;
 import com.github.api_abastecefacil.repository.IncidentRepository;
 import com.github.api_abastecefacil.repository.NotificacaoRepository;
 import com.github.api_abastecefacil.util.PlanilhaXlsx;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -64,17 +66,17 @@ public class IncidentService {
      */
     @Transactional
     public IncidentResponse createIncident(CreateIncidentRequest request) {
-        validateCarExistsByPlate(request.licensePlate());
+        Car car = findCarByPlateOrThrow(request.licensePlate());
         User autor = usuarioAutenticadoProvider.obterUsuarioAutenticado();
-        Incident incident = incidentMapper.toEntity(request, autor.getName());
+        Incident incident = incidentMapper.toEntity(request, autor.getName()).setCar(car);
         Incident savedIncident = incidentRepository.save(incident);
         notificacaoRepository.notificarOcorrencia(savedIncident.getId(), autor.getId());
         return incidentMapper.toResponse(savedIncident);
     }
 
     public IncidentResponse getIncidentById(Long incidentId) {
-        autorizacaoOperacional.autorizarConsulta();
-        Incident incident = findIncidentByIdOrThrow(incidentId);
+        User autor = autorizacaoOperacional.autorizarConsulta();
+        Incident incident = findIncidentByIdOrThrow(incidentId, autor);
         return incidentMapper.toResponse(incident);
     }
 
@@ -85,22 +87,25 @@ public class IncidentService {
             LocalDate occurrenceDate,
             Pageable pageable
     ) {
-        autorizacaoOperacional.autorizarConsulta();
+        User autor = autorizacaoOperacional.autorizarConsulta();
         Page<Incident> incidentsPage = incidentRepository.findByFilters(
                 carPlate,
                 title,
                 userName,
                 occurrenceDate,
+                autor.getPerfil() == Perfil.ADMINISTRADOR,
+                regionalDoEscopo(autor),
                 pageable
         );
         return incidentsPage.map(incidentMapper::toResponse);
     }
 
-    /** Mesmos filtros e guarda da listagem, sem paginação. Ocorrência não tem regional: sem escopo. */
+    /** Mesmos filtros e escopo da listagem, sem paginação. */
     public byte[] exportarOcorrencias(String carPlate, String title, String userName, LocalDate occurrenceDate) {
-        autorizacaoOperacional.autorizarConsulta();
+        User autor = autorizacaoOperacional.autorizarConsulta();
         List<List<Object>> linhas = incidentRepository
-                .findByFilters(carPlate, title, userName, occurrenceDate, Pageable.unpaged())
+                .findByFilters(carPlate, title, userName, occurrenceDate,
+                        autor.getPerfil() == Perfil.ADMINISTRADOR, regionalDoEscopo(autor), Pageable.unpaged())
                 .map(incident -> Arrays.<Object>asList(
                         incident.getOccurrenceDate(),
                         incident.getCarPlate(),
@@ -114,31 +119,33 @@ public class IncidentService {
 
     @Transactional
     public IncidentResponse updateIncident(Long incidentId, UpdateIncidentRequest request) {
-        autorizacaoOperacional.autorizarEscrita();
-        Incident incident = findIncidentByIdOrThrow(incidentId);
+        User autor = autorizacaoOperacional.autorizarEscrita();
+        Incident incident = findIncidentByIdOrThrow(incidentId, autor);
         updateIncidentDescription(incident, request.description());
         Incident updatedIncident = incidentRepository.save(incident);
         return incidentMapper.toResponse(updatedIncident);
     }
 
     public IncidentDashboardResponse getIncidentSummary() {
-        autorizacaoOperacional.autorizarConsulta();
-        long totalIncidents = countAllIncidents();
-        List<IncidentResponse> latestIncidents = fetchLatestIncidents();
+        User autor = autorizacaoOperacional.autorizarConsulta();
+        boolean todasRegionais = autor.getPerfil() == Perfil.ADMINISTRADOR;
+        Long regionalId = regionalDoEscopo(autor);
+        long totalIncidents = todasRegionais
+                ? incidentRepository.count()
+                : incidentRepository.countByVeiculoRegionalId(regionalId);
+        List<IncidentResponse> latestIncidents = fetchLatestIncidents(todasRegionais, regionalId);
         return new IncidentDashboardResponse(totalIncidents, latestIncidents);
     }
 
-    public Long countAllIncidents() {
-        return incidentRepository.count();
-    }
-
-    private Incident findIncidentByIdOrThrow(Long incidentId) {
-        return incidentRepository.findById(incidentId)
+    private Incident findIncidentByIdOrThrow(Long incidentId, User autor) {
+        return (autor.getPerfil() == Perfil.ADMINISTRADOR
+                ? incidentRepository.findById(incidentId)
+                : incidentRepository.findByIdAndVeiculoRegionalId(incidentId, regionalDoEscopo(autor)))
                 .orElseThrow(() -> new NotFoundException(INCIDENT_NOT_FOUND_MESSAGE));
     }
 
-    private void validateCarExistsByPlate(String licensePlate) {
-        carRepository.findByLicensePlate(licensePlate)
+    private Car findCarByPlateOrThrow(String licensePlate) {
+        return carRepository.findByLicensePlate(licensePlate)
                 .orElseThrow(() -> new NotFoundException(CAR_NOT_FOUND_BY_PLATE_MESSAGE));
     }
 
@@ -146,19 +153,22 @@ public class IncidentService {
         incident.setDescription(description);
     }
 
-    private List<IncidentResponse> fetchLatestIncidents() {
-        Pageable latestIncidentsPageable = createLatestIncidentsPageable();
-        return incidentRepository.findAll(latestIncidentsPageable)
+    private List<IncidentResponse> fetchLatestIncidents(boolean todasRegionais, Long regionalId) {
+        List<Incident> incidents = todasRegionais
+                ? incidentRepository.findAllByOrderByCreatedAtDesc(Limit.of(LATEST_INCIDENTS_LIMIT))
+                : regionalId == null ? List.of()
+                : incidentRepository.buscarDaRegional(regionalId, createLatestIncidentsPageable()).getContent();
+        return incidents
                 .stream()
                 .map(incidentMapper::toResponse)
                 .toList();
     }
 
+    private Long regionalDoEscopo(User autor) {
+        return autor.getRegional() == null ? null : autor.getRegional().getId();
+    }
+
     private Pageable createLatestIncidentsPageable() {
-        return PageRequest.of(
-                0,
-                LATEST_INCIDENTS_LIMIT,
-                Sort.by(Sort.Direction.DESC, SORT_BY_FIELD)
-        );
+        return PageRequest.of(0, LATEST_INCIDENTS_LIMIT);
     }
 }

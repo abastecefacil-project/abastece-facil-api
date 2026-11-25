@@ -24,6 +24,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Limit;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -35,6 +37,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -116,6 +120,10 @@ class DashboardServiceTest {
 
     private void autenticadoComo(User autor) {
         when(autorizacaoOperacional.autorizarConsulta()).thenReturn(autor);
+        if (autor.getPerfil() == Perfil.GESTOR_FROTA && autor.getRegional() != null) {
+            when(incidentRepository.buscarDaRegional(
+                    eq(autor.getRegional().getId()), any(Pageable.class))).thenReturn(Page.empty());
+        }
     }
 
     private void relogioEm(Instant instante) {
@@ -177,6 +185,16 @@ class DashboardServiceTest {
 
         assertThat(resumo.usuarios().ativos()).isEqualTo(12L);
         assertThat(resumo.usuarios().aguardandoAtivacao()).isEqualTo(2L);
+        verify(incidentRepository).countByVeiculoRegionalIdAndOccurrenceDateBetween(
+                1L, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31));
+        verify(incidentRepository).contarPorMesNaRegional(
+                1L, LocalDate.of(2026, 5, 1), LocalDate.of(2026, 10, 31));
+        verify(incidentRepository).rankingPlacasNaRegional(
+                1L, LocalDate.of(2026, 7, 24), LocalDate.of(2026, 10, 21), 5);
+        verify(incidentRepository).buscarDaRegional(eq(1L), any(Pageable.class));
+        verify(incidentRepository, never()).contarPorMes(any(), any());
+        verify(incidentRepository, never()).rankingPlacas(any(), any(), anyInt());
+        verify(incidentRepository, never()).findAllByOrderByCreatedAtDesc(any(Limit.class));
         verify(userRepository, never()).countByIsActiveTrue();
         verify(userRepository, never()).countByIsActiveTrueAndSenhaDefinidaFalse();
         verify(userRepository, never()).countByIsActiveTrueAndId(anyLong());

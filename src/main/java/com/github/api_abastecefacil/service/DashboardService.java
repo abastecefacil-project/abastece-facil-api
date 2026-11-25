@@ -13,12 +13,14 @@ import com.github.api_abastecefacil.dto.dashboard.UsuariosNoPerfil;
 import com.github.api_abastecefacil.dto.dashboard.VeiculoComOcorrencias;
 import com.github.api_abastecefacil.mapper.DashboardMapper;
 import com.github.api_abastecefacil.model.Perfil;
+import com.github.api_abastecefacil.model.Incident;
 import com.github.api_abastecefacil.model.User;
 import com.github.api_abastecefacil.repository.CarRepository;
 import com.github.api_abastecefacil.repository.GasStationRepository;
 import com.github.api_abastecefacil.repository.IncidentRepository;
 import com.github.api_abastecefacil.repository.UserRepository;
 import org.springframework.data.domain.Limit;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,7 +45,8 @@ import static com.github.api_abastecefacil.constants.DashboardConstants.*;
  * <p>A autorização é a mesma de {@code GET /api/incidents/dashboard}
  * ({@link AutorizacaoOperacional#autorizarConsulta}), e o autor que ela devolve escopa os
  * campos de usuário por {@link EscopoUsuarios}, a regra da listagem {@code GET /api/users}.
- * Os demais blocos são globais, porque postos, veículos e ocorrências não têm regional.
+ * Ocorrências são escopadas pela regional registrada no momento da criação; os demais blocos
+ * seguem a abrangência global da Home.
  *
  * <p>O {@link Clock} é o bean de {@code SchedulingConfig}, injetado para as janelas de data
  * serem testáveis. Só o {@code Instant} dele é usado, lido <b>uma vez</b> por resumo, para
@@ -81,6 +84,8 @@ public class DashboardService {
 
     public DashboardResponse getResumo() {
         User autor = autorizacaoOperacional.autorizarConsulta();
+        boolean todasRegionais = autor.getPerfil() == Perfil.ADMINISTRADOR;
+        Long regionalOcorrencias = autor.getRegional() == null ? null : autor.getRegional().getId();
 
         Instant instante = clock.instant();
         LocalDate hoje = LocalDate.ofInstant(instante, FUSO_HORARIO);
@@ -89,14 +94,14 @@ public class DashboardService {
         return new DashboardResponse(
                 resumirPostos(),
                 resumirVeiculos(),
-                resumirOcorrencias(hoje),
+                resumirOcorrencias(hoje, todasRegionais, regionalOcorrencias),
                 resumirUsuarios(autor),
-                serieOcorrencias(hoje),
-                rankingVeiculos(hoje),
+                serieOcorrencias(hoje, todasRegionais, regionalOcorrencias),
+                rankingVeiculos(hoje, todasRegionais, regionalOcorrencias),
                 rankingCidades(),
                 usuariosPorPerfil(autor),
                 convitesPendentesAntigos(autor, agora),
-                ultimasOcorrencias()
+                ultimasOcorrencias(todasRegionais, regionalOcorrencias)
         );
     }
 
@@ -115,16 +120,19 @@ public class DashboardService {
         );
     }
 
-    private ResumoOcorrencias resumirOcorrencias(LocalDate hoje) {
+    private ResumoOcorrencias resumirOcorrencias(LocalDate hoje, boolean todasRegionais, Long regionalId) {
         YearMonth mesAtual = YearMonth.from(hoje);
         return new ResumoOcorrencias(
-                contarOcorrenciasNoMes(mesAtual),
-                contarOcorrenciasNoMes(mesAtual.minusMonths(1))
+                contarOcorrenciasNoMes(mesAtual, todasRegionais, regionalId),
+                contarOcorrenciasNoMes(mesAtual.minusMonths(1), todasRegionais, regionalId)
         );
     }
 
-    private long contarOcorrenciasNoMes(YearMonth mes) {
-        return incidentRepository.countByOccurrenceDateBetween(mes.atDay(1), mes.atEndOfMonth());
+    private long contarOcorrenciasNoMes(YearMonth mes, boolean todasRegionais, Long regionalId) {
+        return todasRegionais
+                ? incidentRepository.countByOccurrenceDateBetween(mes.atDay(1), mes.atEndOfMonth())
+                : incidentRepository.countByVeiculoRegionalIdAndOccurrenceDateBetween(
+                        regionalId, mes.atDay(1), mes.atEndOfMonth());
     }
 
     private ResumoUsuarios resumirUsuarios(User autor) {
@@ -146,12 +154,13 @@ public class DashboardService {
      * com zero: a série tem sempre {@code MESES_SERIE_OCORRENCIAS} itens, em ordem
      * cronológica, terminando no mês atual. {@link YearMonth} resolve a virada de ano.
      */
-    private List<OcorrenciasNoMes> serieOcorrencias(LocalDate hoje) {
+    private List<OcorrenciasNoMes> serieOcorrencias(LocalDate hoje, boolean todasRegionais, Long regionalId) {
         YearMonth ultimo = YearMonth.from(hoje);
         YearMonth primeiro = ultimo.minusMonths(MESES_SERIE_OCORRENCIAS - 1);
 
-        Map<String, Long> totalPorMes = paraMapa(
-                incidentRepository.contarPorMes(primeiro.atDay(1), ultimo.atEndOfMonth()));
+        Map<String, Long> totalPorMes = paraMapa(todasRegionais
+                ? incidentRepository.contarPorMes(primeiro.atDay(1), ultimo.atEndOfMonth())
+                : incidentRepository.contarPorMesNaRegional(regionalId, primeiro.atDay(1), ultimo.atEndOfMonth()));
 
         List<OcorrenciasNoMes> serie = new ArrayList<>(MESES_SERIE_OCORRENCIAS);
         for (YearMonth mes = primeiro; !mes.isAfter(ultimo); mes = mes.plusMonths(1)) {
@@ -164,9 +173,12 @@ public class DashboardService {
      * Janela de {@code DIAS_RANKING_VEICULOS} dias de calendário com hoje incluído. Termina em
      * hoje, então ocorrência com data futura — o cadastro aceita — fica de fora.
      */
-    private List<VeiculoComOcorrencias> rankingVeiculos(LocalDate hoje) {
+    private List<VeiculoComOcorrencias> rankingVeiculos(LocalDate hoje, boolean todasRegionais, Long regionalId) {
         LocalDate inicio = hoje.minusDays(DIAS_RANKING_VEICULOS - 1);
-        return incidentRepository.rankingPlacas(inicio, hoje, LIMITE_RANKING_VEICULOS).stream()
+        List<ContagemAgrupada> ranking = todasRegionais
+                ? incidentRepository.rankingPlacas(inicio, hoje, LIMITE_RANKING_VEICULOS)
+                : incidentRepository.rankingPlacasNaRegional(regionalId, inicio, hoje, LIMITE_RANKING_VEICULOS);
+        return ranking.stream()
                 .map(linha -> new VeiculoComOcorrencias(linha.getChave(), linha.getTotal()))
                 .toList();
     }
@@ -210,8 +222,13 @@ public class DashboardService {
         };
     }
 
-    private List<OcorrenciaRecente> ultimasOcorrencias() {
-        return incidentRepository.findAllByOrderByCreatedAtDesc(Limit.of(LIMITE_ULTIMAS_OCORRENCIAS)).stream()
+    private List<OcorrenciaRecente> ultimasOcorrencias(boolean todasRegionais, Long regionalId) {
+        List<Incident> recentes = todasRegionais
+                ? incidentRepository.findAllByOrderByCreatedAtDesc(Limit.of(LIMITE_ULTIMAS_OCORRENCIAS))
+                : regionalId == null ? List.of()
+                : incidentRepository.buscarDaRegional(regionalId,
+                        PageRequest.of(0, LIMITE_ULTIMAS_OCORRENCIAS)).getContent();
+        return recentes.stream()
                 .map(dashboardMapper::toOcorrenciaRecente)
                 .toList();
     }

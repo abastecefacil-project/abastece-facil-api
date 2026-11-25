@@ -9,6 +9,8 @@ import com.github.api_abastecefacil.exception.PerfilNaoPermitidoException;
 import com.github.api_abastecefacil.mapper.IncidentMapper;
 import com.github.api_abastecefacil.model.Car;
 import com.github.api_abastecefacil.model.Incident;
+import com.github.api_abastecefacil.model.Perfil;
+import com.github.api_abastecefacil.model.Regional;
 import com.github.api_abastecefacil.model.User;
 import com.github.api_abastecefacil.repository.CarRepository;
 import com.github.api_abastecefacil.repository.IncidentRepository;
@@ -20,10 +22,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 
 import java.time.LocalDate;
@@ -63,9 +63,15 @@ class IncidentServiceTest {
     private Incident incident;
     private IncidentResponse incidentResponse;
 
+    private void autorizarComoAdministrador() {
+        when(autorizacaoOperacional.autorizarConsulta())
+                .thenReturn(new User().setPerfil(Perfil.ADMINISTRADOR));
+    }
+
     @BeforeEach
     void setUp() {
-        car = new Car().setId(1L).setLicensePlate("ABC1234").setModel("Civic");
+        car = new Car().setId(1L).setLicensePlate("ABC1234").setModel("Civic")
+                .setRegional(new Regional().setId(1L));
 
         incident = new Incident()
                 .setId(1L)
@@ -96,6 +102,7 @@ class IncidentServiceTest {
         assertThat(response).isNotNull();
         assertThat(response.title()).isEqualTo("Pneu Furado");
         verify(incidentRepository).save(incident);
+        assertThat(incident.getCar()).isSameAs(car);
     }
 
     @Test
@@ -129,6 +136,7 @@ class IncidentServiceTest {
 
     @Test
     void getIncidentById_ShouldReturnIncident_WhenIdExists() {
+        autorizarComoAdministrador();
         when(incidentRepository.findById(1L)).thenReturn(Optional.of(incident));
         when(incidentMapper.toResponse(incident)).thenReturn(incidentResponse);
 
@@ -140,6 +148,7 @@ class IncidentServiceTest {
 
     @Test
     void getIncidentById_ShouldThrowNotFoundException_WhenIdDoesNotExist() {
+        autorizarComoAdministrador();
         when(incidentRepository.findById(99L)).thenReturn(Optional.empty());
 
         assertThrows(NotFoundException.class, () -> incidentService.getIncidentById(99L));
@@ -147,6 +156,8 @@ class IncidentServiceTest {
 
     @Test
     void updateIncident_ShouldUpdateDescriptionSuccessfully() {
+        when(autorizacaoOperacional.autorizarEscrita())
+                .thenReturn(new User().setPerfil(Perfil.ADMINISTRADOR));
         UpdateIncidentRequest request = new UpdateIncidentRequest("Nova Descrição");
         when(incidentRepository.findById(1L)).thenReturn(Optional.of(incident));
         when(incidentRepository.save(incident)).thenReturn(incident);
@@ -160,9 +171,9 @@ class IncidentServiceTest {
 
     @Test
     void getIncidentSummary_ShouldReturnDashboardResponse() {
+        autorizarComoAdministrador();
         when(incidentRepository.count()).thenReturn(5L);
-        Page<Incident> page = new PageImpl<>(List.of(incident));
-        when(incidentRepository.findAll(any(Pageable.class))).thenReturn(page);
+        when(incidentRepository.findAllByOrderByCreatedAtDesc(any(Limit.class))).thenReturn(List.of(incident));
         when(incidentMapper.toResponse(incident)).thenReturn(incidentResponse);
 
         IncidentDashboardResponse summary = incidentService.getIncidentSummary();

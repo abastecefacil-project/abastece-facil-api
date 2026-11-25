@@ -11,11 +11,41 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 public interface IncidentRepository extends JpaRepository<Incident, Long> {
 
     /** Intervalo fechado nas duas pontas, como o BETWEEN do SQL. */
     long countByOccurrenceDateBetween(LocalDate inicio, LocalDate fim);
+
+    @Query(value = """
+            SELECT COUNT(*) FROM incidents i
+            JOIN cars c ON c.id = i.car_id
+            WHERE c.regional_id = :regionalId
+            """, nativeQuery = true)
+    long countByVeiculoRegionalId(@Param("regionalId") Long regionalId);
+
+    @Query(value = """
+            SELECT COUNT(*) FROM incidents i
+            JOIN cars c ON c.id = i.car_id
+            WHERE c.regional_id = :regionalId
+              AND i.occurrence_date BETWEEN :inicio AND :fim
+            """, nativeQuery = true)
+    long countByVeiculoRegionalIdAndOccurrenceDateBetween(@Param("regionalId") Long regionalId,
+                                                           @Param("inicio") LocalDate inicio,
+                                                           @Param("fim") LocalDate fim);
+
+    @Query(value = """
+            SELECT i.* FROM incidents i
+            JOIN cars c ON c.id = i.car_id
+            WHERE c.regional_id = :regionalId
+            ORDER BY i.created_at DESC
+            """, countQuery = """
+            SELECT COUNT(*) FROM incidents i
+            JOIN cars c ON c.id = i.car_id
+            WHERE c.regional_id = :regionalId
+            """, nativeQuery = true)
+    Page<Incident> buscarDaRegional(@Param("regionalId") Long regionalId, Pageable pageable);
 
     /**
      * Ocorrências por mês ({@code YYYY-MM}) no intervalo fechado. Meses sem ocorrência não
@@ -29,6 +59,18 @@ public interface IncidentRepository extends JpaRepository<Incident, Long> {
             """, nativeQuery = true)
     List<ContagemAgrupada> contarPorMes(@Param("inicio") LocalDate inicio,
                                         @Param("fim") LocalDate fim);
+
+    @Query(value = """
+            SELECT to_char(i.occurrence_date, 'YYYY-MM') AS chave, COUNT(*) AS total
+              FROM incidents i
+              JOIN cars c ON c.id = i.car_id
+             WHERE c.regional_id = :regionalId
+               AND i.occurrence_date BETWEEN :inicio AND :fim
+             GROUP BY 1
+            """, nativeQuery = true)
+    List<ContagemAgrupada> contarPorMesNaRegional(@Param("regionalId") Long regionalId,
+                                                   @Param("inicio") LocalDate inicio,
+                                                   @Param("fim") LocalDate fim);
 
     /**
      * Placas com mais ocorrências no intervalo fechado, agrupadas pela placa normalizada
@@ -47,22 +89,49 @@ public interface IncidentRepository extends JpaRepository<Incident, Long> {
                                          @Param("fim") LocalDate fim,
                                          @Param("limite") int limite);
 
+    @Query(value = """
+            SELECT UPPER(TRIM(i.car_plate)) AS chave, COUNT(*) AS total
+              FROM incidents i
+              JOIN cars c ON c.id = i.car_id
+             WHERE c.regional_id = :regionalId
+               AND i.occurrence_date BETWEEN :inicio AND :fim
+             GROUP BY 1
+             ORDER BY total DESC, chave ASC
+             LIMIT :limite
+            """, nativeQuery = true)
+    List<ContagemAgrupada> rankingPlacasNaRegional(@Param("regionalId") Long regionalId,
+                                                    @Param("inicio") LocalDate inicio,
+                                                    @Param("fim") LocalDate fim,
+                                                    @Param("limite") int limite);
+
+    @Query(value = """
+            SELECT i.* FROM incidents i
+            JOIN cars c ON c.id = i.car_id
+            WHERE i.id = :id AND c.regional_id = :regionalId
+            """, nativeQuery = true)
+    Optional<Incident> findByIdAndVeiculoRegionalId(@Param("id") Long id,
+                                                     @Param("regionalId") Long regionalId);
+
     List<Incident> findAllByOrderByCreatedAtDesc(Limit limite);
 
     @Query(value = """
-            SELECT * FROM incidents i
+            SELECT i.* FROM incidents i
+            LEFT JOIN cars c ON c.id = i.car_id
             WHERE (:carPlate IS NULL OR i.car_plate = :carPlate)
               AND (:title IS NULL OR LOWER(i.title) LIKE LOWER(CONCAT('%', :title, '%')))
               AND (:userName IS NULL OR LOWER(i.user_name) LIKE LOWER(CONCAT('%', :userName, '%')))
               AND (:occurrenceDate IS NULL OR i.occurrence_date = :occurrenceDate)
+              AND (:todasRegionais = true OR c.regional_id = :regionalId)
             ORDER BY i.created_at DESC
             """,
             countQuery = """
                     SELECT COUNT(*) FROM incidents i
+                    LEFT JOIN cars c ON c.id = i.car_id
                     WHERE (:carPlate IS NULL OR i.car_plate = :carPlate)
                       AND (:title IS NULL OR LOWER(i.title) LIKE LOWER(CONCAT('%', :title, '%')))
                       AND (:userName IS NULL OR LOWER(i.user_name) LIKE LOWER(CONCAT('%', :userName, '%')))
                       AND (:occurrenceDate IS NULL OR i.occurrence_date = :occurrenceDate)
+                      AND (:todasRegionais = true OR c.regional_id = :regionalId)
                     """,
             nativeQuery = true)
     Page<Incident> findByFilters(
@@ -70,6 +139,8 @@ public interface IncidentRepository extends JpaRepository<Incident, Long> {
             @Param("title") String title,
             @Param("userName") String userName,
             @Param("occurrenceDate") LocalDate occurrenceDate,
+            @Param("todasRegionais") boolean todasRegionais,
+            @Param("regionalId") Long regionalId,
             Pageable pageable);
 
 

@@ -21,6 +21,7 @@ import static com.github.api_abastecefacil.util.PlanilhaTeste.linha;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.*;
 
 class IncidentExportacaoTest {
@@ -32,7 +33,7 @@ class IncidentExportacaoTest {
     @Test
     void administradorExportaComCabecalhoELinhas() throws Exception {
         autenticar(new User().setPerfil(Perfil.ADMINISTRADOR));
-        when(incidents.findByFilters(null, null, null, null, Pageable.unpaged()))
+        when(incidents.findByFilters(null, null, null, null, true, null, Pageable.unpaged()))
                 .thenReturn(new PageImpl<>(List.of(new Incident()
                         .setOccurrenceDate(LocalDate.of(2026, 8, 18)).setCarPlate("ABC1234")
                         .setTitle("Sujo internamente").setDescription("Bancos sujos").setUserName("Fulano")
@@ -49,14 +50,14 @@ class IncidentExportacaoTest {
     }
 
     @Test
-    void gestorExportaSemEscopoDeRegional() {
-        // Ocorrência não tem regional: o gestor exporta o mesmo que vê na listagem.
+    void gestorExportaSoASuaRegional() {
         autenticar(new User().setPerfil(Perfil.GESTOR_FROTA).setRegional(new Regional().setId(1L)));
-        when(incidents.findByFilters(any(), any(), any(), any(), any())).thenReturn(new PageImpl<>(List.of()));
+        when(incidents.findByFilters(any(), any(), any(), any(), anyBoolean(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of()));
 
         service.exportarOcorrencias(null, null, null, null);
 
-        verify(incidents).findByFilters(null, null, null, null, Pageable.unpaged());
+        verify(incidents).findByFilters(null, null, null, null, false, 1L, Pageable.unpaged());
     }
 
     @Test
@@ -69,13 +70,14 @@ class IncidentExportacaoTest {
     @Test
     void filtrosChegamAoRepositorioSemPaginacao() throws Exception {
         autenticar(new User().setPerfil(Perfil.ADMINISTRADOR));
-        when(incidents.findByFilters(any(), any(), any(), any(), any())).thenReturn(new PageImpl<>(List.of()));
+        when(incidents.findByFilters(any(), any(), any(), any(), anyBoolean(), any(), any()))
+                .thenReturn(new PageImpl<>(List.of()));
         LocalDate data = LocalDate.of(2026, 8, 18);
 
         try (Workbook planilha = abrir(service.exportarOcorrencias("ABC1234", "sujo", "fulano", data))) {
             assertThat(planilha.getSheetAt(0).getLastRowNum()).isZero();
         }
-        verify(incidents).findByFilters("ABC1234", "sujo", "fulano", data, Pageable.unpaged());
+        verify(incidents).findByFilters("ABC1234", "sujo", "fulano", data, true, null, Pageable.unpaged());
     }
 
     private void autenticar(User usuario) {

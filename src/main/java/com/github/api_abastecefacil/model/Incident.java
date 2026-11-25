@@ -16,6 +16,10 @@ public class Incident {
     @Column(name = "car_plate", nullable = false)
     private String carPlate;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "car_id")
+    private Car car;
+
     @Column(name = "user_name", nullable = false)
     private String userName;
 
@@ -46,6 +50,15 @@ public class Incident {
 
     public Incident setCarPlate(String carPlate) {
         this.carPlate = carPlate;
+        return this;
+    }
+
+    public Car getCar() {
+        return car;
+    }
+
+    public Incident setCar(Car car) {
+        this.car = car;
         return this;
     }
 
