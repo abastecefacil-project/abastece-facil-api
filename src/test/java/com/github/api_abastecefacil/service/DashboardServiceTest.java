@@ -166,7 +166,7 @@ class DashboardServiceTest {
 
         DashboardResponse resumo = dashboardService.getResumo();
 
-        assertThat(resumo.usuarios().ativos()).isEqualTo(40L);
+        assertThat(resumo.usuarios().ativos()).isEqualTo(34L);
         assertThat(resumo.usuarios().aguardandoAtivacao()).isEqualTo(6L);
         verify(userRepository, never()).countByIsActiveTrueAndRegionalId(anyLong());
         verify(userRepository, never()).countByIsActiveTrueAndSenhaDefinidaFalseAndRegionalId(anyLong());
@@ -183,7 +183,7 @@ class DashboardServiceTest {
 
         DashboardResponse resumo = dashboardService.getResumo();
 
-        assertThat(resumo.usuarios().ativos()).isEqualTo(12L);
+        assertThat(resumo.usuarios().ativos()).isEqualTo(10L);
         assertThat(resumo.usuarios().aguardandoAtivacao()).isEqualTo(2L);
         verify(incidentRepository).countByVeiculoRegionalIdAndOccurrenceDateBetween(
                 1L, LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 31));

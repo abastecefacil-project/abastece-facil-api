@@ -84,14 +84,15 @@ public interface UserRepository extends JpaRepository<User, Long> {
     long countByIsActiveTrueAndSenhaDefinidaFalseAndCreatedAtBeforeAndId(
             LocalDateTime limite, Long id);
 
-    // Ativos por perfil, uma consulta por escopo. O perfil volta como texto da coluna -- em
-    // query nativa o enum nao e convertido -- e o service faz Perfil.valueOf. Perfil sem
-    // usuario nao aparece; quem preenche o zero e o service.
+    // Usuarios que concluiram a ativacao por perfil, uma consulta por escopo. O perfil volta
+    // como texto da coluna -- em query nativa o enum nao e convertido -- e o service preenche
+    // o zero para perfis sem usuario.
 
     @Query(value = """
             SELECT u.perfil AS chave, COUNT(*) AS total
               FROM users u
              WHERE u.is_active = true
+               AND u.senha_definida = true
              GROUP BY u.perfil
             """, nativeQuery = true)
     List<ContagemAgrupada> contarAtivosPorPerfil();
@@ -100,6 +101,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
             SELECT u.perfil AS chave, COUNT(*) AS total
               FROM users u
              WHERE u.is_active = true
+               AND u.senha_definida = true
                AND u.regional_id = :regionalId
              GROUP BY u.perfil
             """, nativeQuery = true)
@@ -109,6 +111,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
             SELECT u.perfil AS chave, COUNT(*) AS total
               FROM users u
              WHERE u.is_active = true
+               AND u.senha_definida = true
                AND u.id = :id
              GROUP BY u.perfil
             """, nativeQuery = true)

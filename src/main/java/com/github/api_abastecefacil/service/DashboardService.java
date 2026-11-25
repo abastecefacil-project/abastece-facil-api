@@ -44,9 +44,9 @@ import static com.github.api_abastecefacil.constants.DashboardConstants.*;
  *
  * <p>A autorização é a mesma de {@code GET /api/incidents/dashboard}
  * ({@link AutorizacaoOperacional#autorizarConsulta}), e o autor que ela devolve escopa os
- * campos de usuário por {@link EscopoUsuarios}, a regra da listagem {@code GET /api/users}.
- * Ocorrências são escopadas pela regional registrada no momento da criação; os demais blocos
- * seguem a abrangência global da Home.
+ * campos de usuário por {@link EscopoUsuarios}. Convites pendentes são destacados e não entram
+ * nas contagens de usuários ativos. Ocorrências são escopadas pela regional atual do veículo;
+ * os demais blocos seguem a abrangência global da Home.
  *
  * <p>O {@link Clock} é o bean de {@code SchedulingConfig}, injetado para as janelas de data
  * serem testáveis. Só o {@code Instant} dele é usado, lido <b>uma vez</b> por resumo, para
@@ -137,16 +137,20 @@ public class DashboardService {
 
     private ResumoUsuarios resumirUsuarios(User autor) {
         return switch (EscopoUsuarios.de(autor)) {
-            case EscopoUsuarios.Todos todos -> new ResumoUsuarios(
+            case EscopoUsuarios.Todos todos -> separarConvitesPendentes(
                     userRepository.countByIsActiveTrue(),
                     userRepository.countByIsActiveTrueAndSenhaDefinidaFalse());
-            case EscopoUsuarios.DaRegional(Long regionalId) -> new ResumoUsuarios(
+            case EscopoUsuarios.DaRegional(Long regionalId) -> separarConvitesPendentes(
                     userRepository.countByIsActiveTrueAndRegionalId(regionalId),
                     userRepository.countByIsActiveTrueAndSenhaDefinidaFalseAndRegionalId(regionalId));
-            case EscopoUsuarios.Proprio(Long userId) -> new ResumoUsuarios(
+            case EscopoUsuarios.Proprio(Long userId) -> separarConvitesPendentes(
                     userRepository.countByIsActiveTrueAndId(userId),
                     userRepository.countByIsActiveTrueAndSenhaDefinidaFalseAndId(userId));
         };
+    }
+
+    private static ResumoUsuarios separarConvitesPendentes(long totalAtivos, long aguardandoAtivacao) {
+        return new ResumoUsuarios(totalAtivos - aguardandoAtivacao, aguardandoAtivacao);
     }
 
     /**
