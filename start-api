@@ -2,4 +2,6 @@
 set -euo pipefail
 
 export JWT_SECRET="${JWT_SECRET:-YWJhc3RlY2VmYWNpbC1kZXNlbnZvbHZpbWVudG8tbG9jYWwtbmFvLXVzYXItZW0tcHJvZHVjYW8=}"
+# O banco local pode conter migrations aplicadas em outro ramo e ausentes deste checkout.
+export SPRING_FLYWAY_IGNORE_MIGRATION_PATTERNS="${SPRING_FLYWAY_IGNORE_MIGRATION_PATTERNS:-versioned:missing}"
 ./mvnw spring-boot:run
