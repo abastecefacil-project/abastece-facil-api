@@ -44,9 +44,10 @@ import static com.github.api_abastecefacil.constants.DashboardConstants.*;
  *
  * <p>A autorização é a mesma de {@code GET /api/incidents/dashboard}
  * ({@link AutorizacaoOperacional#autorizarConsulta}), e o autor que ela devolve escopa os
- * campos de usuário por {@link EscopoUsuarios}. Convites pendentes são destacados e não entram
- * nas contagens de usuários ativos. Ocorrências são escopadas pela regional atual do veículo;
- * os demais blocos seguem a abrangência global da Home.
+ * campos de usuário por {@link EscopoUsuarios}. Para o gestor, frota e ocorrências são
+ * escopadas pela regional atual do veículo, e usuários pela própria regional. Postos e cidades
+ * continuam globais por serem uma referência compartilhada. Convites pendentes não entram nas
+ * contagens de usuários ativos.
  *
  * <p>O {@link Clock} é o bean de {@code SchedulingConfig}, injetado para as janelas de data
  * serem testáveis. Só o {@code Instant} dele é usado, lido <b>uma vez</b> por resumo, para
@@ -93,7 +94,7 @@ public class DashboardService {
 
         return new DashboardResponse(
                 resumirPostos(),
-                resumirVeiculos(),
+                resumirVeiculos(todasRegionais, regionalOcorrencias),
                 resumirOcorrencias(hoje, todasRegionais, regionalOcorrencias),
                 resumirUsuarios(autor),
                 serieOcorrencias(hoje, todasRegionais, regionalOcorrencias),
@@ -113,11 +114,16 @@ public class DashboardService {
         );
     }
 
-    private ResumoVeiculos resumirVeiculos() {
+    private ResumoVeiculos resumirVeiculos(boolean todasRegionais, Long regionalId) {
+        if (todasRegionais) {
+            return new ResumoVeiculos(carRepository.countByActive(true), carRepository.countByActive(false));
+        }
+        if (regionalId == null) {
+            return new ResumoVeiculos(0, 0);
+        }
         return new ResumoVeiculos(
-                carRepository.countByActive(true),
-                carRepository.countByActive(false)
-        );
+                carRepository.countByActiveAndRegionalId(true, regionalId),
+                carRepository.countByActiveAndRegionalId(false, regionalId));
     }
 
     private ResumoOcorrencias resumirOcorrencias(LocalDate hoje, boolean todasRegionais, Long regionalId) {

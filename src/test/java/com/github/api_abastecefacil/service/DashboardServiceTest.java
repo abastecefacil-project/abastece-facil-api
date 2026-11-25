@@ -212,6 +212,10 @@ class DashboardServiceTest {
 
         assertThat(resumo.usuarios().ativos()).isEqualTo(1L);
         assertThat(resumo.usuarios().aguardandoAtivacao()).isZero();
+        assertThat(resumo.veiculos().ativos()).isZero();
+        assertThat(resumo.veiculos().inativos()).isZero();
+        verify(carRepository, never()).countByActive(any());
+        verify(carRepository, never()).countByActiveAndRegionalId(any(), any());
         verify(userRepository, never()).countByIsActiveTrue();
         verify(userRepository, never()).countByIsActiveTrueAndSenhaDefinidaFalse();
         verify(userRepository, never()).countByIsActiveTrueAndRegionalId(anyLong());
@@ -227,16 +231,31 @@ class DashboardServiceTest {
         when(gasStationRepository.countByIsActive(true)).thenReturn(968L);
         when(gasStationRepository.countByIsActive(false)).thenReturn(3L);
         when(gasStationRepository.countCidadesAtendidas()).thenReturn(240L);
-        when(carRepository.countByActive(true)).thenReturn(15L);
-        when(carRepository.countByActive(false)).thenReturn(4L);
+        when(carRepository.countByActiveAndRegionalId(true, 1L)).thenReturn(2L);
+        when(carRepository.countByActiveAndRegionalId(false, 1L)).thenReturn(1L);
 
         DashboardResponse resumo = dashboardService.getResumo();
 
         assertThat(resumo.postos().ativos()).isEqualTo(968L);
         assertThat(resumo.postos().inativos()).isEqualTo(3L);
         assertThat(resumo.postos().cidadesAtendidas()).isEqualTo(240L);
+        assertThat(resumo.veiculos().ativos()).isEqualTo(2L);
+        assertThat(resumo.veiculos().inativos()).isEqualTo(1L);
+        verify(carRepository, never()).countByActive(any());
+    }
+
+    @Test
+    void getResumo_ShouldCountFleetAcrossAllRegionalsForAdministrador() {
+        autenticadoComo(administrador());
+        relogioEm(HOJE);
+        when(carRepository.countByActive(true)).thenReturn(15L);
+        when(carRepository.countByActive(false)).thenReturn(4L);
+
+        DashboardResponse resumo = dashboardService.getResumo();
+
         assertThat(resumo.veiculos().ativos()).isEqualTo(15L);
         assertThat(resumo.veiculos().inativos()).isEqualTo(4L);
+        verify(carRepository, never()).countByActiveAndRegionalId(any(), anyLong());
     }
 
     // ------------------------------------------------------------- ocorrencias
